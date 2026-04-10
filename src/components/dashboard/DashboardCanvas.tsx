@@ -484,7 +484,8 @@ function DashboardCanvasInner({
           edgeTypes={edgeTypes}
           minZoom={0.1}
           maxZoom={3}
-          defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
+          fitView
+          fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
           proOptions={{ hideAttribution: true }}
           connectionRadius={80}
           className="!bg-background"
