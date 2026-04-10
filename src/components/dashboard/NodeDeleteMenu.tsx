@@ -8,6 +8,7 @@ interface NodeDeleteMenuProps {
   nodeName: string;
   onDelete: () => void;
   onRename: (newName: string) => void;
+  onPlay: () => void;
   onClose: () => void;
 }
 
@@ -17,6 +18,7 @@ export default function NodeDeleteMenu({
   nodeName,
   onDelete,
   onRename,
+  onPlay,
   onClose,
 }: NodeDeleteMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -85,6 +87,12 @@ export default function NodeDeleteMenu({
       <div className="px-4 py-1.5 text-xs text-muted truncate border-b border-card-border">
         {nodeName}
       </div>
+      <button
+        onClick={onPlay}
+        className="w-full px-4 py-2.5 text-sm text-accent hover:bg-accent/10 transition-colors text-left"
+      >
+        ▶ 再生
+      </button>
       <button
         onClick={() => setRenaming(true)}
         className="w-full px-4 py-2.5 text-sm text-foreground hover:bg-accent/10 transition-colors text-left"

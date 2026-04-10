@@ -33,7 +33,11 @@ import ContextMenu, { type SubMenuItem } from "./ContextMenu";
 import NodeDeleteMenu from "./NodeDeleteMenu";
 import Sidebar from "./Sidebar";
 import CameraCapture from "@/components/scan/CameraCapture";
+import PlaybackPanel from "./PlaybackPanel";
 import { parseExcel, parseCsv } from "@/lib/import/parseSpreadsheet";
+import { decodeGrid } from "@/lib/grid/codec";
+import { findPlaybackRoutes } from "@/lib/api/connections";
+import type { GridData } from "@/lib/grid/types";
 
 const nodeTypes = { zentaiGamen: ZentaiGamenNode };
 const edgeTypes = { connection: ConnectionEdge };
@@ -60,6 +64,10 @@ function DashboardCanvasInner({
   // Scan state
   const [showCamera, setShowCamera] = useState(false);
   const [scanProcessing, setScanProcessing] = useState(false);
+  const [playbackData, setPlaybackData] = useState<{
+    frames: GridData[];
+    frameNames: string[];
+  } | null>(null);
 
   // Context menu state — store both screen pos and flow pos
   const [contextMenu, setContextMenu] = useState<{
@@ -423,6 +431,35 @@ function DashboardCanvasInner({
     [nodeMenu, supabase, setNodes]
   );
 
+  // Play from node
+  const handlePlayFromNode = useCallback(() => {
+    if (!nodeMenu) return;
+    const startId = nodeMenu.nodeId;
+    setNodeMenu(null);
+
+    const routes = findPlaybackRoutes(initialConnections, startId);
+    const route = routes[0];
+    if (!route || route.length === 0) return;
+
+    const zgMap = new Map(initialZentaiGamen.map((z) => [z.id, z]));
+    const frames: GridData[] = [];
+    const frameNames: string[] = [];
+
+    for (const nodeId of route) {
+      const zg = zgMap.get(nodeId);
+      if (zg) {
+        frames.push(
+          decodeGrid(zg.grid_data, project.grid_width, project.grid_height)
+        );
+        frameNames.push(zg.name);
+      }
+    }
+
+    if (frames.length > 0) {
+      setPlaybackData({ frames, frameNames });
+    }
+  }, [nodeMenu, initialConnections, initialZentaiGamen, project]);
+
   // Build submenu items
   const templateMenuItems: SubMenuItem[] = templates.map((t) => ({
     id: t.id,
@@ -434,7 +471,9 @@ function DashboardCanvasInner({
   }));
 
   return (
-    <div className="h-full w-full relative">
+    <div className="h-full w-full flex">
+    {/* Main dashboard area */}
+    <div className="flex-1 h-full relative">
       <input
         ref={fileInputRef}
         type="file"
@@ -523,6 +562,7 @@ function DashboardCanvasInner({
           nodeName={nodeMenu.nodeName}
           onDelete={handleDeleteNode}
           onRename={handleRenameNode}
+          onPlay={handlePlayFromNode}
           onClose={() => setNodeMenu(null)}
         />
       )}
@@ -542,6 +582,16 @@ function DashboardCanvasInner({
         projectId={project.id}
         projectName={project.name}
       />
+    </div>
+
+    {/* Playback side panel */}
+    {playbackData && (
+      <PlaybackPanel
+        frames={playbackData.frames}
+        frameNames={playbackData.frameNames}
+        onClose={() => setPlaybackData(null)}
+      />
+    )}
     </div>
   );
 }
