@@ -21,6 +21,7 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
+  const handleAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -53,8 +54,24 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
     }
   }, [nodeData.gridData, nodeData.gridWidth, nodeData.gridHeight]);
 
+  const cancelLongPress = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressStartRef.current = null;
+  }, []);
+
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
+      // Don't start long press if touching the source handle area (top-right corner)
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const localX = e.clientX - rect.left;
+      const localY = e.clientY - rect.top;
+      if (localX > rect.width - 30 && localY < 30) {
+        return; // source handle area, skip long press
+      }
+
       longPressStartRef.current = { x: e.clientX, y: e.clientY };
       longPressTimerRef.current = setTimeout(() => {
         nodeData.onLongPress(id, nodeData.name, e.clientX, e.clientY);
@@ -64,26 +81,18 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
     [id, nodeData]
   );
 
-  const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    if (longPressStartRef.current) {
-      const dx = e.clientX - longPressStartRef.current.x;
-      const dy = e.clientY - longPressStartRef.current.y;
-      if (Math.sqrt(dx * dx + dy * dy) > 10) {
-        if (longPressTimerRef.current) {
-          clearTimeout(longPressTimerRef.current);
-          longPressTimerRef.current = null;
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (longPressStartRef.current) {
+        const dx = e.clientX - longPressStartRef.current.x;
+        const dy = e.clientY - longPressStartRef.current.y;
+        if (Math.sqrt(dx * dx + dy * dy) > 10) {
+          cancelLongPress();
         }
       }
-    }
-  }, []);
-
-  const handlePointerUp = useCallback(() => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-    longPressStartRef.current = null;
-  }, []);
+    },
+    [cancelLongPress]
+  );
 
   return (
     <div
@@ -92,8 +101,8 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
       onDoubleClick={() => nodeData.onDoubleClick(id)}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerUp}
+      onPointerUp={cancelLongPress}
+      onPointerCancel={cancelLongPress}
     >
       {/* Thumbnail */}
       <div className="p-2 bg-background/50 rounded-t-lg">
@@ -116,17 +125,25 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
         className="!w-3 !h-3 !bg-accent !border-2 !border-card"
       />
 
-      {/* Source handle — top-right corner, styled as arrow circle */}
-      <Handle
-        type="source"
-        position={Position.Top}
-        className={`!w-4 !h-4 !rounded-full !border-2 ${
-          nodeData.hasOutgoingEdge
-            ? "!bg-accent/30 !border-accent/30"
-            : "!bg-accent !border-accent"
-        }`}
-        style={{ top: -8, left: "auto", right: -8 }}
-      />
+      {/* Source handle — top-right corner with arrow icon */}
+      <div
+        ref={handleAreaRef}
+        className="absolute"
+        style={{ top: -10, right: -10, width: 24, height: 24 }}
+      >
+        <Handle
+          type="source"
+          position={Position.Top}
+          className="!w-full !h-full !top-0 !left-0 !transform-none !rounded-none !bg-transparent !border-0"
+        />
+        <div
+          className={`absolute inset-0 flex items-center justify-center text-base font-bold pointer-events-none ${
+            nodeData.hasOutgoingEdge ? "text-accent/40" : "text-accent"
+          }`}
+        >
+          ↗
+        </div>
+      </div>
     </div>
   );
 }
