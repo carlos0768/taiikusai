@@ -1,8 +1,32 @@
-import { updateSession } from "@/lib/supabase/middleware";
-import { type NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
-export async function middleware(request: NextRequest) {
-  return await updateSession(request);
+const AUTH_COOKIE = "taiikusai_auth";
+
+export function middleware(request: NextRequest) {
+  const authCookie = request.cookies.get(AUTH_COOKIE);
+  const isLoginPage = request.nextUrl.pathname === "/login";
+  const isApiRoute = request.nextUrl.pathname.startsWith("/api/");
+
+  // Allow API routes through
+  if (isApiRoute) {
+    return NextResponse.next();
+  }
+
+  // Not authenticated -> redirect to login
+  if (!authCookie && !isLoginPage) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    return NextResponse.redirect(url);
+  }
+
+  // Authenticated -> redirect away from login
+  if (authCookie && isLoginPage) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/dashboard";
+    return NextResponse.redirect(url);
+  }
+
+  return NextResponse.next();
 }
 
 export const config = {
