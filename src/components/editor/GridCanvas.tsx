@@ -21,6 +21,7 @@ interface GridCanvasProps {
     sel: { x1: number; y1: number; x2: number; y2: number } | null
   ) => void;
   onViewportChange: (viewport: Viewport) => void;
+  isEditing: boolean;
 }
 
 export default function GridCanvas({
@@ -36,6 +37,7 @@ export default function GridCanvas({
   onFloodFill,
   onSelectionChange,
   onViewportChange,
+  isEditing,
 }: GridCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -129,6 +131,8 @@ export default function GridCanvas({
         isSelectingRef.current = false;
         return;
       }
+
+      if (!isEditing) return;
 
       const cell = getGridCoords(e.clientX, e.clientY);
       if (!cell) return;

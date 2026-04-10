@@ -100,6 +100,7 @@ function DashboardCanvasInner({
   // Node long-press callback (called from ZentaiGamenNode)
   const handleNodeLongPress = useCallback(
     (nodeId: string, nodeName: string, x: number, y: number) => {
+      setContextMenu(null); // close context menu if open
       setNodeMenu({ x, y, nodeId, nodeName });
     },
     []
@@ -216,6 +217,7 @@ function DashboardCanvasInner({
     (e: React.PointerEvent) => {
       longPressStartRef.current = { x: e.clientX, y: e.clientY };
       longPressTimerRef.current = setTimeout(() => {
+        setNodeMenu(null); // close node menu if open
         // Convert screen position to flow position
         const flowPos = reactFlowInstance.screenToFlowPosition({
           x: e.clientX,

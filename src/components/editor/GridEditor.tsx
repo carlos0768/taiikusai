@@ -185,6 +185,7 @@ export default function GridEditor({
         onFloodFill={floodFill}
         onSelectionChange={setSelection}
         onViewportChange={setViewport}
+        isEditing={isEditing}
       />
 
       {isEditing && (

@@ -65,11 +65,10 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
-      // Don't start long press if touching the source handle area (top-right corner)
+      // Don't start long press if touching the source handle area (right edge)
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
       const localX = e.clientX - rect.left;
-      const localY = e.clientY - rect.top;
-      if (localX > rect.width - 30 && localY < 30) {
+      if (localX > rect.width - 15) {
         return;
       }
 
@@ -139,14 +138,13 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
         className="!w-3 !h-3 !bg-accent !border-2 !border-card"
       />
 
-      {/* Source handle — small yellow circle at top-right corner */}
+      {/* Source handle — small yellow circle on right side center */}
       <Handle
         type="source"
-        position={Position.Top}
+        position={Position.Right}
         className={`!w-3 !h-3 !rounded-full !border-0 ${
           nodeData.hasOutgoingEdge ? "!bg-accent/40" : "!bg-accent"
         }`}
-        style={{ top: -6, left: "auto", right: -6 }}
       />
     </div>
   );
