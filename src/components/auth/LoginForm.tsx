@@ -21,23 +21,28 @@ export default function LoginForm() {
 
     try {
       if (isSignUp) {
-        const { error: signUpError } = await supabase.auth.signUp({
-          email,
-          password,
+        // Use admin API to create user (bypasses email confirmation)
+        const res = await fetch("/api/create-user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email,
+            password,
+            displayName: displayName.trim() || email,
+          }),
         });
-        if (signUpError) {
-          setError(signUpError.message);
+        const result = await res.json();
+        if (!res.ok) {
+          setError(result.error || "アカウント作成に失敗しました");
           return;
         }
 
-        // Create profile
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (user) {
-          await supabase
-            .from("profiles")
-            .upsert({ id: user.id, username: displayName.trim() || email });
+        // Now sign in with the created account
+        const { error: signInError } =
+          await supabase.auth.signInWithPassword({ email, password });
+        if (signInError) {
+          setError(signInError.message);
+          return;
         }
       } else {
         const { error: signInError } =
