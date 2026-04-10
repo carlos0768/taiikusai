@@ -35,15 +35,10 @@ export default function DashboardPage() {
     if (!newName.trim()) return;
     setCreating(true);
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
     const { data, error } = await supabase
       .from("projects")
       .insert({
-        owner_id: user.id,
+        owner_id: "00000000-0000-0000-0000-000000000000",
         name: newName.trim(),
         grid_width: newWidth,
         grid_height: newHeight,
