@@ -17,6 +17,7 @@ interface EditorToolbarProps {
   hasSelection: boolean;
   onFillSelection: () => void;
   onClearSelection: () => void;
+  onSaveAsTemplate: () => void;
 }
 
 const tools: { id: Tool; label: string; icon: string }[] = [
@@ -40,6 +41,7 @@ export default function EditorToolbar({
   hasSelection,
   onFillSelection,
   onClearSelection,
+  onSaveAsTemplate,
 }: EditorToolbarProps) {
   return (
     <div className="flex flex-col bg-card border-b border-card-border">
@@ -109,6 +111,15 @@ export default function EditorToolbar({
           className="px-2 py-1.5 text-sm text-muted hover:text-foreground disabled:opacity-30 transition-colors shrink-0"
         >
           ↪ やり直し
+        </button>
+
+        <div className="w-px h-5 bg-card-border mx-1 shrink-0" />
+
+        <button
+          onClick={onSaveAsTemplate}
+          className="px-3 py-1.5 text-sm text-muted hover:text-foreground transition-colors shrink-0"
+        >
+          テンプレ保存
         </button>
 
         {hasSelection && (

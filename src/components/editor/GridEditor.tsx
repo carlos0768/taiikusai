@@ -9,6 +9,9 @@ import GridCanvas from "./GridCanvas";
 import ColorPalette from "./ColorPalette";
 import EditorToolbar from "./EditorToolbar";
 import type { Viewport } from "./gridRenderer";
+import TemplateSaveDialog from "@/components/templates/TemplateSaveDialog";
+import { createTemplate } from "@/lib/api/templates";
+import { generateThumbnailDataUrl } from "@/lib/grid/thumbnail";
 
 interface GridEditorProps {
   initialGrid: GridData;
@@ -56,6 +59,7 @@ export default function GridEditor({
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">(
     "saved"
   );
+  const [showTemplateSave, setShowTemplateSave] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
 
@@ -129,6 +133,22 @@ export default function GridEditor({
     router.push(`/project/${projectId}/playback?start=${zentaiGamenId}`);
   }, [projectId, zentaiGamenId, router]);
 
+  const handleSaveAsTemplate = useCallback(
+    async (templateName: string) => {
+      const grid = gridRef.current!;
+      const encoded = encodeGrid(grid);
+      const thumbnail = generateThumbnailDataUrl(grid);
+      await createTemplate(
+        templateName,
+        encoded,
+        grid.width,
+        grid.height,
+        thumbnail
+      );
+    },
+    [gridRef]
+  );
+
   return (
     <div className="h-full flex flex-col">
       <EditorToolbar
@@ -146,6 +166,7 @@ export default function GridEditor({
         hasSelection={selection !== null}
         onFillSelection={handleFillSelection}
         onClearSelection={handleClearSelection}
+        onSaveAsTemplate={() => setShowTemplateSave(true)}
       />
 
       <GridCanvas
@@ -164,6 +185,13 @@ export default function GridEditor({
       />
 
       <ColorPalette activeColor={activeColor} onColorChange={setActiveColor} />
+
+      {showTemplateSave && (
+        <TemplateSaveDialog
+          onSave={handleSaveAsTemplate}
+          onClose={() => setShowTemplateSave(false)}
+        />
+      )}
     </div>
   );
 }
