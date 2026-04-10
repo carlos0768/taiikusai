@@ -1,11 +1,10 @@
 import { createClient } from "@/lib/supabase/client";
 import type { Connection } from "@/types";
 
-const supabase = createClient();
-
 export async function getConnectionsByProject(
   projectId: string
 ): Promise<Connection[]> {
+  const supabase = createClient();
   const { data, error } = await supabase
     .from("connections")
     .select("*")
@@ -22,6 +21,7 @@ export async function createConnection(
   targetId: string,
   sortOrder: number = 0
 ): Promise<Connection> {
+  const supabase = createClient();
   const { data, error } = await supabase
     .from("connections")
     .insert({
@@ -38,6 +38,7 @@ export async function createConnection(
 }
 
 export async function deleteConnection(id: string): Promise<void> {
+  const supabase = createClient();
   const { error } = await supabase
     .from("connections")
     .delete()
@@ -49,6 +50,7 @@ export async function deleteConnectionByNodes(
   sourceId: string,
   targetId: string
 ): Promise<void> {
+  const supabase = createClient();
   const { error } = await supabase
     .from("connections")
     .delete()

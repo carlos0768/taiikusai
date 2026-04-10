@@ -1,9 +1,8 @@
 import { createClient } from "@/lib/supabase/client";
 import type { Project } from "@/types";
 
-const supabase = createClient();
-
 export async function getProjects(): Promise<Project[]> {
+  const supabase = createClient();
   const { data, error } = await supabase
     .from("projects")
     .select("*")
@@ -18,6 +17,7 @@ export async function createProject(
   gridWidth: number = 50,
   gridHeight: number = 30
 ): Promise<Project> {
+  const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -39,6 +39,7 @@ export async function createProject(
 }
 
 export async function deleteProject(id: string): Promise<void> {
+  const supabase = createClient();
   const { error } = await supabase.from("projects").delete().eq("id", id);
   if (error) throw error;
 }
@@ -47,6 +48,7 @@ export async function updateProject(
   id: string,
   updates: Partial<Pick<Project, "name" | "grid_width" | "grid_height">>
 ): Promise<Project> {
+  const supabase = createClient();
   const { data, error } = await supabase
     .from("projects")
     .update({ ...updates, updated_at: new Date().toISOString() })

@@ -3,11 +3,10 @@ import { encodeGrid } from "@/lib/grid/codec";
 import { createEmptyGrid } from "@/lib/grid/types";
 import type { ZentaiGamen } from "@/types";
 
-const supabase = createClient();
-
 export async function getZentaiGamenByProject(
   projectId: string
 ): Promise<ZentaiGamen[]> {
+  const supabase = createClient();
   const { data, error } = await supabase
     .from("zentai_gamen")
     .select("*")
@@ -19,6 +18,7 @@ export async function getZentaiGamenByProject(
 }
 
 export async function getZentaiGamen(id: string): Promise<ZentaiGamen> {
+  const supabase = createClient();
   const { data, error } = await supabase
     .from("zentai_gamen")
     .select("*")
@@ -38,6 +38,7 @@ export async function createZentaiGamen(
   name: string = "Untitled",
   gridData?: string
 ): Promise<ZentaiGamen> {
+  const supabase = createClient();
   const data = gridData ?? encodeGrid(createEmptyGrid(gridWidth, gridHeight));
 
   const { data: result, error } = await supabase
@@ -65,6 +66,7 @@ export async function updateZentaiGamen(
     >
   >
 ): Promise<ZentaiGamen> {
+  const supabase = createClient();
   const { data, error } = await supabase
     .from("zentai_gamen")
     .update({ ...updates, updated_at: new Date().toISOString() })
@@ -77,6 +79,7 @@ export async function updateZentaiGamen(
 }
 
 export async function deleteZentaiGamen(id: string): Promise<void> {
+  const supabase = createClient();
   const { error } = await supabase
     .from("zentai_gamen")
     .delete()
