@@ -135,8 +135,8 @@ function DashboardCanvasInner({
       markerEnd: {
         type: MarkerType.ArrowClosed,
         color: "#FFD700",
-        width: 20,
-        height: 20,
+        width: 10,
+        height: 10,
       },
     }));
   }, []);
