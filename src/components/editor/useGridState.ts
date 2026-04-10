@@ -10,7 +10,7 @@ import {
   setCell,
 } from "@/lib/grid/types";
 
-export type Tool = "paint" | "bucket" | "select";
+export type Tool = "paint" | "bucket" | "select" | "eraser";
 
 const MAX_UNDO = 100;
 

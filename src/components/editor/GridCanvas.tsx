@@ -133,11 +133,12 @@ export default function GridCanvas({
       const cell = getGridCoords(e.clientX, e.clientY);
       if (!cell) return;
 
-      if (activeTool === "paint") {
+      if (activeTool === "paint" || activeTool === "eraser") {
+        const color = activeTool === "eraser" ? 0 as ColorIndex : activeColor;
         isPaintingRef.current = true;
         lastPaintedCellRef.current = cell;
         onStartBatchPaint();
-        onBatchPaintCell(cell.x, cell.y, activeColor);
+        onBatchPaintCell(cell.x, cell.y, color);
       } else if (activeTool === "bucket") {
         onFloodFill(cell.x, cell.y, activeColor);
       } else if (activeTool === "select") {
@@ -161,7 +162,8 @@ export default function GridCanvas({
     (e: React.PointerEvent) => {
       if (touchCountRef.current > 1) return;
 
-      if (isPaintingRef.current && activeTool === "paint") {
+      if (isPaintingRef.current && (activeTool === "paint" || activeTool === "eraser")) {
+        const color = activeTool === "eraser" ? 0 as ColorIndex : activeColor;
         const cell = getGridCoords(e.clientX, e.clientY);
         if (
           cell &&
@@ -169,7 +171,7 @@ export default function GridCanvas({
             cell.y !== lastPaintedCellRef.current?.y)
         ) {
           lastPaintedCellRef.current = cell;
-          onBatchPaintCell(cell.x, cell.y, activeColor);
+          onBatchPaintCell(cell.x, cell.y, color);
         }
       }
 

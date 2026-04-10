@@ -7,10 +7,13 @@ import {
   BackgroundVariant,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   addEdge,
+  ReactFlowProvider,
   type Connection,
   type Node,
   type Edge,
+  type EdgeMouseHandler,
   MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -41,13 +44,14 @@ interface DashboardCanvasProps {
   initialConnections: DBConnection[];
 }
 
-export default function DashboardCanvas({
+function DashboardCanvasInner({
   project,
   initialZentaiGamen,
   initialConnections,
 }: DashboardCanvasProps) {
   const router = useRouter();
   const supabase = createClient();
+  const reactFlowInstance = useReactFlow();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -57,14 +61,16 @@ export default function DashboardCanvas({
   const [showCamera, setShowCamera] = useState(false);
   const [scanProcessing, setScanProcessing] = useState(false);
 
-  // Context menu state
+  // Context menu state — store both screen pos and flow pos
   const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
+    screenX: number;
+    screenY: number;
+    flowX: number;
+    flowY: number;
   } | null>(null);
 
-  // Node delete menu state
-  const [deleteMenu, setDeleteMenu] = useState<{
+  // Node menu state (long-press on node: delete + rename)
+  const [nodeMenu, setNodeMenu] = useState<{
     x: number;
     y: number;
     nodeId: string;
@@ -74,7 +80,6 @@ export default function DashboardCanvas({
   // Long press detection
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
-  const reactFlowRef = useRef<HTMLDivElement>(null);
 
   // Load templates
   useEffect(() => {
@@ -93,10 +98,7 @@ export default function DashboardCanvas({
   );
 
   const buildNodes = useCallback(
-    (
-      zentaiGamenList: ZentaiGamen[],
-      connections: DBConnection[]
-    ): Node[] => {
+    (zentaiGamenList: ZentaiGamen[], connections: DBConnection[]): Node[] => {
       const sourceIds = new Set(connections.map((c) => c.source_id));
       return zentaiGamenList.map((zg) => ({
         id: zg.id,
@@ -137,9 +139,11 @@ export default function DashboardCanvas({
     buildEdges(initialConnections)
   );
 
+  // Connect nodes
   const onConnect = useCallback(
     async (connection: Connection) => {
       if (!connection.source || !connection.target) return;
+      if (connection.source === connection.target) return;
       const { data, error } = await supabase
         .from("connections")
         .insert({
@@ -178,15 +182,16 @@ export default function DashboardCanvas({
     [project.id, supabase, setEdges, setNodes]
   );
 
-  const onEdgesDelete = useCallback(
-    async (deletedEdges: Edge[]) => {
-      for (const edge of deletedEdges) {
-        await supabase.from("connections").delete().eq("id", edge.id);
-      }
+  // Delete edge on click (tap)
+  const onEdgeClick: EdgeMouseHandler = useCallback(
+    async (_, edge) => {
+      await supabase.from("connections").delete().eq("id", edge.id);
+      setEdges((eds) => eds.filter((e) => e.id !== edge.id));
     },
-    [supabase]
+    [supabase, setEdges]
   );
 
+  // Save node position on drag end
   const onNodeDragStop = useCallback(
     async (_: unknown, node: Node) => {
       await supabase
@@ -197,13 +202,26 @@ export default function DashboardCanvas({
     [supabase]
   );
 
-  // Long press handlers
-  const onPanePointerDown = useCallback((e: React.PointerEvent) => {
-    longPressStartRef.current = { x: e.clientX, y: e.clientY };
-    longPressTimerRef.current = setTimeout(() => {
-      setContextMenu({ x: e.clientX, y: e.clientY });
-    }, 500);
-  }, []);
+  // Long press on pane — convert screen coords to flow coords for accurate placement
+  const onPanePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      longPressStartRef.current = { x: e.clientX, y: e.clientY };
+      longPressTimerRef.current = setTimeout(() => {
+        // Convert screen position to flow position
+        const flowPos = reactFlowInstance.screenToFlowPosition({
+          x: e.clientX,
+          y: e.clientY,
+        });
+        setContextMenu({
+          screenX: e.clientX,
+          screenY: e.clientY,
+          flowX: flowPos.x,
+          flowY: flowPos.y,
+        });
+      }, 500);
+    },
+    [reactFlowInstance]
+  );
 
   const onPanePointerMove = useCallback((e: React.PointerEvent) => {
     if (longPressStartRef.current) {
@@ -226,17 +244,35 @@ export default function DashboardCanvas({
     longPressStartRef.current = null;
   }, []);
 
-  // Helper: create zentai_gamen with grid data and navigate to editor
+  // Long press on node
+  const onNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      event.preventDefault();
+      const nodeData = node.data as unknown as { name: string };
+      setNodeMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: node.id,
+        nodeName: nodeData.name ?? "Untitled",
+      });
+    },
+    []
+  );
+
+  // Helper: create zentai_gamen at the flow position and navigate
   const createAndNavigate = useCallback(
     async (gridData: string, name: string) => {
+      const posX = contextMenu?.flowX ?? 0;
+      const posY = contextMenu?.flowY ?? 0;
+
       const { data, error } = await supabase
         .from("zentai_gamen")
         .insert({
           project_id: project.id,
           name,
           grid_data: gridData,
-          position_x: contextMenu?.x ?? 200,
-          position_y: contextMenu?.y ?? 200,
+          position_x: posX,
+          position_y: posY,
         })
         .select()
         .single();
@@ -274,14 +310,11 @@ export default function DashboardCanvas({
   );
 
   // Import
-  const handleImportFile = useCallback(
-    (type: "xlsx" | "csv") => {
-      fileTypeRef.current = type;
-      setContextMenu(null);
-      setTimeout(() => fileInputRef.current?.click(), 100);
-    },
-    []
-  );
+  const handleImportFile = useCallback((type: "xlsx" | "csv") => {
+    fileTypeRef.current = type;
+    setContextMenu(null);
+    setTimeout(() => fileInputRef.current?.click(), 100);
+  }, []);
 
   const handleFileSelected = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -291,31 +324,19 @@ export default function DashboardCanvas({
 
       try {
         let cells: Uint8Array;
-
         if (fileTypeRef.current === "csv") {
           const text = await file.text();
-          const result = parseCsv(
-            text,
-            project.grid_width,
-            project.grid_height
-          );
-          cells = result.cells;
+          cells = parseCsv(text, project.grid_width, project.grid_height).cells;
         } else {
           const buffer = await file.arrayBuffer();
-          const result = parseExcel(
-            buffer,
-            project.grid_width,
-            project.grid_height
-          );
-          cells = result.cells;
+          cells = parseExcel(buffer, project.grid_width, project.grid_height).cells;
         }
 
         let binary = "";
         for (let i = 0; i < cells.length; i++) {
           binary += String.fromCharCode(cells[i]);
         }
-        const gridData = btoa(binary);
-        await createAndNavigate(gridData, file.name.replace(/\.\w+$/, ""));
+        await createAndNavigate(btoa(binary), file.name.replace(/\.\w+$/, ""));
       } catch {
         alert("ファイルの読み込みに失敗しました");
       }
@@ -333,7 +354,6 @@ export default function DashboardCanvas({
     async (imageBase64: string) => {
       setShowCamera(false);
       setScanProcessing(true);
-
       try {
         const res = await fetch("/api/scan", {
           method: "POST",
@@ -344,13 +364,11 @@ export default function DashboardCanvas({
             gridHeight: project.grid_height,
           }),
         });
-
         if (!res.ok) {
           const err = await res.json();
           alert(`スキャン失敗: ${err.error}`);
           return;
         }
-
         const { gridData } = await res.json();
         await createAndNavigate(gridData, "スキャン");
       } catch {
@@ -364,20 +382,35 @@ export default function DashboardCanvas({
 
   // Delete node
   const handleDeleteNode = useCallback(async () => {
-    if (!deleteMenu) return;
-    await supabase
-      .from("zentai_gamen")
-      .delete()
-      .eq("id", deleteMenu.nodeId);
-    setNodes((nds) => nds.filter((n) => n.id !== deleteMenu.nodeId));
+    if (!nodeMenu) return;
+    await supabase.from("zentai_gamen").delete().eq("id", nodeMenu.nodeId);
+    setNodes((nds) => nds.filter((n) => n.id !== nodeMenu.nodeId));
     setEdges((eds) =>
       eds.filter(
-        (e) =>
-          e.source !== deleteMenu.nodeId && e.target !== deleteMenu.nodeId
+        (e) => e.source !== nodeMenu.nodeId && e.target !== nodeMenu.nodeId
       )
     );
-    setDeleteMenu(null);
-  }, [deleteMenu, supabase, setNodes, setEdges]);
+    setNodeMenu(null);
+  }, [nodeMenu, supabase, setNodes, setEdges]);
+
+  // Rename node
+  const handleRenameNode = useCallback(
+    async (newName: string) => {
+      if (!nodeMenu) return;
+      await supabase
+        .from("zentai_gamen")
+        .update({ name: newName })
+        .eq("id", nodeMenu.nodeId);
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === nodeMenu.nodeId
+            ? { ...n, data: { ...n.data, name: newName } }
+            : n
+        )
+      );
+    },
+    [nodeMenu, supabase, setNodes]
+  );
 
   // Build submenu items
   const templateMenuItems: SubMenuItem[] = templates.map((t) => ({
@@ -391,7 +424,6 @@ export default function DashboardCanvas({
 
   return (
     <div className="h-full w-full relative">
-      {/* Hidden file input for import */}
       <input
         ref={fileInputRef}
         type="file"
@@ -400,7 +432,7 @@ export default function DashboardCanvas({
         onChange={handleFileSelected}
       />
 
-      {/* Hamburger button */}
+      {/* Hamburger */}
       <button
         onClick={() => setSidebarOpen(true)}
         className="absolute top-4 left-4 z-30 w-10 h-10 flex flex-col items-center justify-center gap-1 bg-card border border-card-border rounded-lg hover:border-accent/50 transition-colors"
@@ -423,7 +455,6 @@ export default function DashboardCanvas({
 
       {/* React Flow */}
       <div
-        ref={reactFlowRef}
         className="h-full w-full"
         onPointerDown={onPanePointerDown}
         onPointerMove={onPanePointerMove}
@@ -435,14 +466,16 @@ export default function DashboardCanvas({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
-          onEdgesDelete={onEdgesDelete}
+          onEdgeClick={onEdgeClick}
           onNodeDragStop={onNodeDragStop}
+          onNodeContextMenu={onNodeContextMenu}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           minZoom={0.1}
           maxZoom={3}
-          fitView
+          defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
           proOptions={{ hideAttribution: true }}
+          connectionRadius={80}
           className="!bg-background"
         >
           <Background
@@ -457,8 +490,8 @@ export default function DashboardCanvas({
       {/* Context menu */}
       {contextMenu && (
         <ContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
+          x={contextMenu.screenX}
+          y={contextMenu.screenY}
           onManual={handleCreateManual}
           onScan={handleScan}
           onSelectTemplate={handleSelectTemplate}
@@ -470,14 +503,15 @@ export default function DashboardCanvas({
         />
       )}
 
-      {/* Node delete menu */}
-      {deleteMenu && (
+      {/* Node menu (delete + rename) */}
+      {nodeMenu && (
         <NodeDeleteMenu
-          x={deleteMenu.x}
-          y={deleteMenu.y}
-          nodeName={deleteMenu.nodeName}
+          x={nodeMenu.x}
+          y={nodeMenu.y}
+          nodeName={nodeMenu.nodeName}
           onDelete={handleDeleteNode}
-          onClose={() => setDeleteMenu(null)}
+          onRename={handleRenameNode}
+          onClose={() => setNodeMenu(null)}
         />
       )}
 
@@ -497,5 +531,14 @@ export default function DashboardCanvas({
         projectName={project.name}
       />
     </div>
+  );
+}
+
+// Wrap with ReactFlowProvider so useReactFlow works
+export default function DashboardCanvas(props: DashboardCanvasProps) {
+  return (
+    <ReactFlowProvider>
+      <DashboardCanvasInner {...props} />
+    </ReactFlowProvider>
   );
 }

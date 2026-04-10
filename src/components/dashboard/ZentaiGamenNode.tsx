@@ -50,12 +50,12 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
 
   return (
     <div
-      className="bg-card border border-card-border rounded-lg shadow-lg overflow-hidden cursor-pointer select-none"
+      className="bg-card border border-card-border rounded-lg shadow-lg overflow-visible cursor-pointer select-none relative"
       style={{ width: 176 }}
       onDoubleClick={() => nodeData.onDoubleClick(id)}
     >
       {/* Thumbnail */}
-      <div className="p-2 bg-background/50">
+      <div className="p-2 bg-background/50 rounded-t-lg">
         <canvas
           ref={canvasRef}
           className="w-full rounded"
@@ -68,22 +68,22 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
         {nodeData.name}
       </div>
 
-      {/* Target handle (left) */}
+      {/* Target handle — full node area, invisible, easy to connect to */}
       <Handle
         type="target"
         position={Position.Left}
-        className="!w-3 !h-3 !bg-accent !border-2 !border-card"
+        className="!w-full !h-full !top-0 !left-0 !transform-none !rounded-lg !bg-transparent !border-0"
       />
 
-      {/* Source handle (top-right arrow) */}
+      {/* Source handle — top-right corner arrow */}
       <Handle
         type="source"
         position={Position.Right}
-        className="!w-4 !h-4 !border-0 !rounded-none !bg-transparent"
-        style={{ top: 8, right: -2 }}
+        className="!w-5 !h-5 !border-0 !rounded-none !bg-transparent"
+        style={{ top: -6, right: -10 }}
       >
         <div
-          className={`w-4 h-4 flex items-center justify-center text-xs pointer-events-none ${
+          className={`w-5 h-5 flex items-center justify-center text-sm pointer-events-none font-bold ${
             nodeData.hasOutgoingEdge ? "text-accent/40" : "text-accent"
           }`}
         >

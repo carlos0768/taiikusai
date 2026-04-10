@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "taiikusai - パネル演出ツール",
+  title: "パネルツール",
   description: "体育祭パネル競技のデザイン・アニメーション管理ツール",
 };
 
