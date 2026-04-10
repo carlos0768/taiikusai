@@ -52,3 +52,29 @@ html, body {
   background: #333;
   border-radius: 3px;
 }
+
+/* React Flow overrides — remove selection outlines and handle hover effects */
+.react-flow__node.selected,
+.react-flow__node:focus,
+.react-flow__node:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.react-flow__node.selected > div {
+  box-shadow: none !important;
+}
+
+.react-flow__handle:hover {
+  background-color: inherit !important;
+  transform: none !important;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #FFD700 !important;
+}
+
+/* Hide the default marker arrow that React Flow renders */
+.react-flow__arrowhead {
+  display: none !important;
+}

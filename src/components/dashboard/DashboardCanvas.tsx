@@ -14,7 +14,6 @@ import {
   type Node,
   type Edge,
   type EdgeMouseHandler,
-  MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useRouter } from "next/navigation";
@@ -141,12 +140,7 @@ function DashboardCanvasInner({
       source: conn.source_id,
       target: conn.target_id,
       type: "connection",
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        color: "#FFD700",
-        width: 3,
-        height: 3,
-      },
+      markerEnd: undefined,
     }));
   }, []);
 
@@ -179,12 +173,7 @@ function DashboardCanvasInner({
             ...connection,
             id: data.id,
             type: "connection",
-            markerEnd: {
-              type: MarkerType.ArrowClosed,
-              color: "#FFD700",
-              width: 20,
-              height: 20,
-            },
+            markerEnd: undefined,
           },
           eds
         )
