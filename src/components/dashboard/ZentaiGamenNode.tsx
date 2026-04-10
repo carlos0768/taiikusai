@@ -21,7 +21,6 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
-  const handleAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -125,25 +124,15 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
         className="!w-3 !h-3 !bg-accent !border-2 !border-card"
       />
 
-      {/* Source handle — top-right corner with arrow icon */}
-      <div
-        ref={handleAreaRef}
-        className="absolute"
-        style={{ top: -10, right: -10, width: 24, height: 24 }}
-      >
-        <Handle
-          type="source"
-          position={Position.Top}
-          className="!w-full !h-full !top-0 !left-0 !transform-none !rounded-none !bg-transparent !border-0"
-        />
-        <div
-          className={`absolute inset-0 flex items-center justify-center text-base font-bold pointer-events-none ${
-            nodeData.hasOutgoingEdge ? "text-accent/40" : "text-accent"
-          }`}
-        >
-          ↗
-        </div>
-      </div>
+      {/* Source handle — small yellow circle at top-right corner */}
+      <Handle
+        type="source"
+        position={Position.Top}
+        className={`!w-3 !h-3 !rounded-full !border-0 ${
+          nodeData.hasOutgoingEdge ? "!bg-accent/40" : "!bg-accent"
+        }`}
+        style={{ top: -6, left: "auto", right: -6 }}
+      />
     </div>
   );
 }
