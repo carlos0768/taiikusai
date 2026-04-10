@@ -42,6 +42,7 @@ export default function GridEditor({
     clearDirty,
   } = useGridState(initialGrid);
 
+  const [isEditing, setIsEditing] = useState(false);
   const [activeTool, setActiveTool] = useState<Tool>("paint");
   const [activeColor, setActiveColor] = useState<ColorIndex>(1); // yellow default
   const [viewport, setViewport] = useState<Viewport>({
@@ -167,6 +168,8 @@ export default function GridEditor({
         onFillSelection={handleFillSelection}
         onClearSelection={handleClearSelection}
         onSaveAsTemplate={() => setShowTemplateSave(true)}
+        isEditing={isEditing}
+        onToggleEdit={() => setIsEditing(!isEditing)}
       />
 
       <GridCanvas
@@ -184,7 +187,9 @@ export default function GridEditor({
         onViewportChange={setViewport}
       />
 
-      <ColorPalette activeColor={activeColor} onColorChange={setActiveColor} />
+      {isEditing && (
+        <ColorPalette activeColor={activeColor} onColorChange={setActiveColor} />
+      )}
 
       {showTemplateSave && (
         <TemplateSaveDialog
