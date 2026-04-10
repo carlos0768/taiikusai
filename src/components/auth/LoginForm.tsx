@@ -13,8 +13,12 @@ export default function LoginForm() {
   const router = useRouter();
   const supabase = createClient();
 
-  const syntheticEmail = (name: string) =>
-    `${name.toLowerCase().trim()}@taiikusai.app`;
+  // Convert any username (including Japanese) to ASCII-safe synthetic email
+  const syntheticEmail = (name: string) => {
+    const encoded = btoa(encodeURIComponent(name.trim().toLowerCase()))
+      .replace(/[+/=]/g, (c) => (c === "+" ? "0" : c === "/" ? "1" : ""));
+    return `u_${encoded}@taiikusai.app`;
+  };
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
