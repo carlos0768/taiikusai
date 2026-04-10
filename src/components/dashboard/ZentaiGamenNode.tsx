@@ -101,8 +101,13 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
 
   const handlePointerUp = useCallback(() => {
     cancelLongPress();
-    // Single tap: didn't move and didn't trigger long press → open editor
-    if (!didMoveRef.current && !longPressTriggeredRef.current) {
+    // Single tap: only if pointerDown was tracked (not on handle area)
+    // and didn't move and didn't trigger long press
+    if (
+      longPressStartRef.current &&
+      !didMoveRef.current &&
+      !longPressTriggeredRef.current
+    ) {
       nodeData.onDoubleClick(id);
     }
     longPressStartRef.current = null;

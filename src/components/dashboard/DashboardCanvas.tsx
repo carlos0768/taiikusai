@@ -516,6 +516,7 @@ function DashboardCanvasInner({
           fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
           proOptions={{ hideAttribution: true }}
           connectionRadius={80}
+          connectionLineStyle={{ stroke: "#FFD700", strokeWidth: 3 }}
           className="!bg-background"
         >
           <Background
