@@ -5,27 +5,19 @@ import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
 export default function LoginForm() {
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const supabase = createClient();
 
-  // Convert any username (including Japanese) to ASCII-safe synthetic email
-  const syntheticEmail = (name: string) => {
-    const encoded = btoa(encodeURIComponent(name.trim().toLowerCase()))
-      .replace(/[+/=]/g, (c) => (c === "+" ? "0" : c === "/" ? "1" : ""));
-    return `u_${encoded}@taiikusai.app`;
-  };
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
-
-    const email = syntheticEmail(username);
 
     try {
       if (isSignUp) {
@@ -45,13 +37,13 @@ export default function LoginForm() {
         if (user) {
           await supabase
             .from("profiles")
-            .upsert({ id: user.id, username: username.trim() });
+            .upsert({ id: user.id, username: displayName.trim() || email });
         }
       } else {
         const { error: signInError } =
           await supabase.auth.signInWithPassword({ email, password });
         if (signInError) {
-          setError("ユーザー名またはパスワードが正しくありません");
+          setError("メールアドレスまたはパスワードが正しくありません");
           return;
         }
       }
@@ -73,22 +65,42 @@ export default function LoginForm() {
       </p>
 
       <form onSubmit={handleSubmit} className="space-y-4">
+        {isSignUp && (
+          <div>
+            <label
+              htmlFor="displayName"
+              className="block text-sm font-medium mb-1"
+            >
+              表示名
+            </label>
+            <input
+              id="displayName"
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              autoComplete="name"
+              className="w-full px-3 py-2 bg-card border border-card-border rounded-lg text-foreground focus:outline-none focus:border-accent transition-colors"
+              placeholder="例: たなかともき"
+            />
+          </div>
+        )}
+
         <div>
           <label
-            htmlFor="username"
+            htmlFor="email"
             className="block text-sm font-medium mb-1"
           >
-            ユーザー名
+            メールアドレス
           </label>
           <input
-            id="username"
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            id="email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
             required
-            autoComplete="username"
+            autoComplete="email"
             className="w-full px-3 py-2 bg-card border border-card-border rounded-lg text-foreground focus:outline-none focus:border-accent transition-colors"
-            placeholder="ユーザー名を入力"
+            placeholder="example@email.com"
           />
         </div>
 
