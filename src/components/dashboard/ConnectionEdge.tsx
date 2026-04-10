@@ -3,7 +3,7 @@
 import { memo } from "react";
 import {
   BaseEdge,
-  getStraightPath,
+  getBezierPath,
   type EdgeProps,
 } from "@xyflow/react";
 
@@ -13,14 +13,18 @@ function ConnectionEdgeComponent({
   sourceY,
   targetX,
   targetY,
+  sourcePosition,
+  targetPosition,
   style,
   markerEnd,
 }: EdgeProps) {
-  const [edgePath] = getStraightPath({
+  const [edgePath] = getBezierPath({
     sourceX,
     sourceY,
+    sourcePosition,
     targetX,
     targetY,
+    targetPosition,
   });
 
   return (
@@ -29,7 +33,8 @@ function ConnectionEdgeComponent({
       path={edgePath}
       style={{
         stroke: "#FFD700",
-        strokeWidth: 2,
+        strokeWidth: 3,
+        cursor: "pointer",
         ...style,
       }}
       markerEnd={markerEnd}

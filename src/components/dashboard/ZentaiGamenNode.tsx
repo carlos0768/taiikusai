@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { COLOR_MAP, type ColorIndex } from "@/lib/grid/types";
 import { decodeGrid } from "@/lib/grid/codec";
@@ -12,12 +12,15 @@ export interface ZentaiGamenNodeData {
   gridHeight: number;
   hasOutgoingEdge: boolean;
   onDoubleClick: (id: string) => void;
+  onLongPress: (id: string, name: string, x: number, y: number) => void;
   [key: string]: unknown;
 }
 
 function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
   const nodeData = data as unknown as ZentaiGamenNodeData;
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -32,7 +35,9 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
       nodeData.gridHeight
     );
     const thumbW = 160;
-    const thumbH = Math.round((nodeData.gridHeight / nodeData.gridWidth) * thumbW);
+    const thumbH = Math.round(
+      (nodeData.gridHeight / nodeData.gridWidth) * thumbW
+    );
     canvas.width = thumbW;
     canvas.height = thumbH;
 
@@ -48,11 +53,47 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
     }
   }, [nodeData.gridData, nodeData.gridWidth, nodeData.gridHeight]);
 
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      longPressStartRef.current = { x: e.clientX, y: e.clientY };
+      longPressTimerRef.current = setTimeout(() => {
+        nodeData.onLongPress(id, nodeData.name, e.clientX, e.clientY);
+        longPressTimerRef.current = null;
+      }, 600);
+    },
+    [id, nodeData]
+  );
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (longPressStartRef.current) {
+      const dx = e.clientX - longPressStartRef.current.x;
+      const dy = e.clientY - longPressStartRef.current.y;
+      if (Math.sqrt(dx * dx + dy * dy) > 10) {
+        if (longPressTimerRef.current) {
+          clearTimeout(longPressTimerRef.current);
+          longPressTimerRef.current = null;
+        }
+      }
+    }
+  }, []);
+
+  const handlePointerUp = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressStartRef.current = null;
+  }, []);
+
   return (
     <div
-      className="bg-card border border-card-border rounded-lg shadow-lg overflow-visible cursor-pointer select-none relative"
-      style={{ width: 176 }}
+      className="bg-card border border-card-border rounded-lg shadow-lg overflow-visible select-none relative"
+      style={{ width: 176, cursor: "grab" }}
       onDoubleClick={() => nodeData.onDoubleClick(id)}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
     >
       {/* Thumbnail */}
       <div className="p-2 bg-background/50 rounded-t-lg">
@@ -68,28 +109,24 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
         {nodeData.name}
       </div>
 
-      {/* Target handle — full node area, invisible, easy to connect to */}
+      {/* Target handle — small circle on left side */}
       <Handle
         type="target"
         position={Position.Left}
-        className="!w-full !h-full !top-0 !left-0 !transform-none !rounded-lg !bg-transparent !border-0"
+        className="!w-3 !h-3 !bg-accent !border-2 !border-card"
       />
 
-      {/* Source handle — top-right corner arrow */}
+      {/* Source handle — top-right corner, styled as arrow circle */}
       <Handle
         type="source"
-        position={Position.Right}
-        className="!w-5 !h-5 !border-0 !rounded-none !bg-transparent"
-        style={{ top: -6, right: -10 }}
-      >
-        <div
-          className={`w-5 h-5 flex items-center justify-center text-sm pointer-events-none font-bold ${
-            nodeData.hasOutgoingEdge ? "text-accent/40" : "text-accent"
-          }`}
-        >
-          ↗
-        </div>
-      </Handle>
+        position={Position.Top}
+        className={`!w-4 !h-4 !rounded-full !border-2 ${
+          nodeData.hasOutgoingEdge
+            ? "!bg-accent/30 !border-accent/30"
+            : "!bg-accent !border-accent"
+        }`}
+        style={{ top: -8, left: "auto", right: -8 }}
+      />
     </div>
   );
 }

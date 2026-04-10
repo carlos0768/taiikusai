@@ -97,6 +97,14 @@ function DashboardCanvasInner({
     [project.id, router]
   );
 
+  // Node long-press callback (called from ZentaiGamenNode)
+  const handleNodeLongPress = useCallback(
+    (nodeId: string, nodeName: string, x: number, y: number) => {
+      setNodeMenu({ x, y, nodeId, nodeName });
+    },
+    []
+  );
+
   const buildNodes = useCallback(
     (zentaiGamenList: ZentaiGamen[], connections: DBConnection[]): Node[] => {
       const sourceIds = new Set(connections.map((c) => c.source_id));
@@ -111,10 +119,11 @@ function DashboardCanvasInner({
           gridHeight: project.grid_height,
           hasOutgoingEdge: sourceIds.has(zg.id),
           onDoubleClick: handleNodeDoubleClick,
+          onLongPress: handleNodeLongPress,
         },
       }));
     },
-    [project.grid_width, project.grid_height, handleNodeDoubleClick]
+    [project.grid_width, project.grid_height, handleNodeDoubleClick, handleNodeLongPress]
   );
 
   const buildEdges = useCallback((connections: DBConnection[]): Edge[] => {
@@ -244,7 +253,7 @@ function DashboardCanvasInner({
     longPressStartRef.current = null;
   }, []);
 
-  // Long press on node
+  // Also support right-click context menu on desktop
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node) => {
       event.preventDefault();
