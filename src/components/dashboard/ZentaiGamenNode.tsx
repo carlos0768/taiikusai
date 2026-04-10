@@ -53,12 +53,14 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
     }
   }, [nodeData.gridData, nodeData.gridWidth, nodeData.gridHeight]);
 
+  const didMoveRef = useRef(false);
+  const longPressTriggeredRef = useRef(false);
+
   const cancelLongPress = useCallback(() => {
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
-    longPressStartRef.current = null;
   }, []);
 
   const handlePointerDown = useCallback(
@@ -68,11 +70,15 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
       const localX = e.clientX - rect.left;
       const localY = e.clientY - rect.top;
       if (localX > rect.width - 30 && localY < 30) {
-        return; // source handle area, skip long press
+        return;
       }
 
       longPressStartRef.current = { x: e.clientX, y: e.clientY };
+      didMoveRef.current = false;
+      longPressTriggeredRef.current = false;
+
       longPressTimerRef.current = setTimeout(() => {
+        longPressTriggeredRef.current = true;
         nodeData.onLongPress(id, nodeData.name, e.clientX, e.clientY);
         longPressTimerRef.current = null;
       }, 600);
@@ -86,6 +92,7 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
         const dx = e.clientX - longPressStartRef.current.x;
         const dy = e.clientY - longPressStartRef.current.y;
         if (Math.sqrt(dx * dx + dy * dy) > 10) {
+          didMoveRef.current = true;
           cancelLongPress();
         }
       }
@@ -93,15 +100,23 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
     [cancelLongPress]
   );
 
+  const handlePointerUp = useCallback(() => {
+    cancelLongPress();
+    // Single tap: didn't move and didn't trigger long press → open editor
+    if (!didMoveRef.current && !longPressTriggeredRef.current) {
+      nodeData.onDoubleClick(id);
+    }
+    longPressStartRef.current = null;
+  }, [cancelLongPress, nodeData, id]);
+
   return (
     <div
       className="bg-card border border-card-border rounded-lg shadow-lg overflow-visible select-none relative"
       style={{ width: 176, cursor: "grab" }}
-      onDoubleClick={() => nodeData.onDoubleClick(id)}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
-      onPointerUp={cancelLongPress}
-      onPointerCancel={cancelLongPress}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={() => { cancelLongPress(); longPressStartRef.current = null; }}
     >
       {/* Thumbnail */}
       <div className="p-2 bg-background/50 rounded-t-lg">
