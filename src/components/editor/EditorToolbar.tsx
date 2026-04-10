@@ -20,6 +20,9 @@ interface EditorToolbarProps {
   onSaveAsTemplate: () => void;
   isEditing: boolean;
   onToggleEdit: () => void;
+  onExport: () => void;
+  onToggleMemo: () => void;
+  showMemo: boolean;
 }
 
 const tools: { id: Tool; label: string; icon: string }[] = [
@@ -47,6 +50,9 @@ export default function EditorToolbar({
   onSaveAsTemplate,
   isEditing,
   onToggleEdit,
+  onExport,
+  onToggleMemo,
+  showMemo,
 }: EditorToolbarProps) {
   return (
     <div className="flex flex-col bg-card border-b border-card-border">
@@ -66,6 +72,24 @@ export default function EditorToolbar({
           onChange={(e) => onNameChange(e.target.value)}
           className="flex-1 bg-transparent text-foreground font-medium px-2 py-1 border-b border-transparent hover:border-card-border focus:border-accent focus:outline-none transition-colors min-w-0"
         />
+
+        <button
+          onClick={onExport}
+          className="px-3 py-1 text-sm text-muted hover:text-foreground transition-colors shrink-0"
+        >
+          パネル出力
+        </button>
+
+        <button
+          onClick={onToggleMemo}
+          className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
+            showMemo
+              ? "bg-accent/20 text-accent"
+              : "text-muted hover:text-foreground"
+          }`}
+        >
+          メモ
+        </button>
 
         <button
           onClick={onToggleEdit}

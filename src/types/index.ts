@@ -23,6 +23,7 @@ export interface ZentaiGamen {
   thumbnail: string | null;
   position_x: number;
   position_y: number;
+  memo: string;
   created_at: string;
   updated_at: string;
 }

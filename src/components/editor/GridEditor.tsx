@@ -18,7 +18,9 @@ interface GridEditorProps {
   zentaiGamenId: string;
   projectId: string;
   initialName: string;
-  onSave: (gridData: string, name: string, thumbnail?: string) => Promise<void>;
+  initialMemo: string;
+  onSave: (gridData: string, name: string, memo: string) => Promise<void>;
+  onExport: () => void;
 }
 
 export default function GridEditor({
@@ -26,7 +28,9 @@ export default function GridEditor({
   zentaiGamenId,
   projectId,
   initialName,
+  initialMemo,
   onSave,
+  onExport,
 }: GridEditorProps) {
   const {
     gridRef,
@@ -44,7 +48,7 @@ export default function GridEditor({
 
   const [isEditing, setIsEditing] = useState(false);
   const [activeTool, setActiveTool] = useState<Tool>("paint");
-  const [activeColor, setActiveColor] = useState<ColorIndex>(1); // yellow default
+  const [activeColor, setActiveColor] = useState<ColorIndex>(1);
   const [viewport, setViewport] = useState<Viewport>({
     scale: 1,
     translateX: 0,
@@ -57,10 +61,12 @@ export default function GridEditor({
     y2: number;
   } | null>(null);
   const [name, setName] = useState(initialName);
+  const [memo, setMemo] = useState(initialMemo);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">(
     "saved"
   );
   const [showTemplateSave, setShowTemplateSave] = useState(false);
+  const [showMemo, setShowMemo] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
 
@@ -77,7 +83,7 @@ export default function GridEditor({
       setSaveStatus("saving");
       try {
         const encoded = encodeGrid(gridRef.current!);
-        await onSave(encoded, name);
+        await onSave(encoded, name, memo);
         clearDirty();
         setSaveStatus("saved");
       } catch {
@@ -88,9 +94,9 @@ export default function GridEditor({
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [revision, dirty, name, onSave, gridRef, clearDirty]);
+  }, [revision, dirty, name, memo, onSave, gridRef, clearDirty]);
 
-  // Save name changes
+  // Save name/memo changes
   useEffect(() => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -99,7 +105,7 @@ export default function GridEditor({
       setSaveStatus("saving");
       try {
         const encoded = encodeGrid(gridRef.current!);
-        await onSave(encoded, name);
+        await onSave(encoded, name, memo);
         setSaveStatus("saved");
       } catch {
         setSaveStatus("unsaved");
@@ -109,7 +115,7 @@ export default function GridEditor({
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [name]);
+  }, [name, memo]);
 
   const handleFillSelection = useCallback(() => {
     if (!selection) return;
@@ -122,13 +128,12 @@ export default function GridEditor({
   }, []);
 
   const handleBack = useCallback(() => {
-    // Save before navigating away
     if (dirty) {
       const encoded = encodeGrid(gridRef.current!);
-      onSave(encoded, name);
+      onSave(encoded, name, memo);
     }
     router.push(`/project/${projectId}`);
-  }, [dirty, gridRef, name, onSave, projectId, router]);
+  }, [dirty, gridRef, name, memo, onSave, projectId, router]);
 
   const handlePlay = useCallback(() => {
     router.push(`/project/${projectId}/playback?start=${zentaiGamenId}`);
@@ -170,7 +175,24 @@ export default function GridEditor({
         onSaveAsTemplate={() => setShowTemplateSave(true)}
         isEditing={isEditing}
         onToggleEdit={() => setIsEditing(!isEditing)}
+        onExport={onExport}
+        onToggleMemo={() => setShowMemo(!showMemo)}
+        showMemo={showMemo}
       />
+
+      {/* Memo input */}
+      {showMemo && (
+        <div className="px-3 py-2 bg-card border-b border-card-border">
+          <label className="text-xs text-muted mb-1 block">動き指示メモ</label>
+          <input
+            type="text"
+            value={memo}
+            onChange={(e) => setMemo(e.target.value)}
+            placeholder="例: 笛でとじる、ウェーブ、長め..."
+            className="w-full px-2 py-1.5 bg-background border border-card-border rounded text-sm text-foreground focus:outline-none focus:border-accent"
+          />
+        </div>
+      )}
 
       <GridCanvas
         gridRef={gridRef as React.RefObject<GridData>}
