@@ -116,16 +116,18 @@ export default function EditorToolbar({
 
         {isMoveMode && (
           <>
-            <button
-              onClick={onToggleMoveSelecting}
-              className={`px-2 py-1 text-[10px] rounded transition-colors shrink-0 ${
-                isMoveSelecting
-                  ? "bg-accent/20 text-accent"
-                  : "text-muted hover:text-foreground"
-              }`}
-            >
-              {isMoveSelecting ? "選択確定" : "再選択"}
-            </button>
+            {(hasMoveSelection || !isMoveSelecting) && (
+              <button
+                onClick={onToggleMoveSelecting}
+                className={`px-2 py-1 text-[10px] rounded transition-colors shrink-0 ${
+                  isMoveSelecting
+                    ? "bg-accent/20 text-accent"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                {isMoveSelecting ? "選択確定" : "再選択"}
+              </button>
+            )}
             <button
               onClick={onUndo}
               disabled={!canUndo}
