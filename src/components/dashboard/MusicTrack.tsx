@@ -70,6 +70,7 @@ export default function MusicTrack({
   const [endTime, setEndTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [offsetSec, setOffsetSec] = useState(0);
   const [showInput, setShowInput] = useState(false);
   const playerRef = useRef<YTPlayer | null>(null);
   const apiLoadedRef = useRef(false);
@@ -218,12 +219,14 @@ export default function MusicTrack({
     setEndTime(0);
     setDuration(0);
     setCurrentTime(0);
+    setOffsetSec(0);
   }, []);
 
-  // Drag-to-trim logic
+  // Drag-to-trim / drag-to-move logic
   const barRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef<"start" | "end" | "move" | null>(null);
-  const moveAnchorRef = useRef(0); // time offset within trim region where drag started
+  const moveStartXRef = useRef(0);
+  const moveStartOffsetRef = useRef(0);
 
   const pointerToTime = useCallback(
     (clientX: number) => {
@@ -251,30 +254,28 @@ export default function MusicTrack({
       e.stopPropagation();
       e.preventDefault();
       draggingRef.current = "move";
-      const t = pointerToTime(e.clientX);
-      moveAnchorRef.current = t - startTime;
+      moveStartXRef.current = e.clientX;
+      moveStartOffsetRef.current = offsetSec;
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
     },
-    [pointerToTime, startTime]
+    [offsetSec]
   );
 
   const handleTrimPointerMove = useCallback(
     (e: React.PointerEvent) => {
       if (!draggingRef.current) return;
-      const t = pointerToTime(e.clientX);
       if (draggingRef.current === "start") {
+        const t = pointerToTime(e.clientX);
         setStartTime(Math.max(0, Math.min(t, (endTime || duration) - 1)));
       } else if (draggingRef.current === "end") {
+        const t = pointerToTime(e.clientX);
         setEndTime(Math.max(startTime + 1, Math.min(t, duration)));
       } else if (draggingRef.current === "move") {
-        const trimLen = (endTime || duration) - startTime;
-        let newStart = t - moveAnchorRef.current;
-        newStart = Math.max(0, Math.min(newStart, duration - trimLen));
-        setStartTime(newStart);
-        setEndTime(newStart + trimLen);
+        const deltaPx = e.clientX - moveStartXRef.current;
+        setOffsetSec(moveStartOffsetRef.current + deltaPx / pxPerSecond);
       }
     },
-    [pointerToTime, startTime, endTime, duration]
+    [pointerToTime, startTime, endTime, duration, pxPerSecond]
   );
 
   const handleTrimPointerUp = useCallback(() => {
@@ -348,8 +349,8 @@ export default function MusicTrack({
       {/* Time-proportional bar */}
       <div
         ref={barRef}
-        className="h-7 bg-card-border/30 rounded relative select-none touch-none mx-3"
-        style={{ width: barWidth }}
+        className="h-7 bg-card-border/30 rounded relative select-none touch-none"
+        style={{ width: barWidth, marginLeft: 12 + offsetSec * pxPerSecond }}
         onPointerMove={handleTrimPointerMove}
         onPointerUp={handleTrimPointerUp}
       >
