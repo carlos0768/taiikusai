@@ -143,7 +143,7 @@ export default function GridCanvas({
         return;
       }
 
-      if (!isEditing) return;
+      if (!isEditing && activeTool !== "move") return;
 
       const cell = getGridCoords(e.clientX, e.clientY);
       if (!cell) return;

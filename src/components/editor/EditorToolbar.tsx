@@ -23,6 +23,8 @@ interface EditorToolbarProps {
   onExport: () => void;
   onToggleMemo: () => void;
   showMemo: boolean;
+  isMoveMode: boolean;
+  onToggleMove: () => void;
 }
 
 const tools: { id: Tool; label: string; icon: string }[] = [
@@ -30,7 +32,6 @@ const tools: { id: Tool; label: string; icon: string }[] = [
   { id: "eraser", label: "消しゴム", icon: "🧹" },
   { id: "bucket", label: "バケツ", icon: "🪣" },
   { id: "select", label: "範囲選択", icon: "⬜" },
-  { id: "move", label: "移動", icon: "✥" },
 ];
 
 export default function EditorToolbar({
@@ -53,6 +54,8 @@ export default function EditorToolbar({
   onToggleEdit,
   onExport,
   onToggleMemo,
+  isMoveMode,
+  onToggleMove,
   showMemo,
 }: EditorToolbarProps) {
   return (
@@ -90,6 +93,17 @@ export default function EditorToolbar({
           }`}
         >
           メモ
+        </button>
+
+        <button
+          onClick={onToggleMove}
+          className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
+            isMoveMode
+              ? "bg-accent/20 text-accent"
+              : "text-muted hover:text-foreground"
+          }`}
+        >
+          移動
         </button>
 
         <button
