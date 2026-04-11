@@ -8,7 +8,7 @@ export function usePlayback(frameCount: number) {
   const [isWhiteFrame, setIsWhiteFrame] = useState(false);
   // Per-frame display duration (ms)
   const [durations, setDurations] = useState<number[]>(() =>
-    Array(frameCount).fill(500)
+    Array(frameCount).fill(2000)
   );
   // Per-gap fold interval (ms)
   const [intervals, setIntervals] = useState<number[]>(() =>
