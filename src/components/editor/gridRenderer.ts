@@ -36,11 +36,24 @@ export function renderGrid(
   const offsetX = (canvasWidth / viewport.scale - gridPixelW) / 2;
   const offsetY = (canvasHeight / viewport.scale - gridPixelH) / 2;
 
+  // Build set of cells being dragged (to draw as white at source)
+  const draggingSource = new Set<string>();
+  if (moveSelectedCells && moveDragOffset && (moveDragOffset.dx !== 0 || moveDragOffset.dy !== 0)) {
+    for (const key of moveSelectedCells) {
+      draggingSource.add(key);
+    }
+  }
+
   // Draw cells
   for (let y = 0; y < grid.height; y++) {
     for (let x = 0; x < grid.width; x++) {
-      const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
-      ctx.fillStyle = COLOR_MAP[colorIdx];
+      // If this cell is being dragged away, show white
+      if (draggingSource.has(`${x},${y}`)) {
+        ctx.fillStyle = COLOR_MAP[0]; // white
+      } else {
+        const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
+        ctx.fillStyle = COLOR_MAP[colorIdx];
+      }
       ctx.fillRect(
         offsetX + x * cellSize,
         offsetY + y * cellSize,

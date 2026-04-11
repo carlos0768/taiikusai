@@ -57,6 +57,7 @@ export default function GridCanvas({
   const isSelectingRef = useRef(false);
   const isDraggingMoveRef = useRef(false);
   const moveStartRef = useRef<{ x: number; y: number } | null>(null);
+  const isRemovingRef = useRef(false); // true if first tap was a remove (toggle off)
   const selStartRef = useRef<{ x: number; y: number } | null>(null);
   const lastPaintedCellRef = useRef<{ x: number; y: number } | null>(null);
   const touchCountRef = useRef(0);
@@ -168,13 +169,14 @@ export default function GridCanvas({
       } else if (activeTool === "move") {
         const key = `${cell.x},${cell.y}`;
         if (isMoveSelecting) {
-          // Selecting mode: toggle cell (add or remove)
           isSelectingRef.current = true;
           const newSet = new Set(moveSelectedCells);
           if (newSet.has(key)) {
             newSet.delete(key);
+            isRemovingRef.current = true; // dragging will remove cells
           } else {
             newSet.add(key);
+            isRemovingRef.current = false; // dragging will add cells
           }
           onMoveSelectedCellsChange(newSet);
         } else if (moveSelectedCells.has(key)) {
@@ -228,15 +230,23 @@ export default function GridCanvas({
         }
       }
 
-      // Free selection for move tool: add cells as pointer moves
+      // Free selection for move tool: add or remove cells as pointer moves
       if (isSelectingRef.current && activeTool === "move") {
         const cell = getGridCoords(e.clientX, e.clientY);
         if (cell) {
           const key = `${cell.x},${cell.y}`;
-          if (!moveSelectedCells.has(key)) {
-            const newSet = new Set(moveSelectedCells);
-            newSet.add(key);
-            onMoveSelectedCellsChange(newSet);
+          if (isRemovingRef.current) {
+            if (moveSelectedCells.has(key)) {
+              const newSet = new Set(moveSelectedCells);
+              newSet.delete(key);
+              onMoveSelectedCellsChange(newSet);
+            }
+          } else {
+            if (!moveSelectedCells.has(key)) {
+              const newSet = new Set(moveSelectedCells);
+              newSet.add(key);
+              onMoveSelectedCellsChange(newSet);
+            }
           }
         }
       }
