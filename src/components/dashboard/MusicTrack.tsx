@@ -69,7 +69,6 @@ export default function MusicTrack({
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [showInput, setShowInput] = useState(false);
-  const [showTrim, setShowTrim] = useState(false);
   const playerRef = useRef<YTPlayer | null>(null);
   const apiLoadedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -206,12 +205,47 @@ export default function MusicTrack({
     setCurrentTime(0);
   }, []);
 
-  // Progress percentage within trim range
-  const trimDuration = (endTime || duration) - startTime;
-  const progress =
-    trimDuration > 0
-      ? Math.min(1, Math.max(0, (currentTime - startTime) / trimDuration))
-      : 0;
+  // Drag-to-trim logic
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef<"start" | "end" | null>(null);
+
+  const pointerToTime = useCallback(
+    (clientX: number) => {
+      const bar = barRef.current;
+      if (!bar || duration === 0) return 0;
+      const rect = bar.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      return ratio * duration;
+    },
+    [duration]
+  );
+
+  const handleTrimPointerDown = useCallback(
+    (edge: "start" | "end", e: React.PointerEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      draggingRef.current = edge;
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    },
+    []
+  );
+
+  const handleTrimPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!draggingRef.current) return;
+      const t = pointerToTime(e.clientX);
+      if (draggingRef.current === "start") {
+        setStartTime(Math.max(0, Math.min(t, (endTime || duration) - 1)));
+      } else {
+        setEndTime(Math.max(startTime + 1, Math.min(t, duration)));
+      }
+    },
+    [pointerToTime, startTime, endTime, duration]
+  );
+
+  const handleTrimPointerUp = useCallback(() => {
+    draggingRef.current = null;
+  }, []);
 
   if (!videoId) {
     return (
@@ -261,26 +295,63 @@ export default function MusicTrack({
       <div className="flex items-center gap-2">
         <span className="text-[9px] text-muted shrink-0">♪</span>
 
-        {/* Progress bar */}
+        {/* Waveform / trim bar */}
         <div
-          className="flex-1 h-5 bg-card-border/30 rounded relative cursor-pointer overflow-hidden"
-          onClick={() => setShowTrim(!showTrim)}
+          ref={barRef}
+          className="flex-1 h-7 bg-card-border/30 rounded relative select-none touch-none"
+          onPointerMove={handleTrimPointerMove}
+          onPointerUp={handleTrimPointerUp}
         >
+          {/* Dimmed regions outside trim */}
+          <div
+            className="absolute top-0 bottom-0 left-0 bg-black/30 rounded-l"
+            style={{ width: `${(startTime / (duration || 1)) * 100}%` }}
+          />
+          <div
+            className="absolute top-0 bottom-0 right-0 bg-black/30 rounded-r"
+            style={{ width: `${((duration - (endTime || duration)) / (duration || 1)) * 100}%` }}
+          />
+
           {/* Trim region */}
           <div
-            className="absolute top-0 bottom-0 bg-accent/20 rounded"
+            className="absolute top-0 bottom-0 bg-accent/20"
             style={{
               left: `${(startTime / (duration || 1)) * 100}%`,
               width: `${(((endTime || duration) - startTime) / (duration || 1)) * 100}%`,
             }}
           />
+
+          {/* Start handle */}
+          <div
+            className="absolute top-0 bottom-0 w-3 cursor-col-resize z-10 flex items-center justify-center"
+            style={{ left: `calc(${(startTime / (duration || 1)) * 100}% - 6px)` }}
+            onPointerDown={(e) => handleTrimPointerDown("start", e)}
+          >
+            <div className="w-0.5 h-3.5 bg-accent rounded-full" />
+          </div>
+
+          {/* End handle */}
+          <div
+            className="absolute top-0 bottom-0 w-3 cursor-col-resize z-10 flex items-center justify-center"
+            style={{ left: `calc(${((endTime || duration) / (duration || 1)) * 100}% - 6px)` }}
+            onPointerDown={(e) => handleTrimPointerDown("end", e)}
+          >
+            <div className="w-0.5 h-3.5 bg-accent rounded-full" />
+          </div>
+
           {/* Playhead */}
           <div
-            className="absolute top-0 bottom-0 w-0.5 bg-accent"
-            style={{
-              left: `${(currentTime / (duration || 1)) * 100}%`,
-            }}
+            className="absolute top-0 bottom-0 w-0.5 bg-white z-20 pointer-events-none"
+            style={{ left: `${(currentTime / (duration || 1)) * 100}%` }}
           />
+
+          {/* Time labels inside bar */}
+          <div className="absolute bottom-0 left-1 text-[8px] text-muted/60 leading-none pointer-events-none">
+            {Math.floor(startTime / 60)}:{String(Math.floor(startTime % 60)).padStart(2, "0")}
+          </div>
+          <div className="absolute bottom-0 right-1 text-[8px] text-muted/60 leading-none pointer-events-none">
+            {Math.floor((endTime || duration) / 60)}:{String(Math.floor((endTime || duration) % 60)).padStart(2, "0")}
+          </div>
         </div>
 
         <span className="text-[9px] text-muted shrink-0">
@@ -294,44 +365,6 @@ export default function MusicTrack({
           ✕
         </button>
       </div>
-
-      {/* Trim controls */}
-      {showTrim && (
-        <div className="flex items-center gap-3 mt-1.5">
-          <div className="flex items-center gap-1">
-            <span className="text-[9px] text-muted">開始</span>
-            <button
-              onClick={() => setStartTime(Math.max(0, startTime - 1))}
-              className="w-5 h-5 flex items-center justify-center bg-card-border rounded text-[9px] text-foreground"
-            >
-              −
-            </button>
-            <span className="text-[9px] w-8 text-center">{startTime}s</span>
-            <button
-              onClick={() => setStartTime(Math.min(endTime || duration, startTime + 1))}
-              className="w-5 h-5 flex items-center justify-center bg-card-border rounded text-[9px] text-foreground"
-            >
-              +
-            </button>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-[9px] text-muted">終了</span>
-            <button
-              onClick={() => setEndTime(Math.max(startTime, (endTime || duration) - 1))}
-              className="w-5 h-5 flex items-center justify-center bg-card-border rounded text-[9px] text-foreground"
-            >
-              −
-            </button>
-            <span className="text-[9px] w-8 text-center">{Math.floor(endTime || duration)}s</span>
-            <button
-              onClick={() => setEndTime(Math.min(duration, (endTime || duration) + 1))}
-              className="w-5 h-5 flex items-center justify-center bg-card-border rounded text-[9px] text-foreground"
-            >
-              +
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
