@@ -222,7 +222,8 @@ export default function MusicTrack({
 
   // Drag-to-trim logic
   const barRef = useRef<HTMLDivElement | null>(null);
-  const draggingRef = useRef<"start" | "end" | null>(null);
+  const draggingRef = useRef<"start" | "end" | "move" | null>(null);
+  const moveAnchorRef = useRef(0); // time offset within trim region where drag started
 
   const pointerToTime = useCallback(
     (clientX: number) => {
@@ -245,14 +246,32 @@ export default function MusicTrack({
     []
   );
 
+  const handleMovePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      draggingRef.current = "move";
+      const t = pointerToTime(e.clientX);
+      moveAnchorRef.current = t - startTime;
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    },
+    [pointerToTime, startTime]
+  );
+
   const handleTrimPointerMove = useCallback(
     (e: React.PointerEvent) => {
       if (!draggingRef.current) return;
       const t = pointerToTime(e.clientX);
       if (draggingRef.current === "start") {
         setStartTime(Math.max(0, Math.min(t, (endTime || duration) - 1)));
-      } else {
+      } else if (draggingRef.current === "end") {
         setEndTime(Math.max(startTime + 1, Math.min(t, duration)));
+      } else if (draggingRef.current === "move") {
+        const trimLen = (endTime || duration) - startTime;
+        let newStart = t - moveAnchorRef.current;
+        newStart = Math.max(0, Math.min(newStart, duration - trimLen));
+        setStartTime(newStart);
+        setEndTime(newStart + trimLen);
       }
     },
     [pointerToTime, startTime, endTime, duration]
@@ -344,13 +363,14 @@ export default function MusicTrack({
           style={{ width: (duration - (endTime || duration)) * pxPerSecond }}
         />
 
-        {/* Trim region */}
+        {/* Trim region (draggable to move) */}
         <div
-          className="absolute top-0 bottom-0 bg-accent/20"
+          className="absolute top-0 bottom-0 bg-accent/20 cursor-grab active:cursor-grabbing z-[5]"
           style={{
             left: startTime * pxPerSecond,
             width: ((endTime || duration) - startTime) * pxPerSecond,
           }}
+          onPointerDown={handleMovePointerDown}
         />
 
         {/* Start handle */}
