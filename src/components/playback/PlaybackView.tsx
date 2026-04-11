@@ -21,13 +21,15 @@ export default function PlaybackView({
   const {
     currentIndex,
     isPlaying,
-    intervalMs,
-    setIntervalMs,
+    isWhiteFrame,
+    intervals,
+    setInterval: setGapInterval,
     play,
     pause,
     stop,
     next,
     prev,
+    goTo,
   } = usePlayback(frames.length);
 
   // Render current frame
@@ -160,20 +162,25 @@ export default function PlaybackView({
           </button>
         </div>
 
-        {/* Speed control */}
+        {/* Speed control — sets all intervals uniformly */}
         <div className="flex items-center justify-center gap-3">
-          <span className="text-xs text-muted">速度</span>
+          <span className="text-xs text-muted">折り時間</span>
           <input
             type="range"
-            min={500}
+            min={200}
             max={5000}
             step={100}
-            value={intervalMs}
-            onChange={(e) => setIntervalMs(Number(e.target.value))}
+            value={intervals[0] ?? 1000}
+            onChange={(e) => {
+              const ms = Number(e.target.value);
+              for (let i = 0; i < intervals.length; i++) {
+                setGapInterval(i, ms);
+              }
+            }}
             className="w-40 accent-accent"
           />
           <span className="text-xs text-muted w-12">
-            {(intervalMs / 1000).toFixed(1)}秒
+            {((intervals[0] ?? 1000) / 1000).toFixed(1)}秒
           </span>
         </div>
       </div>
