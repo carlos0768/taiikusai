@@ -140,19 +140,20 @@ export function useGridState(initialGrid: GridData) {
 
       pushUndo();
 
-      // Copy selected cells
+      // Copy only non-white cells (colored cells are the "shape" to move)
       const copied: { rx: number; ry: number; color: ColorIndex }[] = [];
       for (let y = minY; y <= maxY; y++) {
         for (let x = minX; x <= maxX; x++) {
-          copied.push({ rx: x - minX, ry: y - minY, color: getCell(grid, x, y) });
+          const color = getCell(grid, x, y);
+          if (color !== 0) {
+            copied.push({ rx: x - minX, ry: y - minY, color });
+          }
         }
       }
 
-      // Clear source area (set to white)
-      for (let y = minY; y <= maxY; y++) {
-        for (let x = minX; x <= maxX; x++) {
-          setCell(grid, x, y, 0);
-        }
+      // Clear source positions of moved cells (set to white)
+      for (const { rx, ry } of copied) {
+        setCell(grid, minX + rx, minY + ry, 0);
       }
 
       // Place at new position
