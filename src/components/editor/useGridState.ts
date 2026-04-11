@@ -10,7 +10,7 @@ import {
   setCell,
 } from "@/lib/grid/types";
 
-export type Tool = "paint" | "bucket" | "select" | "eraser";
+export type Tool = "paint" | "bucket" | "select" | "eraser" | "move";
 
 const MAX_UNDO = 100;
 
@@ -118,6 +118,45 @@ export function useGridState(initialGrid: GridData) {
     [pushUndo, bump]
   );
 
+  /**
+   * Move selected cells by (dx, dy).
+   * selectedCells: Set of "x,y" strings identifying selected cells.
+   * Source cells become white (0). Destination cells get the selected colors.
+   */
+  const moveSelection = useCallback(
+    (selectedCells: Set<string>, dx: number, dy: number) => {
+      const grid = gridRef.current;
+
+      pushUndo();
+
+      // Collect cell data
+      const cells: { x: number; y: number; color: ColorIndex }[] = [];
+      for (const key of selectedCells) {
+        const [sx, sy] = key.split(",").map(Number);
+        if (sx >= 0 && sx < grid.width && sy >= 0 && sy < grid.height) {
+          cells.push({ x: sx, y: sy, color: getCell(grid, sx, sy) });
+        }
+      }
+
+      // Clear source cells
+      for (const { x, y } of cells) {
+        setCell(grid, x, y, 0);
+      }
+
+      // Place at new position
+      for (const { x, y, color } of cells) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx >= 0 && nx < grid.width && ny >= 0 && ny < grid.height) {
+          setCell(grid, nx, ny, color);
+        }
+      }
+
+      bump();
+    },
+    [pushUndo, bump]
+  );
+
   const undo = useCallback(() => {
     const prev = undoStackRef.current.pop();
     if (!prev) return;
@@ -155,6 +194,7 @@ export function useGridState(initialGrid: GridData) {
     batchPaintCell,
     floodFill,
     rectFill,
+    moveSelection,
     undo,
     redo,
     loadGrid,

@@ -23,6 +23,12 @@ interface EditorToolbarProps {
   onExport: () => void;
   onToggleMemo: () => void;
   showMemo: boolean;
+  isMoveMode: boolean;
+  onToggleMove: () => void;
+  hasMoveSelection: boolean;
+  onClearMoveSelection: () => void;
+  isMoveSelecting: boolean;
+  onToggleMoveSelecting: () => void;
 }
 
 const tools: { id: Tool; label: string; icon: string }[] = [
@@ -52,6 +58,12 @@ export default function EditorToolbar({
   onToggleEdit,
   onExport,
   onToggleMemo,
+  isMoveMode,
+  onToggleMove,
+  hasMoveSelection,
+  onClearMoveSelection,
+  isMoveSelecting,
+  onToggleMoveSelecting,
   showMemo,
 }: EditorToolbarProps) {
   return (
@@ -90,6 +102,49 @@ export default function EditorToolbar({
         >
           メモ
         </button>
+
+        <button
+          onClick={onToggleMove}
+          className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
+            isMoveMode
+              ? "bg-accent/20 text-accent"
+              : "text-muted hover:text-foreground"
+          }`}
+        >
+          移動
+        </button>
+
+        {isMoveMode && (
+          <>
+            {(hasMoveSelection || !isMoveSelecting) && (
+              <button
+                onClick={onToggleMoveSelecting}
+                className={`px-2 py-1 text-[10px] rounded transition-colors shrink-0 ${
+                  isMoveSelecting
+                    ? "bg-accent/20 text-accent"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                {isMoveSelecting ? "選択確定" : "再選択"}
+              </button>
+            )}
+            <button
+              onClick={onUndo}
+              disabled={!canUndo}
+              className="px-2 py-1 text-[10px] text-muted hover:text-foreground disabled:opacity-30 transition-colors shrink-0"
+            >
+              ↩ 戻す
+            </button>
+            {hasMoveSelection && (
+              <button
+                onClick={onClearMoveSelection}
+                className="px-2 py-1 text-[10px] text-muted hover:text-foreground transition-colors shrink-0"
+              >
+                選択解除
+              </button>
+            )}
+          </>
+        )}
 
         <button
           onClick={onToggleEdit}

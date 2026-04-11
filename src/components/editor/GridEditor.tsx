@@ -41,12 +41,17 @@ export default function GridEditor({
     batchPaintCell,
     floodFill,
     rectFill,
+    moveSelection,
     undo,
     redo,
     clearDirty,
   } = useGridState(initialGrid);
 
   const [isEditing, setIsEditing] = useState(false);
+  const [isMoveMode, setIsMoveMode] = useState(false);
+  const [moveSelectedCells, setMoveSelectedCells] = useState<Set<string>>(new Set());
+  const [moveDragOffset, setMoveDragOffset] = useState<{ dx: number; dy: number } | null>(null);
+  const [isMoveSelecting, setIsMoveSelecting] = useState(true); // default: selecting mode on
   const [activeTool, setActiveTool] = useState<Tool>("paint");
   const [activeColor, setActiveColor] = useState<ColorIndex>(1);
   const [viewport, setViewport] = useState<Viewport>({
@@ -158,7 +163,7 @@ export default function GridEditor({
   return (
     <div className="h-full flex flex-col">
       <EditorToolbar
-        activeTool={activeTool}
+        activeTool={isMoveMode ? "move" : activeTool}
         onToolChange={setActiveTool}
         onUndo={undo}
         onRedo={redo}
@@ -174,10 +179,16 @@ export default function GridEditor({
         onClearSelection={handleClearSelection}
         onSaveAsTemplate={() => setShowTemplateSave(true)}
         isEditing={isEditing}
-        onToggleEdit={() => setIsEditing(!isEditing)}
+        onToggleEdit={() => { setIsEditing(!isEditing); if (isMoveMode) setIsMoveMode(false); }}
         onExport={onExport}
         onToggleMemo={() => setShowMemo(!showMemo)}
         showMemo={showMemo}
+        isMoveMode={isMoveMode}
+        onToggleMove={() => { setIsMoveMode(!isMoveMode); setMoveSelectedCells(new Set()); setIsMoveSelecting(true); if (isEditing) setIsEditing(false); }}
+        hasMoveSelection={moveSelectedCells.size > 0}
+        onClearMoveSelection={() => { setMoveSelectedCells(new Set()); setIsMoveSelecting(true); }}
+        isMoveSelecting={isMoveSelecting}
+        onToggleMoveSelecting={() => setIsMoveSelecting(!isMoveSelecting)}
       />
 
       {/* Memo input */}
@@ -198,7 +209,7 @@ export default function GridEditor({
         gridRef={gridRef as React.RefObject<GridData>}
         revision={revision}
         viewport={viewport}
-        activeTool={activeTool}
+        activeTool={isMoveMode ? "move" : activeTool}
         activeColor={activeColor}
         selection={selection}
         onPaintCell={paintCell}
@@ -208,6 +219,12 @@ export default function GridEditor({
         onSelectionChange={setSelection}
         onViewportChange={setViewport}
         isEditing={isEditing}
+        onMoveSelection={moveSelection}
+        moveSelectedCells={moveSelectedCells}
+        onMoveSelectedCellsChange={setMoveSelectedCells}
+        moveDragOffset={moveDragOffset}
+        onMoveDragOffsetChange={setMoveDragOffset}
+        isMoveSelecting={isMoveSelecting}
       />
 
       {isEditing && (
