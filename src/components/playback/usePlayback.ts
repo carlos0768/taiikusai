@@ -6,6 +6,11 @@ export function usePlayback(frameCount: number) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isWhiteFrame, setIsWhiteFrame] = useState(false);
+  // Per-frame display duration (ms)
+  const [durations, setDurations] = useState<number[]>(() =>
+    Array(frameCount).fill(500)
+  );
+  // Per-gap fold interval (ms)
   const [intervals, setIntervals] = useState<number[]>(() =>
     Array(Math.max(0, frameCount - 1)).fill(1000)
   );
@@ -54,37 +59,42 @@ export function usePlayback(frameCount: number) {
     [frameCount]
   );
 
-  const setInterval_ = useCallback(
-    (index: number, ms: number) => {
-      setIntervals((prev) => {
-        const next = [...prev];
-        if (index >= 0 && index < next.length) {
-          next[index] = ms;
-        }
-        return next;
-      });
-    },
-    []
-  );
+  const setGapInterval = useCallback((index: number, ms: number) => {
+    setIntervals((prev) => {
+      const copy = [...prev];
+      if (index >= 0 && index < copy.length) copy[index] = ms;
+      return copy;
+    });
+  }, []);
 
-  // Playback loop with white frame insertion
+  const setFrameDuration = useCallback((index: number, ms: number) => {
+    setDurations((prev) => {
+      const copy = [...prev];
+      if (index >= 0 && index < copy.length) copy[index] = ms;
+      return copy;
+    });
+  }, []);
+
+  // Playback loop: frame (duration) → white gap (interval) → next frame
   useEffect(() => {
     if (!isPlaying) return;
 
-    if (currentIndex >= frameCount - 1) {
-      setIsPlaying(false);
-      return;
-    }
-
-    const gapMs = intervals[currentIndex] ?? 1000;
-
     if (!isWhiteFrame) {
-      // Show current frame for a base duration (500ms), then show white
-      timerRef.current = setTimeout(() => {
-        setIsWhiteFrame(true);
-      }, 500);
+      const durationMs = durations[currentIndex] ?? 500;
+      if (currentIndex >= frameCount - 1) {
+        // Last frame: show for duration then stop
+        timerRef.current = setTimeout(() => {
+          setIsPlaying(false);
+        }, durationMs);
+      } else {
+        // Show frame for its duration, then switch to white
+        timerRef.current = setTimeout(() => {
+          setIsWhiteFrame(true);
+        }, durationMs);
+      }
     } else {
-      // Show white frame for the gap duration, then advance
+      const gapMs = intervals[currentIndex] ?? 1000;
+      // Show white for gap duration, then advance
       timerRef.current = setTimeout(() => {
         setIsWhiteFrame(false);
         setCurrentIndex((prev) => prev + 1);
@@ -92,14 +102,16 @@ export function usePlayback(frameCount: number) {
     }
 
     return clearTimer;
-  }, [isPlaying, currentIndex, isWhiteFrame, intervals, frameCount, clearTimer]);
+  }, [isPlaying, currentIndex, isWhiteFrame, intervals, durations, frameCount, clearTimer]);
 
   return {
     currentIndex,
     isPlaying,
     isWhiteFrame,
     intervals,
-    setInterval: setInterval_,
+    durations,
+    setGapInterval,
+    setFrameDuration,
     play,
     pause,
     stop,

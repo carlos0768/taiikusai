@@ -23,7 +23,7 @@ export default function PlaybackView({
     isPlaying,
     isWhiteFrame,
     intervals,
-    setInterval: setGapInterval,
+    setGapInterval,
     play,
     pause,
     stop,
