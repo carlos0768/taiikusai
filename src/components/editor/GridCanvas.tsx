@@ -168,10 +168,14 @@ export default function GridCanvas({
       } else if (activeTool === "move") {
         const key = `${cell.x},${cell.y}`;
         if (isMoveSelecting) {
-          // Selecting mode: always add cells
+          // Selecting mode: toggle cell (add or remove)
           isSelectingRef.current = true;
           const newSet = new Set(moveSelectedCells);
-          newSet.add(key);
+          if (newSet.has(key)) {
+            newSet.delete(key);
+          } else {
+            newSet.add(key);
+          }
           onMoveSelectedCellsChange(newSet);
         } else if (moveSelectedCells.has(key)) {
           // Not selecting, click inside selection → start drag move

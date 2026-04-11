@@ -99,23 +99,6 @@ export function renderGrid(
   // Draw free-selection highlights (move tool)
   if (moveSelectedCells && moveSelectedCells.size > 0) {
     if (moveDragOffset && (moveDragOffset.dx !== 0 || moveDragOffset.dy !== 0)) {
-      // Dragging: show ghost at original position (semi-transparent)
-      ctx.globalAlpha = 0.3;
-      for (const key of moveSelectedCells) {
-        const [cx, cy] = key.split(",").map(Number);
-        if (cx >= 0 && cx < grid.width && cy >= 0 && cy < grid.height) {
-          const colorIdx = grid.cells[cy * grid.width + cx] as ColorIndex;
-          ctx.fillStyle = COLOR_MAP[colorIdx];
-          ctx.fillRect(
-            offsetX + cx * cellSize,
-            offsetY + cy * cellSize,
-            cellSize,
-            cellSize
-          );
-        }
-      }
-      ctx.globalAlpha = 1.0;
-
       // Show preview at destination position (full color)
       for (const key of moveSelectedCells) {
         const [cx, cy] = key.split(",").map(Number);
