@@ -229,32 +229,39 @@ export default function PlaybackPanel({
     }
   }, [currentIndex]);
 
-  // Draw canvas — fix size on first render, don't resize on playback
+  // Set canvas size once on mount
+  const [canvasReady, setCanvasReady] = useState(false);
   useEffect(() => {
     const canvas = mainCanvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container || frames.length === 0) return;
+    if (canvasSizeRef.current) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const grid = frames[0];
+    const rect = container.getBoundingClientRect();
+    const cellSize = Math.min(
+      rect.width / grid.width,
+      rect.height / grid.height
+    );
+    const canvasW = grid.width * cellSize;
+    const canvasH = grid.height * cellSize;
+    canvasSizeRef.current = { w: canvasW, h: canvasH };
+
+    canvas.width = canvasW * dpr;
+    canvas.height = canvasH * dpr;
+    canvas.style.width = `${canvasW}px`;
+    canvas.style.height = `${canvasH}px`;
+    setCanvasReady(true);
+  }, [frames, panelSize]);
+
+  // Draw canvas content — never change canvas size
+  useEffect(() => {
+    const canvas = mainCanvasRef.current;
+    if (!canvas || !canvasSizeRef.current || frames.length === 0) return;
 
     const dpr = window.devicePixelRatio || 1;
     const grid = frames[currentIndex];
-
-    // Calculate size only once (or when panel size changes)
-    if (!canvasSizeRef.current) {
-      const rect = container.getBoundingClientRect();
-      const cellSize = Math.min(
-        rect.width / grid.width,
-        rect.height / grid.height
-      );
-      const canvasW = grid.width * cellSize;
-      const canvasH = grid.height * cellSize;
-      canvasSizeRef.current = { w: canvasW, h: canvasH };
-
-      canvas.width = canvasW * dpr;
-      canvas.height = canvasH * dpr;
-      canvas.style.width = `${canvasW}px`;
-      canvas.style.height = `${canvasH}px`;
-    }
-
     const { w: canvasW, h: canvasH } = canvasSizeRef.current;
     const ctx = canvas.getContext("2d")!;
 
@@ -298,11 +305,12 @@ export default function PlaybackPanel({
         );
       }
     }
-  }, [currentIndex, frames, isWhiteFrame]);
+  }, [currentIndex, frames, isWhiteFrame, canvasReady]);
 
   // Reset canvas size when panel size changes
   useEffect(() => {
     canvasSizeRef.current = null;
+    setCanvasReady(false);
   }, [panelSize]);
 
   return (
