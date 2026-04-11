@@ -5,6 +5,8 @@ import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
 import { usePlayback } from "@/components/playback/usePlayback";
 import MusicTrack from "./MusicTrack";
 
+const PX_PER_SECOND = 30;
+
 interface PlaybackPanelProps {
   frames: GridData[];
   frameNames: string[];
@@ -66,6 +68,7 @@ function FrameThumb({
   grid,
   isActive,
   durationMs,
+  widthPx,
   onTap,
   onDurationChange,
   thumbRef,
@@ -73,6 +76,7 @@ function FrameThumb({
   grid: GridData;
   isActive: boolean;
   durationMs: number;
+  widthPx: number;
   onTap: () => void;
   onDurationChange: (ms: number) => void;
   thumbRef?: (el: HTMLDivElement | null) => void;
@@ -81,13 +85,14 @@ function FrameThumb({
   const btnRef = useRef<HTMLButtonElement>(null);
   const [showPopup, setShowPopup] = useState(false);
   const [rect, setRect] = useState<DOMRect | null>(null);
+  const thumbWidth = Math.max(40, widthPx);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const w = 60;
+    const w = Math.max(40, Math.round(thumbWidth));
     const h = Math.round((grid.height / grid.width) * w);
     canvas.width = w;
     canvas.height = h;
@@ -100,17 +105,17 @@ function FrameThumb({
         ctx.fillRect(x * cellW, y * cellH, Math.ceil(cellW), Math.ceil(cellH));
       }
     }
-  }, [grid]);
+  }, [grid, thumbWidth]);
 
   return (
-    <div ref={thumbRef ?? undefined} className="shrink-0 flex flex-col items-center">
+    <div ref={thumbRef ?? undefined} className="shrink-0 flex flex-col items-center" style={{ width: thumbWidth }}>
       <canvas
         ref={canvasRef}
         onClick={onTap}
         className={`rounded cursor-pointer transition-all ${
           isActive ? "ring-2 ring-accent scale-105" : "opacity-60 hover:opacity-100"
         }`}
-        style={{ width: 60, imageRendering: "pixelated" }}
+        style={{ width: thumbWidth, imageRendering: "pixelated" }}
       />
       <button
         ref={btnRef}
@@ -142,19 +147,22 @@ function FrameThumb({
 
 function GapButton({
   intervalMs,
+  widthPx,
   isActive,
   onChange,
 }: {
   intervalMs: number;
+  widthPx: number;
   isActive: boolean;
   onChange: (ms: number) => void;
 }) {
   const btnRef = useRef<HTMLButtonElement>(null);
   const [showPopup, setShowPopup] = useState(false);
   const [rect, setRect] = useState<DOMRect | null>(null);
+  const gapWidth = Math.max(20, widthPx);
 
   return (
-    <div className="shrink-0 flex items-center mx-0.5">
+    <div className="shrink-0 flex items-center justify-center" style={{ width: gapWidth }}>
       <button
         ref={btnRef}
         onClick={() => {
@@ -163,7 +171,7 @@ function GapButton({
             setShowPopup(true);
           }
         }}
-        className={`w-7 h-7 flex items-center justify-center rounded-full text-[8px] transition-colors ${
+        className={`min-w-5 h-7 px-1 flex items-center justify-center rounded-full text-[8px] transition-colors ${
           isActive
             ? "bg-accent/30 text-accent ring-1 ring-accent"
             : "bg-card-border/50 hover:bg-card-border text-muted hover:text-foreground"
@@ -353,36 +361,38 @@ export default function PlaybackPanel({
         <canvas ref={mainCanvasRef} style={{ imageRendering: "pixelated" }} />
       </div>
 
-      {/* Music track */}
-      <MusicTrack
-        isPlaying={isPlaying}
-        onPlayStateChange={handleMusicStateChange}
-      />
+      {/* Shared timeline scroll container */}
+      <div className="overflow-x-auto border-t border-card-border shrink-0 py-2">
+        {/* Music track */}
+        <MusicTrack
+          isPlaying={isPlaying}
+          onPlayStateChange={handleMusicStateChange}
+          pxPerSecond={PX_PER_SECOND}
+        />
 
-      {/* Timeline */}
-      <div className="px-3 py-2 border-t border-card-border shrink-0">
-        <div className="flex items-end gap-0">
-          <div className="flex items-end gap-0 overflow-x-auto pb-1 flex-1">
-            {frames.map((frame, idx) => (
-              <div key={idx} className="flex items-center shrink-0">
-                <FrameThumb
-                  grid={frame}
-                  isActive={currentIndex === idx && !isWhiteFrame}
-                  durationMs={durations[idx] ?? 2000}
-                  onTap={() => { pause(); goTo(idx); }}
-                  onDurationChange={(ms) => setFrameDuration(idx, ms)}
-                  thumbRef={(el) => { frameRefs.current[idx] = el; }}
+        {/* Frame timeline */}
+        <div className="flex items-end gap-0 px-3 pb-1">
+          {frames.map((frame, idx) => (
+            <div key={idx} className="flex items-center shrink-0">
+              <FrameThumb
+                grid={frame}
+                isActive={currentIndex === idx && !isWhiteFrame}
+                durationMs={durations[idx] ?? 2000}
+                widthPx={(durations[idx] ?? 2000) / 1000 * PX_PER_SECOND}
+                onTap={() => { pause(); goTo(idx); }}
+                onDurationChange={(ms) => setFrameDuration(idx, ms)}
+                thumbRef={(el) => { frameRefs.current[idx] = el; }}
+              />
+              {idx < frames.length - 1 && (
+                <GapButton
+                  intervalMs={intervals[idx] ?? 1000}
+                  widthPx={(intervals[idx] ?? 1000) / 1000 * PX_PER_SECOND}
+                  isActive={isWhiteFrame && currentIndex === idx}
+                  onChange={(ms) => setGapInterval(idx, ms)}
                 />
-                {idx < frames.length - 1 && (
-                  <GapButton
-                    intervalMs={intervals[idx] ?? 1000}
-                    isActive={isWhiteFrame && currentIndex === idx}
-                    onChange={(ms) => setGapInterval(idx, ms)}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
+              )}
+            </div>
+          ))}
         </div>
       </div>
 

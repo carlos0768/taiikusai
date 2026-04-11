@@ -42,6 +42,7 @@ interface YTPlayer {
 interface MusicTrackProps {
   isPlaying: boolean;
   onPlayStateChange: (playing: boolean) => void;
+  pxPerSecond: number;
 }
 
 function extractVideoId(url: string): string | null {
@@ -61,6 +62,7 @@ function extractVideoId(url: string): string | null {
 export default function MusicTrack({
   isPlaying,
   onPlayStateChange,
+  pxPerSecond,
 }: MusicTrackProps) {
   const [url, setUrl] = useState("");
   const [videoId, setVideoId] = useState<string | null>(null);
@@ -225,12 +227,12 @@ export default function MusicTrack({
   const pointerToTime = useCallback(
     (clientX: number) => {
       const bar = barRef.current;
-      if (!bar || duration === 0) return 0;
+      if (!bar || pxPerSecond === 0) return 0;
       const rect = bar.getBoundingClientRect();
-      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      return ratio * duration;
+      const px = clientX - rect.left;
+      return Math.max(0, Math.min(duration, px / pxPerSecond));
     },
-    [duration]
+    [pxPerSecond, duration]
   );
 
   const handleTrimPointerDown = useCallback(
@@ -260,123 +262,130 @@ export default function MusicTrack({
     draggingRef.current = null;
   }, []);
 
+  const barWidth = Math.max(100, duration * pxPerSecond);
+
   if (!videoId) {
     return (
-      <div className="px-3 py-1.5 border-b border-card-border shrink-0">
-        {showInput ? (
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleUrlSubmit()}
-              placeholder="YouTube URLをペースト"
-              autoFocus
-              className="flex-1 px-2 py-1 bg-background border border-card-border rounded text-xs text-foreground focus:outline-none focus:border-accent"
-            />
+      <div className="py-1 shrink-0">
+        <div className="sticky left-0 px-3" style={{ width: "fit-content" }}>
+          {showInput ? (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleUrlSubmit()}
+                placeholder="YouTube URLをペースト"
+                autoFocus
+                className="w-48 px-2 py-1 bg-background border border-card-border rounded text-xs text-foreground focus:outline-none focus:border-accent"
+              />
+              <button
+                onClick={handleUrlSubmit}
+                className="text-xs text-accent hover:opacity-80 px-2"
+              >
+                追加
+              </button>
+              <button
+                onClick={() => setShowInput(false)}
+                className="text-xs text-muted hover:text-foreground px-1"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
             <button
-              onClick={handleUrlSubmit}
-              className="text-xs text-accent hover:opacity-80 px-2"
+              onClick={() => setShowInput(true)}
+              className="text-xs text-muted hover:text-foreground"
             >
-              追加
+              + 音楽を追加
             </button>
-            <button
-              onClick={() => setShowInput(false)}
-              className="text-xs text-muted hover:text-foreground px-1"
-            >
-              ✕
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => setShowInput(true)}
-            className="text-xs text-muted hover:text-foreground"
-          >
-            + 音楽を追加
-          </button>
-        )}
+          )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="px-3 py-1.5 border-b border-card-border shrink-0">
+    <div className="py-1 shrink-0">
       {/* Hidden YouTube player */}
       <div ref={ytContainerRef} className="hidden" />
 
-      {/* Music track bar */}
-      <div className="flex items-center gap-2">
-        <span className="text-[9px] text-muted shrink-0">♪</span>
-
-        {/* Waveform / trim bar */}
-        <div
-          ref={barRef}
-          className="flex-1 h-7 bg-card-border/30 rounded relative select-none touch-none"
-          onPointerMove={handleTrimPointerMove}
-          onPointerUp={handleTrimPointerUp}
-        >
-          {/* Dimmed regions outside trim */}
-          <div
-            className="absolute top-0 bottom-0 left-0 bg-black/30 rounded-l"
-            style={{ width: `${(startTime / (duration || 1)) * 100}%` }}
-          />
-          <div
-            className="absolute top-0 bottom-0 right-0 bg-black/30 rounded-r"
-            style={{ width: `${((duration - (endTime || duration)) / (duration || 1)) * 100}%` }}
-          />
-
-          {/* Trim region */}
-          <div
-            className="absolute top-0 bottom-0 bg-accent/20"
-            style={{
-              left: `${(startTime / (duration || 1)) * 100}%`,
-              width: `${(((endTime || duration) - startTime) / (duration || 1)) * 100}%`,
-            }}
-          />
-
-          {/* Start handle */}
-          <div
-            className="absolute top-0 bottom-0 w-3 cursor-col-resize z-10 flex items-center justify-center"
-            style={{ left: `calc(${(startTime / (duration || 1)) * 100}% - 6px)` }}
-            onPointerDown={(e) => handleTrimPointerDown("start", e)}
-          >
-            <div className="w-0.5 h-3.5 bg-accent rounded-full" />
-          </div>
-
-          {/* End handle */}
-          <div
-            className="absolute top-0 bottom-0 w-3 cursor-col-resize z-10 flex items-center justify-center"
-            style={{ left: `calc(${((endTime || duration) / (duration || 1)) * 100}% - 6px)` }}
-            onPointerDown={(e) => handleTrimPointerDown("end", e)}
-          >
-            <div className="w-0.5 h-3.5 bg-accent rounded-full" />
-          </div>
-
-          {/* Playhead */}
-          <div
-            className="absolute top-0 bottom-0 w-0.5 bg-white z-20 pointer-events-none"
-            style={{ left: `${(currentTime / (duration || 1)) * 100}%` }}
-          />
-
-          {/* Time labels inside bar */}
-          <div className="absolute bottom-0 left-1 text-[8px] text-muted/60 leading-none pointer-events-none">
-            {Math.floor(startTime / 60)}:{String(Math.floor(startTime % 60)).padStart(2, "0")}
-          </div>
-          <div className="absolute bottom-0 right-1 text-[8px] text-muted/60 leading-none pointer-events-none">
-            {Math.floor((endTime || duration) / 60)}:{String(Math.floor((endTime || duration) % 60)).padStart(2, "0")}
-          </div>
-        </div>
-
-        <span className="text-[9px] text-muted shrink-0">
+      {/* Sticky controls */}
+      <div className="sticky left-0 z-10 flex items-center gap-2 px-3 pb-0.5" style={{ width: "fit-content" }}>
+        <span className="text-[9px] text-muted">♪</span>
+        <span className="text-[9px] text-muted">
           {Math.floor(currentTime / 60)}:{String(Math.floor(currentTime % 60)).padStart(2, "0")}
+          {" / "}
+          {Math.floor((endTime || duration) / 60)}:{String(Math.floor((endTime || duration) % 60)).padStart(2, "0")}
         </span>
-
         <button
           onClick={handleRemove}
-          className="text-[9px] text-muted hover:text-danger shrink-0"
+          className="text-[9px] text-muted hover:text-danger"
         >
           ✕
         </button>
+      </div>
+
+      {/* Time-proportional bar */}
+      <div
+        ref={barRef}
+        className="h-7 bg-card-border/30 rounded relative select-none touch-none mx-3"
+        style={{ width: barWidth }}
+        onPointerMove={handleTrimPointerMove}
+        onPointerUp={handleTrimPointerUp}
+      >
+        {/* Dimmed regions outside trim */}
+        <div
+          className="absolute top-0 bottom-0 left-0 bg-black/30 rounded-l"
+          style={{ width: startTime * pxPerSecond }}
+        />
+        <div
+          className="absolute top-0 bottom-0 right-0 bg-black/30 rounded-r"
+          style={{ width: (duration - (endTime || duration)) * pxPerSecond }}
+        />
+
+        {/* Trim region */}
+        <div
+          className="absolute top-0 bottom-0 bg-accent/20"
+          style={{
+            left: startTime * pxPerSecond,
+            width: ((endTime || duration) - startTime) * pxPerSecond,
+          }}
+        />
+
+        {/* Start handle */}
+        <div
+          className="absolute top-0 bottom-0 w-3 cursor-col-resize z-10 flex items-center justify-center"
+          style={{ left: startTime * pxPerSecond - 6 }}
+          onPointerDown={(e) => handleTrimPointerDown("start", e)}
+        >
+          <div className="w-0.5 h-3.5 bg-accent rounded-full" />
+        </div>
+
+        {/* End handle */}
+        <div
+          className="absolute top-0 bottom-0 w-3 cursor-col-resize z-10 flex items-center justify-center"
+          style={{ left: (endTime || duration) * pxPerSecond - 6 }}
+          onPointerDown={(e) => handleTrimPointerDown("end", e)}
+        >
+          <div className="w-0.5 h-3.5 bg-accent rounded-full" />
+        </div>
+
+        {/* Playhead */}
+        <div
+          className="absolute top-0 bottom-0 w-0.5 bg-white z-20 pointer-events-none"
+          style={{ left: currentTime * pxPerSecond }}
+        />
+
+        {/* Time labels */}
+        <div className="absolute bottom-0 text-[8px] text-muted/60 leading-none pointer-events-none"
+          style={{ left: startTime * pxPerSecond + 4 }}>
+          {Math.floor(startTime / 60)}:{String(Math.floor(startTime % 60)).padStart(2, "0")}
+        </div>
+        <div className="absolute bottom-0 text-[8px] text-muted/60 leading-none pointer-events-none"
+          style={{ left: (endTime || duration) * pxPerSecond - 28 }}>
+          {Math.floor((endTime || duration) / 60)}:{String(Math.floor((endTime || duration) % 60)).padStart(2, "0")}
+        </div>
       </div>
     </div>
   );
