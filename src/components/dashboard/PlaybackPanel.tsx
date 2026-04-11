@@ -10,7 +10,7 @@ interface PlaybackPanelProps {
   onClose: () => void;
 }
 
-type PanelSize = "side" | "expanded" | "fullscreen";
+type PanelSize = "side" | "fullscreen";
 
 // Fixed-position popup for editing time values
 function TimePopup({
@@ -29,9 +29,7 @@ function TimePopup({
   position: "above" | "below";
 }) {
   const top =
-    position === "above"
-      ? anchorRect.top - 120
-      : anchorRect.bottom + 4;
+    position === "above" ? anchorRect.top - 120 : anchorRect.bottom + 4;
   const left = anchorRect.left + anchorRect.width / 2 - 65;
 
   return (
@@ -64,19 +62,21 @@ function TimePopup({
   );
 }
 
-// Frame thumbnail with duration editing
+// Frame thumbnail
 function FrameThumb({
   grid,
   isActive,
   durationMs,
   onTap,
   onDurationChange,
+  thumbRef,
 }: {
   grid: GridData;
   isActive: boolean;
   durationMs: number;
   onTap: () => void;
   onDurationChange: (ms: number) => void;
+  thumbRef?: (el: HTMLDivElement | null) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -105,15 +105,8 @@ function FrameThumb({
     }
   }, [grid]);
 
-  const handleOpenPopup = () => {
-    if (btnRef.current) {
-      setRect(btnRef.current.getBoundingClientRect());
-      setShowPopup(true);
-    }
-  };
-
   return (
-    <div className="shrink-0 flex flex-col items-center">
+    <div ref={thumbRef ?? undefined} className="shrink-0 flex flex-col items-center">
       <canvas
         ref={canvasRef}
         onClick={onTap}
@@ -126,7 +119,12 @@ function FrameThumb({
       />
       <button
         ref={btnRef}
-        onClick={handleOpenPopup}
+        onClick={() => {
+          if (btnRef.current) {
+            setRect(btnRef.current.getBoundingClientRect());
+            setShowPopup(true);
+          }
+        }}
         className={`text-[9px] mt-0.5 px-1.5 py-0.5 rounded transition-colors ${
           isActive ? "text-accent" : "text-muted hover:text-foreground"
         }`}
@@ -148,7 +146,7 @@ function FrameThumb({
   );
 }
 
-// Gap interval button with editing
+// Gap button
 function GapButton({
   intervalMs,
   isActive,
@@ -162,24 +160,21 @@ function GapButton({
   const [showPopup, setShowPopup] = useState(false);
   const [rect, setRect] = useState<DOMRect | null>(null);
 
-  const handleOpen = () => {
-    if (btnRef.current) {
-      setRect(btnRef.current.getBoundingClientRect());
-      setShowPopup(true);
-    }
-  };
-
   return (
     <div className="shrink-0 flex items-center mx-0.5">
       <button
         ref={btnRef}
-        onClick={handleOpen}
+        onClick={() => {
+          if (btnRef.current) {
+            setRect(btnRef.current.getBoundingClientRect());
+            setShowPopup(true);
+          }
+        }}
         className={`w-7 h-7 flex items-center justify-center rounded-full text-[8px] transition-colors ${
           isActive
             ? "bg-accent/30 text-accent ring-1 ring-accent"
             : "bg-card-border/50 hover:bg-card-border text-muted hover:text-foreground"
         }`}
-        title="折り時間"
       >
         {(intervalMs / 1000).toFixed(1)}
       </button>
@@ -205,7 +200,10 @@ export default function PlaybackPanel({
 }: PlaybackPanelProps) {
   const mainCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const frameRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [panelSize, setPanelSize] = useState<PanelSize>("side");
+  const canvasSizeRef = useRef<{ w: number; h: number } | null>(null);
 
   const {
     currentIndex,
@@ -223,53 +221,70 @@ export default function PlaybackPanel({
     goTo,
   } = usePlayback(frames.length);
 
-  const gridDrawnRef = useRef(false);
-  const lastSizeRef = useRef({ w: 0, h: 0 });
+  // Auto-scroll timeline to keep current frame visible
+  useEffect(() => {
+    const el = frameRefs.current[currentIndex];
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    }
+  }, [currentIndex]);
 
-  const drawGrid = (
-    ctx: CanvasRenderingContext2D,
-    canvasW: number,
-    canvasH: number,
-    gridW: number,
-    gridH: number,
-    dpr: number
-  ) => {
-    const cellW = canvasW / gridW;
-    const cellH = canvasH / gridH;
+  // Draw canvas — fix size on first render, don't resize on playback
+  useEffect(() => {
+    const canvas = mainCanvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container || frames.length === 0) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const grid = frames[currentIndex];
+
+    // Calculate size only once (or when panel size changes)
+    if (!canvasSizeRef.current) {
+      const rect = container.getBoundingClientRect();
+      const cellSize = Math.min(
+        rect.width / grid.width,
+        rect.height / grid.height
+      );
+      const canvasW = grid.width * cellSize;
+      const canvasH = grid.height * cellSize;
+      canvasSizeRef.current = { w: canvasW, h: canvasH };
+
+      canvas.width = canvasW * dpr;
+      canvas.height = canvasH * dpr;
+      canvas.style.width = `${canvasW}px`;
+      canvas.style.height = `${canvasH}px`;
+    }
+
+    const { w: canvasW, h: canvasH } = canvasSizeRef.current;
+    const ctx = canvas.getContext("2d")!;
+
+    // Draw grid structure
+    const cellW = canvasW / grid.width;
+    const cellH = canvasH / grid.height;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = "#222222";
     ctx.fillRect(0, 0, canvasW, canvasH);
+
     ctx.strokeStyle = "#333333";
     ctx.lineWidth = 1;
-    for (let x = 0; x <= gridW; x++) {
+    for (let x = 0; x <= grid.width; x++) {
       ctx.beginPath();
       ctx.moveTo(x * cellW, 0);
       ctx.lineTo(x * cellW, canvasH);
       ctx.stroke();
     }
-    for (let y = 0; y <= gridH; y++) {
+    for (let y = 0; y <= grid.height; y++) {
       ctx.beginPath();
       ctx.moveTo(0, y * cellH);
       ctx.lineTo(canvasW, y * cellH);
       ctx.stroke();
     }
-  };
 
-  const drawColors = (
-    ctx: CanvasRenderingContext2D,
-    grid: GridData,
-    canvasW: number,
-    canvasH: number,
-    dpr: number,
-    white: boolean
-  ) => {
-    const cellW = canvasW / grid.width;
-    const cellH = canvasH / grid.height;
+    // Draw colors
     const pad = Math.max(1, cellW * 0.06);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     for (let y = 0; y < grid.height; y++) {
       for (let x = 0; x < grid.width; x++) {
-        if (white) {
+        if (isWhiteFrame) {
           ctx.fillStyle = "#FFFFFF";
         } else {
           const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
@@ -283,47 +298,20 @@ export default function PlaybackPanel({
         );
       }
     }
-  };
+  }, [currentIndex, frames, isWhiteFrame]);
 
+  // Reset canvas size when panel size changes
   useEffect(() => {
-    const canvas = mainCanvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container || frames.length === 0) return;
-
-    const rect = container.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    const grid = frames[currentIndex];
-
-    const cellSize = Math.min(rect.width / grid.width, rect.height / grid.height);
-    const canvasW = grid.width * cellSize;
-    const canvasH = grid.height * cellSize;
-
-    const ctx = canvas.getContext("2d")!;
-
-    const sizeChanged =
-      lastSizeRef.current.w !== canvasW || lastSizeRef.current.h !== canvasH;
-    if (sizeChanged || !gridDrawnRef.current) {
-      canvas.width = canvasW * dpr;
-      canvas.height = canvasH * dpr;
-      canvas.style.width = `${canvasW}px`;
-      canvas.style.height = `${canvasH}px`;
-      lastSizeRef.current = { w: canvasW, h: canvasH };
-      drawGrid(ctx, canvasW, canvasH, grid.width, grid.height, dpr);
-      gridDrawnRef.current = true;
-    }
-
-    drawColors(ctx, grid, canvasW, canvasH, dpr, isWhiteFrame);
-  }, [currentIndex, frames, panelSize, isWhiteFrame]);
-
-  const sizeClasses: Record<PanelSize, string> = {
-    side: "w-[35vw]",
-    expanded: "w-[60vw]",
-    fullscreen: "fixed inset-0 w-full z-50",
-  };
+    canvasSizeRef.current = null;
+  }, [panelSize]);
 
   return (
     <div
-      className={`${sizeClasses[panelSize]} h-full bg-card border-l border-card-border flex flex-col shrink-0 transition-all duration-200`}
+      className={`${
+        panelSize === "fullscreen"
+          ? "fixed inset-0 w-full z-50"
+          : "w-[35vw]"
+      } h-full bg-card border-l border-card-border flex flex-col shrink-0`}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-card-border shrink-0">
@@ -336,30 +324,6 @@ export default function PlaybackPanel({
           <span className="text-xs text-muted mr-2">
             {currentIndex + 1}/{frames.length}
           </span>
-          {panelSize !== "side" && (
-            <button
-              onClick={() => setPanelSize("side")}
-              className="text-xs text-muted hover:text-foreground px-1.5 py-0.5"
-            >
-              ◁
-            </button>
-          )}
-          {panelSize !== "expanded" && panelSize !== "fullscreen" && (
-            <button
-              onClick={() => setPanelSize("expanded")}
-              className="text-xs text-muted hover:text-foreground px-1.5 py-0.5"
-            >
-              ▷
-            </button>
-          )}
-          <button
-            onClick={() =>
-              setPanelSize(panelSize === "fullscreen" ? "side" : "fullscreen")
-            }
-            className="text-xs text-muted hover:text-foreground px-1.5 py-0.5"
-          >
-            {panelSize === "fullscreen" ? "⊡" : "⊞"}
-          </button>
           <button
             onClick={onClose}
             className="text-xs text-muted hover:text-foreground px-1.5 py-0.5"
@@ -369,7 +333,7 @@ export default function PlaybackPanel({
         </div>
       </div>
 
-      {/* Main canvas */}
+      {/* Main canvas — fixed size, no resize on playback */}
       <div
         ref={containerRef}
         className="flex-1 flex items-center justify-center p-6 overflow-hidden"
@@ -377,30 +341,49 @@ export default function PlaybackPanel({
         <canvas ref={mainCanvasRef} style={{ imageRendering: "pixelated" }} />
       </div>
 
-      {/* Frame timeline */}
+      {/* Frame timeline + fullscreen button */}
       <div className="px-3 py-2 border-t border-card-border shrink-0">
-        <div className="flex items-end gap-0 overflow-x-auto pb-1">
-          {frames.map((frame, idx) => (
-            <div key={idx} className="flex items-center shrink-0">
-              <FrameThumb
-                grid={frame}
-                isActive={currentIndex === idx && !isWhiteFrame}
-                durationMs={durations[idx] ?? 500}
-                onTap={() => {
-                  pause();
-                  goTo(idx);
-                }}
-                onDurationChange={(ms) => setFrameDuration(idx, ms)}
-              />
-              {idx < frames.length - 1 && (
-                <GapButton
-                  intervalMs={intervals[idx] ?? 1000}
-                  isActive={isWhiteFrame && currentIndex === idx}
-                  onChange={(ms) => setGapInterval(idx, ms)}
+        <div className="flex items-end gap-0">
+          <div
+            ref={timelineRef}
+            className="flex items-end gap-0 overflow-x-auto pb-1 flex-1"
+          >
+            {frames.map((frame, idx) => (
+              <div key={idx} className="flex items-center shrink-0">
+                <FrameThumb
+                  grid={frame}
+                  isActive={currentIndex === idx && !isWhiteFrame}
+                  durationMs={durations[idx] ?? 2000}
+                  onTap={() => {
+                    pause();
+                    goTo(idx);
+                  }}
+                  onDurationChange={(ms) => setFrameDuration(idx, ms)}
+                  thumbRef={(el: HTMLDivElement | null) => {
+                    frameRefs.current[idx] = el;
+                  }}
                 />
-              )}
-            </div>
-          ))}
+                {idx < frames.length - 1 && (
+                  <GapButton
+                    intervalMs={intervals[idx] ?? 1000}
+                    isActive={isWhiteFrame && currentIndex === idx}
+                    onChange={(ms) => setGapInterval(idx, ms)}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Fullscreen toggle */}
+          <button
+            onClick={() =>
+              setPanelSize(panelSize === "fullscreen" ? "side" : "fullscreen")
+            }
+            className="ml-2 mb-1 w-7 h-7 flex items-center justify-center rounded bg-card-border/50 hover:bg-card-border text-muted hover:text-foreground text-xs shrink-0"
+            title={panelSize === "fullscreen" ? "縮小" : "全画面"}
+          >
+            {panelSize === "fullscreen" ? "⊡" : "⊞"}
+          </button>
         </div>
       </div>
 
