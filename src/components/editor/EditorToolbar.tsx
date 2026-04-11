@@ -110,13 +110,24 @@ export default function EditorToolbar({
           移動
         </button>
 
-        {isMoveMode && hasMoveSelection && (
-          <button
-            onClick={onClearMoveSelection}
-            className="px-2 py-1 text-[10px] text-muted hover:text-foreground transition-colors shrink-0"
-          >
-            選択解除
-          </button>
+        {isMoveMode && (
+          <>
+            <button
+              onClick={onUndo}
+              disabled={!canUndo}
+              className="px-2 py-1 text-[10px] text-muted hover:text-foreground disabled:opacity-30 transition-colors shrink-0"
+            >
+              ↩ 戻す
+            </button>
+            {hasMoveSelection && (
+              <button
+                onClick={onClearMoveSelection}
+                className="px-2 py-1 text-[10px] text-muted hover:text-foreground transition-colors shrink-0"
+              >
+                選択解除
+              </button>
+            )}
+          </>
         )}
 
         <button
