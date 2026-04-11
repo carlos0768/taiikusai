@@ -27,6 +27,7 @@ interface GridCanvasProps {
   onMoveSelectedCellsChange: (cells: Set<string>) => void;
   moveDragOffset: { dx: number; dy: number } | null;
   onMoveDragOffsetChange: (offset: { dx: number; dy: number } | null) => void;
+  isMoveSelecting: boolean;
 }
 
 export default function GridCanvas({
@@ -48,6 +49,7 @@ export default function GridCanvas({
   onMoveSelectedCellsChange,
   moveDragOffset,
   onMoveDragOffsetChange,
+  isMoveSelecting,
 }: GridCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -165,17 +167,17 @@ export default function GridCanvas({
         onSelectionChange({ x1: cell.x, y1: cell.y, x2: cell.x, y2: cell.y });
       } else if (activeTool === "move") {
         const key = `${cell.x},${cell.y}`;
-        if (moveSelectedCells.has(key)) {
-          // Click inside existing selection → start drag move
-          isDraggingMoveRef.current = true;
-          moveStartRef.current = cell;
-          onMoveDragOffsetChange({ dx: 0, dy: 0 });
-        } else {
-          // Click outside → add to selection (don't clear existing)
+        if (isMoveSelecting) {
+          // Selecting mode: always add cells
           isSelectingRef.current = true;
           const newSet = new Set(moveSelectedCells);
           newSet.add(key);
           onMoveSelectedCellsChange(newSet);
+        } else if (moveSelectedCells.has(key)) {
+          // Not selecting, click inside selection → start drag move
+          isDraggingMoveRef.current = true;
+          moveStartRef.current = cell;
+          onMoveDragOffsetChange({ dx: 0, dy: 0 });
         }
       }
     },
@@ -189,6 +191,7 @@ export default function GridCanvas({
       onSelectionChange,
       moveSelectedCells,
       onMoveSelectedCellsChange,
+      isMoveSelecting,
     ]
   );
 

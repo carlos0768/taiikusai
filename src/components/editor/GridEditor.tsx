@@ -51,6 +51,7 @@ export default function GridEditor({
   const [isMoveMode, setIsMoveMode] = useState(false);
   const [moveSelectedCells, setMoveSelectedCells] = useState<Set<string>>(new Set());
   const [moveDragOffset, setMoveDragOffset] = useState<{ dx: number; dy: number } | null>(null);
+  const [isMoveSelecting, setIsMoveSelecting] = useState(true); // default: selecting mode on
   const [activeTool, setActiveTool] = useState<Tool>("paint");
   const [activeColor, setActiveColor] = useState<ColorIndex>(1);
   const [viewport, setViewport] = useState<Viewport>({
@@ -183,9 +184,11 @@ export default function GridEditor({
         onToggleMemo={() => setShowMemo(!showMemo)}
         showMemo={showMemo}
         isMoveMode={isMoveMode}
-        onToggleMove={() => { setIsMoveMode(!isMoveMode); setMoveSelectedCells(new Set()); if (isEditing) setIsEditing(false); }}
+        onToggleMove={() => { setIsMoveMode(!isMoveMode); setMoveSelectedCells(new Set()); setIsMoveSelecting(true); if (isEditing) setIsEditing(false); }}
         hasMoveSelection={moveSelectedCells.size > 0}
-        onClearMoveSelection={() => setMoveSelectedCells(new Set())}
+        onClearMoveSelection={() => { setMoveSelectedCells(new Set()); setIsMoveSelecting(true); }}
+        isMoveSelecting={isMoveSelecting}
+        onToggleMoveSelecting={() => setIsMoveSelecting(!isMoveSelecting)}
       />
 
       {/* Memo input */}
@@ -221,6 +224,7 @@ export default function GridEditor({
         onMoveSelectedCellsChange={setMoveSelectedCells}
         moveDragOffset={moveDragOffset}
         onMoveDragOffsetChange={setMoveDragOffset}
+        isMoveSelecting={isMoveSelecting}
       />
 
       {isEditing && (
