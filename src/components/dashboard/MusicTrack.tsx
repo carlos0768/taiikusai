@@ -7,7 +7,7 @@ declare global {
   interface Window {
     YT: {
       Player: new (
-        elementId: string,
+        elementId: string | HTMLElement,
         config: {
           height: string;
           width: string;
@@ -73,6 +73,7 @@ export default function MusicTrack({
   const playerRef = useRef<YTPlayer | null>(null);
   const apiLoadedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const ytContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Load YouTube IFrame API
   useEffect(() => {
@@ -95,13 +96,24 @@ export default function MusicTrack({
   useEffect(() => {
     if (!videoId) return;
 
+    const container = ytContainerRef.current;
+    if (!container) return;
+
+    // Create a fresh div outside React's tree for YT.Player to consume
+    const playerEl = document.createElement("div");
+    container.appendChild(playerEl);
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
     const waitForApi = () => {
+      if (cancelled) return;
       if (!window.YT?.Player) {
-        setTimeout(waitForApi, 100);
+        timeoutId = setTimeout(waitForApi, 100);
         return;
       }
 
-      playerRef.current = new window.YT.Player("yt-player", {
+      playerRef.current = new window.YT.Player(playerEl, {
         height: "0",
         width: "0",
         videoId,
@@ -126,8 +138,13 @@ export default function MusicTrack({
     waitForApi();
 
     return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
       playerRef.current?.destroy();
       playerRef.current = null;
+      if (playerEl.parentNode) {
+        playerEl.parentNode.removeChild(playerEl);
+      }
     };
   }, [videoId]);
 
@@ -233,7 +250,7 @@ export default function MusicTrack({
   return (
     <div className="px-3 py-1.5 border-b border-card-border shrink-0">
       {/* Hidden YouTube player */}
-      <div id="yt-player" className="hidden" />
+      <div ref={ytContainerRef} className="hidden" />
 
       {/* Music track bar */}
       <div className="flex items-center gap-2">
