@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
 import { usePlayback } from "@/components/playback/usePlayback";
+import MusicTrack from "./MusicTrack";
 
 interface PlaybackPanelProps {
   frames: GridData[];
@@ -345,7 +346,15 @@ export default function PlaybackPanel({
         <canvas ref={mainCanvasRef} style={{ imageRendering: "pixelated" }} />
       </div>
 
-      {/* Timeline + fullscreen button */}
+      {/* Music track */}
+      <MusicTrack
+        isPlaying={isPlaying}
+        onPlayStateChange={(playing) => {
+          if (!playing && isPlaying) pause();
+        }}
+      />
+
+      {/* Timeline */}
       <div className="px-3 py-2 border-t border-card-border shrink-0">
         <div className="flex items-end gap-0">
           <div className="flex items-end gap-0 overflow-x-auto pb-1 flex-1">
