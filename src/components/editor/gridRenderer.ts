@@ -13,7 +13,8 @@ export function renderGrid(
   canvasHeight: number,
   viewport: Viewport,
   selection?: { x1: number; y1: number; x2: number; y2: number } | null,
-  moveSelectedCells?: Set<string>
+  moveSelectedCells?: Set<string>,
+  moveDragOffset?: { dx: number; dy: number } | null
 ) {
   const dpr = window.devicePixelRatio || 1;
 
@@ -97,18 +98,70 @@ export function renderGrid(
 
   // Draw free-selection highlights (move tool)
   if (moveSelectedCells && moveSelectedCells.size > 0) {
-    ctx.fillStyle = "rgba(255, 215, 0, 0.25)";
-    ctx.strokeStyle = "#FFD700";
-    ctx.lineWidth = 1.5 / viewport.scale;
-    for (const key of moveSelectedCells) {
-      const [cx, cy] = key.split(",").map(Number);
-      if (cx >= 0 && cx < grid.width && cy >= 0 && cy < grid.height) {
-        ctx.fillRect(
-          offsetX + cx * cellSize,
-          offsetY + cy * cellSize,
-          cellSize,
-          cellSize
-        );
+    if (moveDragOffset && (moveDragOffset.dx !== 0 || moveDragOffset.dy !== 0)) {
+      // Dragging: show ghost at original position (semi-transparent)
+      ctx.globalAlpha = 0.3;
+      for (const key of moveSelectedCells) {
+        const [cx, cy] = key.split(",").map(Number);
+        if (cx >= 0 && cx < grid.width && cy >= 0 && cy < grid.height) {
+          const colorIdx = grid.cells[cy * grid.width + cx] as ColorIndex;
+          ctx.fillStyle = COLOR_MAP[colorIdx];
+          ctx.fillRect(
+            offsetX + cx * cellSize,
+            offsetY + cy * cellSize,
+            cellSize,
+            cellSize
+          );
+        }
+      }
+      ctx.globalAlpha = 1.0;
+
+      // Show preview at destination position (full color)
+      for (const key of moveSelectedCells) {
+        const [cx, cy] = key.split(",").map(Number);
+        const nx = cx + moveDragOffset.dx;
+        const ny = cy + moveDragOffset.dy;
+        if (nx >= 0 && nx < grid.width && ny >= 0 && ny < grid.height) {
+          const colorIdx = grid.cells[cy * grid.width + cx] as ColorIndex;
+          ctx.fillStyle = COLOR_MAP[colorIdx];
+          ctx.fillRect(
+            offsetX + nx * cellSize,
+            offsetY + ny * cellSize,
+            cellSize,
+            cellSize
+          );
+        }
+      }
+
+      // Outline around destination cells
+      ctx.strokeStyle = "#FFD700";
+      ctx.lineWidth = 1.5 / viewport.scale;
+      for (const key of moveSelectedCells) {
+        const [cx, cy] = key.split(",").map(Number);
+        const nx = cx + moveDragOffset.dx;
+        const ny = cy + moveDragOffset.dy;
+        if (nx >= 0 && nx < grid.width && ny >= 0 && ny < grid.height) {
+          ctx.strokeRect(
+            offsetX + nx * cellSize,
+            offsetY + ny * cellSize,
+            cellSize,
+            cellSize
+          );
+        }
+      }
+    } else {
+      // Not dragging: just highlight selected cells
+      ctx.fillStyle = "rgba(255, 215, 0, 0.25)";
+      for (const key of moveSelectedCells) {
+        const [cx, cy] = key.split(",").map(Number);
+        if (cx >= 0 && cx < grid.width && cy >= 0 && cy < grid.height) {
+          ctx.fillRect(
+            offsetX + cx * cellSize,
+            offsetY + cy * cellSize,
+            cellSize,
+            cellSize
+          );
+        }
       }
     }
   }

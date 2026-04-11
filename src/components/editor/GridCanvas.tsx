@@ -25,6 +25,8 @@ interface GridCanvasProps {
   onMoveSelection: (selectedCells: Set<string>, dx: number, dy: number) => void;
   moveSelectedCells: Set<string>;
   onMoveSelectedCellsChange: (cells: Set<string>) => void;
+  moveDragOffset: { dx: number; dy: number } | null;
+  onMoveDragOffsetChange: (offset: { dx: number; dy: number } | null) => void;
 }
 
 export default function GridCanvas({
@@ -44,6 +46,8 @@ export default function GridCanvas({
   onMoveSelection,
   moveSelectedCells,
   onMoveSelectedCellsChange,
+  moveDragOffset,
+  onMoveDragOffsetChange,
 }: GridCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -98,15 +102,16 @@ export default function GridCanvas({
         sizeRef.current.height,
         viewport,
         selection,
-        moveSelectedCells
+        moveSelectedCells,
+        moveDragOffset
       );
     });
-  }, [viewport, selection, moveSelectedCells, gridRef]);
+  }, [viewport, selection, moveSelectedCells, moveDragOffset, gridRef]);
 
-  // Re-render on revision/viewport/selection/moveSelectedCells changes
+  // Re-render on revision/viewport/selection/moveSelectedCells/offset changes
   useEffect(() => {
     scheduleRender();
-  }, [revision, viewport, selection, moveSelectedCells, scheduleRender]);
+  }, [revision, viewport, selection, moveSelectedCells, moveDragOffset, scheduleRender]);
 
   const getGridCoords = useCallback(
     (clientX: number, clientY: number) => {
@@ -160,14 +165,15 @@ export default function GridCanvas({
         onSelectionChange({ x1: cell.x, y1: cell.y, x2: cell.x, y2: cell.y });
       } else if (activeTool === "move") {
         const key = `${cell.x},${cell.y}`;
-        if (moveSelectedCells.size > 0 && moveSelectedCells.has(key)) {
+        if (moveSelectedCells.has(key)) {
           // Click inside existing selection → start drag move
           isDraggingMoveRef.current = true;
           moveStartRef.current = cell;
+          onMoveDragOffsetChange({ dx: 0, dy: 0 });
         } else {
-          // Start free selection: add cells by dragging
+          // Click outside → add to selection (don't clear existing)
           isSelectingRef.current = true;
-          const newSet = new Set<string>();
+          const newSet = new Set(moveSelectedCells);
           newSet.add(key);
           onMoveSelectedCellsChange(newSet);
         }
@@ -227,8 +233,19 @@ export default function GridCanvas({
           }
         }
       }
+
+      // Drag preview for move tool: update offset in real-time
+      if (isDraggingMoveRef.current && moveStartRef.current && activeTool === "move") {
+        const cell = getGridCoords(e.clientX, e.clientY);
+        if (cell) {
+          onMoveDragOffsetChange({
+            dx: cell.x - moveStartRef.current.x,
+            dy: cell.y - moveStartRef.current.y,
+          });
+        }
+      }
     },
-    [activeTool, activeColor, getGridCoords, onBatchPaintCell, onSelectionChange, moveSelectedCells, onMoveSelectedCellsChange]
+    [activeTool, activeColor, getGridCoords, onBatchPaintCell, onSelectionChange, moveSelectedCells, onMoveSelectedCellsChange, onMoveDragOffsetChange]
   );
 
   const handlePointerUp = useCallback(
@@ -256,13 +273,14 @@ export default function GridCanvas({
         }
         isDraggingMoveRef.current = false;
         moveStartRef.current = null;
+        onMoveDragOffsetChange(null);
       }
       isPaintingRef.current = false;
       isSelectingRef.current = false;
       lastPaintedCellRef.current = null;
       selStartRef.current = null;
     },
-    [getGridCoords, moveSelectedCells, onMoveSelection, onMoveSelectedCellsChange]
+    [getGridCoords, moveSelectedCells, onMoveSelection, onMoveSelectedCellsChange, onMoveDragOffsetChange]
   );
 
   // Multi-touch gestures for pinch zoom and pan
