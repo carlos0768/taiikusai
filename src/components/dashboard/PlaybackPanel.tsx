@@ -142,6 +142,77 @@ export default function PlaybackPanel({
     goTo,
   } = usePlayback(frames.length);
 
+  const gridDrawnRef = useRef(false);
+  const lastSizeRef = useRef({ w: 0, h: 0 });
+
+  // Draw the outer grid (cell borders) — only when size changes
+  const drawGrid = (
+    ctx: CanvasRenderingContext2D,
+    canvasW: number,
+    canvasH: number,
+    gridW: number,
+    gridH: number,
+    dpr: number
+  ) => {
+    const cellW = canvasW / gridW;
+    const cellH = canvasH / gridH;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Background (gap color between cells)
+    ctx.fillStyle = "#222222";
+    ctx.fillRect(0, 0, canvasW, canvasH);
+
+    // Grid lines (cell borders)
+    ctx.strokeStyle = "#333333";
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= gridW; x++) {
+      ctx.beginPath();
+      ctx.moveTo(x * cellW, 0);
+      ctx.lineTo(x * cellW, canvasH);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= gridH; y++) {
+      ctx.beginPath();
+      ctx.moveTo(0, y * cellH);
+      ctx.lineTo(canvasW, y * cellH);
+      ctx.stroke();
+    }
+  };
+
+  // Draw only the inner color squares (with padding from cell border)
+  const drawColors = (
+    ctx: CanvasRenderingContext2D,
+    grid: GridData,
+    canvasW: number,
+    canvasH: number,
+    dpr: number,
+    white: boolean
+  ) => {
+    const cellW = canvasW / grid.width;
+    const cellH = canvasH / grid.height;
+    const pad = Math.max(1, cellW * 0.06); // small padding
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    for (let y = 0; y < grid.height; y++) {
+      for (let x = 0; x < grid.width; x++) {
+        if (white) {
+          ctx.fillStyle = "#FFFFFF";
+        } else {
+          const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
+          ctx.fillStyle = COLOR_MAP[colorIdx];
+        }
+        ctx.fillRect(
+          x * cellW + pad,
+          y * cellH + pad,
+          cellW - pad * 2,
+          cellH - pad * 2
+        );
+      }
+    }
+  };
+
   // Render main canvas
   useEffect(() => {
     const canvas = mainCanvasRef.current;
@@ -159,46 +230,24 @@ export default function PlaybackPanel({
     const canvasW = grid.width * cellSize;
     const canvasH = grid.height * cellSize;
 
-    canvas.width = canvasW * dpr;
-    canvas.height = canvasH * dpr;
-    canvas.style.width = `${canvasW}px`;
-    canvas.style.height = `${canvasH}px`;
-
     const ctx = canvas.getContext("2d")!;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const cellW = canvasW / grid.width;
-    const cellH = canvasH / grid.height;
+    // Re-draw grid structure only if size changed
+    const sizeChanged =
+      lastSizeRef.current.w !== canvasW || lastSizeRef.current.h !== canvasH;
+    if (sizeChanged || !gridDrawnRef.current) {
+      canvas.width = canvasW * dpr;
+      canvas.height = canvasH * dpr;
+      canvas.style.width = `${canvasW}px`;
+      canvas.style.height = `${canvasH}px`;
+      lastSizeRef.current = { w: canvasW, h: canvasH };
 
-    if (isWhiteFrame) {
-      // All white during fold transition
-      ctx.fillStyle = "#FFFFFF";
-      ctx.fillRect(0, 0, canvasW, canvasH);
-    } else {
-      for (let y = 0; y < grid.height; y++) {
-        for (let x = 0; x < grid.width; x++) {
-          const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
-          ctx.fillStyle = COLOR_MAP[colorIdx];
-          ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
-        }
-      }
+      drawGrid(ctx, canvasW, canvasH, grid.width, grid.height, dpr);
+      gridDrawnRef.current = true;
     }
 
-    // Grid lines
-    ctx.strokeStyle = "rgba(128, 128, 128, 0.15)";
-    ctx.lineWidth = 0.5;
-    for (let x = 0; x <= grid.width; x++) {
-      ctx.beginPath();
-      ctx.moveTo(x * cellW, 0);
-      ctx.lineTo(x * cellW, canvasH);
-      ctx.stroke();
-    }
-    for (let y = 0; y <= grid.height; y++) {
-      ctx.beginPath();
-      ctx.moveTo(0, y * cellH);
-      ctx.lineTo(canvasW, y * cellH);
-      ctx.stroke();
-    }
+    // Always redraw inner color squares
+    drawColors(ctx, grid, canvasW, canvasH, dpr, isWhiteFrame);
   }, [currentIndex, frames, panelSize, isWhiteFrame]);
 
   const sizeClasses: Record<PanelSize, string> = {
