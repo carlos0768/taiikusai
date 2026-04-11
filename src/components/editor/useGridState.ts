@@ -10,7 +10,7 @@ import {
   setCell,
 } from "@/lib/grid/types";
 
-export type Tool = "paint" | "bucket" | "select" | "eraser";
+export type Tool = "paint" | "bucket" | "select" | "eraser" | "move";
 
 const MAX_UNDO = 100;
 
@@ -118,6 +118,59 @@ export function useGridState(initialGrid: GridData) {
     [pushUndo, bump]
   );
 
+  /**
+   * Move a selected region by (dx, dy) cells.
+   * Source cells become white (0). Destination cells get the selected colors.
+   * Cells outside the grid are clipped.
+   */
+  const moveSelection = useCallback(
+    (
+      selX1: number,
+      selY1: number,
+      selX2: number,
+      selY2: number,
+      dx: number,
+      dy: number
+    ) => {
+      const grid = gridRef.current;
+      const minX = Math.max(0, Math.min(selX1, selX2));
+      const maxX = Math.min(grid.width - 1, Math.max(selX1, selX2));
+      const minY = Math.max(0, Math.min(selY1, selY2));
+      const maxY = Math.min(grid.height - 1, Math.max(selY1, selY2));
+
+      pushUndo();
+
+      // Copy selected cells
+      const copied: { rx: number; ry: number; color: ColorIndex }[] = [];
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          copied.push({ rx: x - minX, ry: y - minY, color: getCell(grid, x, y) });
+        }
+      }
+
+      // Clear source area (set to white)
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          setCell(grid, x, y, 0);
+        }
+      }
+
+      // Place at new position
+      const newMinX = minX + dx;
+      const newMinY = minY + dy;
+      for (const { rx, ry, color } of copied) {
+        const nx = newMinX + rx;
+        const ny = newMinY + ry;
+        if (nx >= 0 && nx < grid.width && ny >= 0 && ny < grid.height) {
+          setCell(grid, nx, ny, color);
+        }
+      }
+
+      bump();
+    },
+    [pushUndo, bump]
+  );
+
   const undo = useCallback(() => {
     const prev = undoStackRef.current.pop();
     if (!prev) return;
@@ -155,6 +208,7 @@ export function useGridState(initialGrid: GridData) {
     batchPaintCell,
     floodFill,
     rectFill,
+    moveSelection,
     undo,
     redo,
     loadGrid,

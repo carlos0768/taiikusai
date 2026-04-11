@@ -30,6 +30,7 @@ const tools: { id: Tool; label: string; icon: string }[] = [
   { id: "eraser", label: "消しゴム", icon: "🧹" },
   { id: "bucket", label: "バケツ", icon: "🪣" },
   { id: "select", label: "範囲選択", icon: "⬜" },
+  { id: "move", label: "移動", icon: "✥" },
 ];
 
 export default function EditorToolbar({

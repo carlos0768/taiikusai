@@ -41,6 +41,7 @@ export default function GridEditor({
     batchPaintCell,
     floodFill,
     rectFill,
+    moveSelection,
     undo,
     redo,
     clearDirty,
@@ -208,6 +209,7 @@ export default function GridEditor({
         onSelectionChange={setSelection}
         onViewportChange={setViewport}
         isEditing={isEditing}
+        onMoveSelection={moveSelection}
       />
 
       {isEditing && (
