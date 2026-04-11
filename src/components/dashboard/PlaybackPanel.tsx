@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
 import { usePlayback } from "@/components/playback/usePlayback";
 import MusicTrack from "./MusicTrack";
@@ -213,6 +213,13 @@ export default function PlaybackPanel({
     goTo,
   } = usePlayback(frames.length);
 
+  const handleMusicStateChange = useCallback(
+    (playing: boolean) => {
+      if (!playing) pause();
+    },
+    [pause]
+  );
+
   // Auto-scroll timeline
   useEffect(() => {
     const el = frameRefs.current[currentIndex];
@@ -349,9 +356,7 @@ export default function PlaybackPanel({
       {/* Music track */}
       <MusicTrack
         isPlaying={isPlaying}
-        onPlayStateChange={(playing) => {
-          if (!playing && isPlaying) pause();
-        }}
+        onPlayStateChange={handleMusicStateChange}
       />
 
       {/* Timeline */}

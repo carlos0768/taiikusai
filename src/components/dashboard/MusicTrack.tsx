@@ -151,25 +151,38 @@ export default function MusicTrack({
     };
   }, [videoId]);
 
+  // Refs to keep trim values accessible without re-triggering the effect
+  const startTimeRef = useRef(startTime);
+  const endTimeRef = useRef(endTime);
+  startTimeRef.current = startTime;
+  endTimeRef.current = endTime;
+
   // Sync play/pause with panel playback
+  const wasPlayingRef = useRef(false);
   useEffect(() => {
     const player = playerRef.current;
     if (!player || !videoId || !playerReadyRef.current) return;
 
     if (isPlaying) {
-      player.seekTo(startTime, true);
+      // Only seek to start when playback begins (false → true)
+      if (!wasPlayingRef.current) {
+        player.seekTo(startTimeRef.current, true);
+      }
+      wasPlayingRef.current = true;
       player.playVideo();
 
       // Track current time
       timerRef.current = setInterval(() => {
         const t = player.getCurrentTime();
         setCurrentTime(t);
-        if (endTime > 0 && t >= endTime) {
+        const end = endTimeRef.current;
+        if (end > 0 && t >= end) {
           player.pauseVideo();
           onPlayStateChange(false);
         }
       }, 100);
     } else {
+      wasPlayingRef.current = false;
       player.pauseVideo();
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -183,7 +196,7 @@ export default function MusicTrack({
         timerRef.current = null;
       }
     };
-  }, [isPlaying, videoId, startTime, endTime, onPlayStateChange]);
+  }, [isPlaying, videoId, onPlayStateChange]);
 
   const handleUrlSubmit = useCallback(() => {
     const id = extractVideoId(url);
