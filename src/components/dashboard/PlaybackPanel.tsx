@@ -76,26 +76,28 @@ function FrameThumb({
       </button>
 
       {showPopup && (
-        <div
-          className="absolute top-full mt-1 left-1/2 -translate-x-1/2 bg-card border border-card-border rounded-lg shadow-xl p-3 z-50 min-w-[130px]"
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <p className="text-xs text-muted mb-1 text-center">表示時間</p>
-          <input
-            type="range"
-            min={200}
-            max={5000}
-            step={100}
-            value={durationMs}
-            onChange={(e) => onDurationChange(Number(e.target.value))}
-            className="w-full accent-accent"
-          />
-          <p className="text-center text-xs font-medium mt-0.5">
-            {(durationMs / 1000).toFixed(1)}秒
-          </p>
+        <div className="absolute top-full mt-1 left-1/2 -translate-x-1/2 bg-card border border-card-border rounded-lg shadow-xl p-3 z-50 min-w-[130px]">
+          <p className="text-xs text-muted mb-2 text-center">表示時間（秒）</p>
+          <div className="flex items-center justify-center gap-2">
+            <button
+              onClick={() => onDurationChange(Math.max(200, durationMs - 100))}
+              className="w-7 h-7 flex items-center justify-center bg-card-border rounded text-foreground text-sm"
+            >
+              −
+            </button>
+            <span className="text-sm font-medium w-10 text-center">
+              {(durationMs / 1000).toFixed(1)}
+            </span>
+            <button
+              onClick={() => onDurationChange(Math.min(10000, durationMs + 100))}
+              className="w-7 h-7 flex items-center justify-center bg-card-border rounded text-foreground text-sm"
+            >
+              +
+            </button>
+          </div>
           <button
             onClick={() => setShowPopup(false)}
-            className="w-full mt-1 text-[10px] text-muted hover:text-foreground text-center"
+            className="w-full mt-2 text-[10px] text-muted hover:text-foreground text-center"
           >
             閉じる
           </button>
@@ -132,26 +134,28 @@ function GapButton({
       </button>
 
       {showPopup && (
-        <div
-          className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-card border border-card-border rounded-lg shadow-xl p-3 z-50 min-w-[130px]"
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <p className="text-xs text-muted mb-1 text-center">折り時間</p>
-          <input
-            type="range"
-            min={200}
-            max={5000}
-            step={100}
-            value={intervalMs}
-            onChange={(e) => onChange(Number(e.target.value))}
-            className="w-full accent-accent"
-          />
-          <p className="text-center text-xs font-medium mt-0.5">
-            {(intervalMs / 1000).toFixed(1)}秒
-          </p>
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-card border border-card-border rounded-lg shadow-xl p-3 z-50 min-w-[130px]">
+          <p className="text-xs text-muted mb-2 text-center">折り時間（秒）</p>
+          <div className="flex items-center justify-center gap-2">
+            <button
+              onClick={() => onChange(Math.max(200, intervalMs - 100))}
+              className="w-7 h-7 flex items-center justify-center bg-card-border rounded text-foreground text-sm"
+            >
+              −
+            </button>
+            <span className="text-sm font-medium w-10 text-center">
+              {(intervalMs / 1000).toFixed(1)}
+            </span>
+            <button
+              onClick={() => onChange(Math.min(10000, intervalMs + 100))}
+              className="w-7 h-7 flex items-center justify-center bg-card-border rounded text-foreground text-sm"
+            >
+              +
+            </button>
+          </div>
           <button
             onClick={() => setShowPopup(false)}
-            className="w-full mt-1 text-[10px] text-muted hover:text-foreground text-center"
+            className="w-full mt-2 text-[10px] text-muted hover:text-foreground text-center"
           >
             閉じる
           </button>
