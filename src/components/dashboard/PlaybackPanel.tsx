@@ -12,24 +12,76 @@ interface PlaybackPanelProps {
 
 type PanelSize = "side" | "expanded" | "fullscreen";
 
-// Frame thumbnail with duration popup
+// Fixed-position popup for editing time values
+function TimePopup({
+  label,
+  valueMs,
+  onChange,
+  onClose,
+  anchorRect,
+  position,
+}: {
+  label: string;
+  valueMs: number;
+  onChange: (ms: number) => void;
+  onClose: () => void;
+  anchorRect: DOMRect;
+  position: "above" | "below";
+}) {
+  const top =
+    position === "above"
+      ? anchorRect.top - 120
+      : anchorRect.bottom + 4;
+  const left = anchorRect.left + anchorRect.width / 2 - 65;
+
+  return (
+    <>
+      <div className="fixed inset-0 z-[60]" onClick={onClose} />
+      <div
+        className="fixed z-[70] bg-card border border-card-border rounded-lg shadow-xl p-3"
+        style={{ top, left, width: 130 }}
+      >
+        <p className="text-xs text-muted mb-2 text-center">{label}</p>
+        <div className="flex items-center justify-center gap-2">
+          <button
+            onClick={() => onChange(Math.max(200, valueMs - 100))}
+            className="w-7 h-7 flex items-center justify-center bg-card-border rounded text-foreground text-sm active:bg-accent/30"
+          >
+            −
+          </button>
+          <span className="text-sm font-medium w-10 text-center">
+            {(valueMs / 1000).toFixed(1)}
+          </span>
+          <button
+            onClick={() => onChange(Math.min(10000, valueMs + 100))}
+            className="w-7 h-7 flex items-center justify-center bg-card-border rounded text-foreground text-sm active:bg-accent/30"
+          >
+            +
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// Frame thumbnail with duration editing
 function FrameThumb({
   grid,
-  name,
   isActive,
   durationMs,
   onTap,
   onDurationChange,
 }: {
   grid: GridData;
-  name: string;
   isActive: boolean;
   durationMs: number;
   onTap: () => void;
   onDurationChange: (ms: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
   const [showPopup, setShowPopup] = useState(false);
+  const [rect, setRect] = useState<DOMRect | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -53,8 +105,15 @@ function FrameThumb({
     }
   }, [grid]);
 
+  const handleOpenPopup = () => {
+    if (btnRef.current) {
+      setRect(btnRef.current.getBoundingClientRect());
+      setShowPopup(true);
+    }
+  };
+
   return (
-    <div className="relative shrink-0 flex flex-col items-center">
+    <div className="shrink-0 flex flex-col items-center">
       <canvas
         ref={canvasRef}
         onClick={onTap}
@@ -65,49 +124,31 @@ function FrameThumb({
         }`}
         style={{ width: 60, imageRendering: "pixelated" }}
       />
-      {/* Duration label — tap to edit */}
       <button
-        onClick={() => setShowPopup(!showPopup)}
-        className={`text-[7px] mt-0.5 px-1 rounded transition-colors ${
+        ref={btnRef}
+        onClick={handleOpenPopup}
+        className={`text-[9px] mt-0.5 px-1.5 py-0.5 rounded transition-colors ${
           isActive ? "text-accent" : "text-muted hover:text-foreground"
         }`}
       >
         {(durationMs / 1000).toFixed(1)}s
       </button>
 
-      {showPopup && (
-        <div className="absolute top-full mt-1 left-1/2 -translate-x-1/2 bg-card border border-card-border rounded-lg shadow-xl p-3 z-50 min-w-[130px]">
-          <p className="text-xs text-muted mb-2 text-center">表示時間（秒）</p>
-          <div className="flex items-center justify-center gap-2">
-            <button
-              onClick={() => onDurationChange(Math.max(200, durationMs - 100))}
-              className="w-7 h-7 flex items-center justify-center bg-card-border rounded text-foreground text-sm"
-            >
-              −
-            </button>
-            <span className="text-sm font-medium w-10 text-center">
-              {(durationMs / 1000).toFixed(1)}
-            </span>
-            <button
-              onClick={() => onDurationChange(Math.min(10000, durationMs + 100))}
-              className="w-7 h-7 flex items-center justify-center bg-card-border rounded text-foreground text-sm"
-            >
-              +
-            </button>
-          </div>
-          <button
-            onClick={() => setShowPopup(false)}
-            className="w-full mt-2 text-[10px] text-muted hover:text-foreground text-center"
-          >
-            閉じる
-          </button>
-        </div>
+      {showPopup && rect && (
+        <TimePopup
+          label="表示時間（秒）"
+          valueMs={durationMs}
+          onChange={onDurationChange}
+          onClose={() => setShowPopup(false)}
+          anchorRect={rect}
+          position="below"
+        />
       )}
     </div>
   );
 }
 
-// Gap interval button + popup (with active highlight)
+// Gap interval button with editing
 function GapButton({
   intervalMs,
   isActive,
@@ -117,13 +158,23 @@ function GapButton({
   isActive: boolean;
   onChange: (ms: number) => void;
 }) {
+  const btnRef = useRef<HTMLButtonElement>(null);
   const [showPopup, setShowPopup] = useState(false);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+
+  const handleOpen = () => {
+    if (btnRef.current) {
+      setRect(btnRef.current.getBoundingClientRect());
+      setShowPopup(true);
+    }
+  };
 
   return (
-    <div className="relative shrink-0 flex items-center mx-0.5">
+    <div className="shrink-0 flex items-center mx-0.5">
       <button
-        onClick={() => setShowPopup(!showPopup)}
-        className={`w-6 h-6 flex items-center justify-center rounded-full text-[8px] transition-colors ${
+        ref={btnRef}
+        onClick={handleOpen}
+        className={`w-7 h-7 flex items-center justify-center rounded-full text-[8px] transition-colors ${
           isActive
             ? "bg-accent/30 text-accent ring-1 ring-accent"
             : "bg-card-border/50 hover:bg-card-border text-muted hover:text-foreground"
@@ -133,33 +184,15 @@ function GapButton({
         {(intervalMs / 1000).toFixed(1)}
       </button>
 
-      {showPopup && (
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-card border border-card-border rounded-lg shadow-xl p-3 z-50 min-w-[130px]">
-          <p className="text-xs text-muted mb-2 text-center">折り時間（秒）</p>
-          <div className="flex items-center justify-center gap-2">
-            <button
-              onClick={() => onChange(Math.max(200, intervalMs - 100))}
-              className="w-7 h-7 flex items-center justify-center bg-card-border rounded text-foreground text-sm"
-            >
-              −
-            </button>
-            <span className="text-sm font-medium w-10 text-center">
-              {(intervalMs / 1000).toFixed(1)}
-            </span>
-            <button
-              onClick={() => onChange(Math.min(10000, intervalMs + 100))}
-              className="w-7 h-7 flex items-center justify-center bg-card-border rounded text-foreground text-sm"
-            >
-              +
-            </button>
-          </div>
-          <button
-            onClick={() => setShowPopup(false)}
-            className="w-full mt-2 text-[10px] text-muted hover:text-foreground text-center"
-          >
-            閉じる
-          </button>
-        </div>
+      {showPopup && rect && (
+        <TimePopup
+          label="折り時間（秒）"
+          valueMs={intervalMs}
+          onChange={onChange}
+          onClose={() => setShowPopup(false)}
+          anchorRect={rect}
+          position="above"
+        />
       )}
     </div>
   );
@@ -351,7 +384,6 @@ export default function PlaybackPanel({
             <div key={idx} className="flex items-center shrink-0">
               <FrameThumb
                 grid={frame}
-                name={frameNames[idx] ?? `${idx + 1}`}
                 isActive={currentIndex === idx && !isWhiteFrame}
                 durationMs={durations[idx] ?? 500}
                 onTap={() => {
