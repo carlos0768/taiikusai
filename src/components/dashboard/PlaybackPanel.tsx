@@ -323,6 +323,12 @@ export default function PlaybackPanel({
             {currentIndex + 1}/{frames.length}
           </span>
           <button
+            onClick={() => setPanelSize(panelSize === "fullscreen" ? "side" : "fullscreen")}
+            className="text-xs text-muted hover:text-foreground px-1.5 py-0.5"
+          >
+            {panelSize === "fullscreen" ? "⊡" : "⊞"}
+          </button>
+          <button
             onClick={onClose}
             className="text-xs text-muted hover:text-foreground px-1.5 py-0.5"
           >
@@ -363,12 +369,6 @@ export default function PlaybackPanel({
               </div>
             ))}
           </div>
-          <button
-            onClick={() => setPanelSize(panelSize === "fullscreen" ? "side" : "fullscreen")}
-            className="ml-2 mb-1 w-7 h-7 flex items-center justify-center rounded bg-card-border/50 hover:bg-card-border text-muted hover:text-foreground text-xs shrink-0"
-          >
-            {panelSize === "fullscreen" ? "⊡" : "⊞"}
-          </button>
         </div>
       </div>
 
