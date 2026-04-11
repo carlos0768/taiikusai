@@ -74,6 +74,7 @@ export default function MusicTrack({
   const apiLoadedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const ytContainerRef = useRef<HTMLDivElement | null>(null);
+  const playerReadyRef = useRef(false);
 
   // Load YouTube IFrame API
   useEffect(() => {
@@ -127,6 +128,8 @@ export default function MusicTrack({
         },
         events: {
           onReady: (event) => {
+            if (cancelled) return;
+            playerReadyRef.current = true;
             const dur = event.target.getDuration();
             setDuration(dur);
             if (endTime === 0) setEndTime(dur);
@@ -140,6 +143,7 @@ export default function MusicTrack({
     return () => {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
+      playerReadyRef.current = false;
       playerRef.current?.destroy();
       playerRef.current = null;
       if (playerEl.parentNode) {
@@ -151,7 +155,7 @@ export default function MusicTrack({
   // Sync play/pause with panel playback
   useEffect(() => {
     const player = playerRef.current;
-    if (!player || !videoId) return;
+    if (!player || !videoId || !playerReadyRef.current) return;
 
     if (isPlaying) {
       player.seekTo(startTime, true);
@@ -191,6 +195,7 @@ export default function MusicTrack({
   }, [url]);
 
   const handleRemove = useCallback(() => {
+    playerReadyRef.current = false;
     playerRef.current?.destroy();
     playerRef.current = null;
     setVideoId(null);
