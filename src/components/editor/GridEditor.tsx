@@ -49,6 +49,7 @@ export default function GridEditor({
 
   const [isEditing, setIsEditing] = useState(false);
   const [isMoveMode, setIsMoveMode] = useState(false);
+  const [moveSelectedCells, setMoveSelectedCells] = useState<Set<string>>(new Set());
   const [activeTool, setActiveTool] = useState<Tool>("paint");
   const [activeColor, setActiveColor] = useState<ColorIndex>(1);
   const [viewport, setViewport] = useState<Viewport>({
@@ -181,7 +182,7 @@ export default function GridEditor({
         onToggleMemo={() => setShowMemo(!showMemo)}
         showMemo={showMemo}
         isMoveMode={isMoveMode}
-        onToggleMove={() => { setIsMoveMode(!isMoveMode); if (isEditing) setIsEditing(false); }}
+        onToggleMove={() => { setIsMoveMode(!isMoveMode); setMoveSelectedCells(new Set()); if (isEditing) setIsEditing(false); }}
       />
 
       {/* Memo input */}
@@ -213,6 +214,8 @@ export default function GridEditor({
         onViewportChange={setViewport}
         isEditing={isEditing}
         onMoveSelection={moveSelection}
+        moveSelectedCells={moveSelectedCells}
+        onMoveSelectedCellsChange={setMoveSelectedCells}
       />
 
       {isEditing && (

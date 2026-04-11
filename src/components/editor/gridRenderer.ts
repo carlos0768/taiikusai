@@ -12,7 +12,8 @@ export function renderGrid(
   canvasWidth: number,
   canvasHeight: number,
   viewport: Viewport,
-  selection?: { x1: number; y1: number; x2: number; y2: number } | null
+  selection?: { x1: number; y1: number; x2: number; y2: number } | null,
+  moveSelectedCells?: Set<string>
 ) {
   const dpr = window.devicePixelRatio || 1;
 
@@ -92,6 +93,24 @@ export function renderGrid(
       (maxX - minX + 1) * cellSize,
       (maxY - minY + 1) * cellSize
     );
+  }
+
+  // Draw free-selection highlights (move tool)
+  if (moveSelectedCells && moveSelectedCells.size > 0) {
+    ctx.fillStyle = "rgba(255, 215, 0, 0.25)";
+    ctx.strokeStyle = "#FFD700";
+    ctx.lineWidth = 1.5 / viewport.scale;
+    for (const key of moveSelectedCells) {
+      const [cx, cy] = key.split(",").map(Number);
+      if (cx >= 0 && cx < grid.width && cy >= 0 && cy < grid.height) {
+        ctx.fillRect(
+          offsetX + cx * cellSize,
+          offsetY + cy * cellSize,
+          cellSize,
+          cellSize
+        );
+      }
+    }
   }
 
   // Draw border

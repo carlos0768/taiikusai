@@ -22,14 +22,9 @@ interface GridCanvasProps {
   ) => void;
   onViewportChange: (viewport: Viewport) => void;
   isEditing: boolean;
-  onMoveSelection: (
-    x1: number,
-    y1: number,
-    x2: number,
-    y2: number,
-    dx: number,
-    dy: number
-  ) => void;
+  onMoveSelection: (selectedCells: Set<string>, dx: number, dy: number) => void;
+  moveSelectedCells: Set<string>;
+  onMoveSelectedCellsChange: (cells: Set<string>) => void;
 }
 
 export default function GridCanvas({
@@ -47,6 +42,8 @@ export default function GridCanvas({
   onViewportChange,
   isEditing,
   onMoveSelection,
+  moveSelectedCells,
+  onMoveSelectedCellsChange,
 }: GridCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -100,15 +97,16 @@ export default function GridCanvas({
         sizeRef.current.width,
         sizeRef.current.height,
         viewport,
-        selection
+        selection,
+        moveSelectedCells
       );
     });
-  }, [viewport, selection, gridRef]);
+  }, [viewport, selection, moveSelectedCells, gridRef]);
 
-  // Re-render on revision/viewport/selection changes
+  // Re-render on revision/viewport/selection/moveSelectedCells changes
   useEffect(() => {
     scheduleRender();
-  }, [revision, viewport, selection, scheduleRender]);
+  }, [revision, viewport, selection, moveSelectedCells, scheduleRender]);
 
   const getGridCoords = useCallback(
     (clientX: number, clientY: number) => {
@@ -161,26 +159,17 @@ export default function GridCanvas({
         selStartRef.current = cell;
         onSelectionChange({ x1: cell.x, y1: cell.y, x2: cell.x, y2: cell.y });
       } else if (activeTool === "move") {
-        if (selection) {
-          // Check if click is inside existing selection → start drag
-          const minX = Math.min(selection.x1, selection.x2);
-          const maxX = Math.max(selection.x1, selection.x2);
-          const minY = Math.min(selection.y1, selection.y2);
-          const maxY = Math.max(selection.y1, selection.y2);
-          if (cell.x >= minX && cell.x <= maxX && cell.y >= minY && cell.y <= maxY) {
-            isDraggingMoveRef.current = true;
-            moveStartRef.current = cell;
-          } else {
-            // Click outside → start new selection
-            isSelectingRef.current = true;
-            selStartRef.current = cell;
-            onSelectionChange({ x1: cell.x, y1: cell.y, x2: cell.x, y2: cell.y });
-          }
+        const key = `${cell.x},${cell.y}`;
+        if (moveSelectedCells.size > 0 && moveSelectedCells.has(key)) {
+          // Click inside existing selection → start drag move
+          isDraggingMoveRef.current = true;
+          moveStartRef.current = cell;
         } else {
-          // No selection yet → start selecting
+          // Start free selection: add cells by dragging
           isSelectingRef.current = true;
-          selStartRef.current = cell;
-          onSelectionChange({ x1: cell.x, y1: cell.y, x2: cell.x, y2: cell.y });
+          const newSet = new Set<string>();
+          newSet.add(key);
+          onMoveSelectedCellsChange(newSet);
         }
       }
     },
@@ -192,6 +181,8 @@ export default function GridCanvas({
       onBatchPaintCell,
       onFloodFill,
       onSelectionChange,
+      moveSelectedCells,
+      onMoveSelectedCellsChange,
     ]
   );
 
@@ -212,7 +203,7 @@ export default function GridCanvas({
         }
       }
 
-      if (isSelectingRef.current && (activeTool === "select" || activeTool === "move") && selStartRef.current) {
+      if (isSelectingRef.current && activeTool === "select" && selStartRef.current) {
         const cell = getGridCoords(e.clientX, e.clientY);
         if (cell) {
           onSelectionChange({
@@ -223,8 +214,21 @@ export default function GridCanvas({
           });
         }
       }
+
+      // Free selection for move tool: add cells as pointer moves
+      if (isSelectingRef.current && activeTool === "move") {
+        const cell = getGridCoords(e.clientX, e.clientY);
+        if (cell) {
+          const key = `${cell.x},${cell.y}`;
+          if (!moveSelectedCells.has(key)) {
+            const newSet = new Set(moveSelectedCells);
+            newSet.add(key);
+            onMoveSelectedCellsChange(newSet);
+          }
+        }
+      }
     },
-    [activeTool, activeColor, getGridCoords, onBatchPaintCell, onSelectionChange]
+    [activeTool, activeColor, getGridCoords, onBatchPaintCell, onSelectionChange, moveSelectedCells, onMoveSelectedCellsChange]
   );
 
   const handlePointerUp = useCallback(
@@ -234,27 +238,20 @@ export default function GridCanvas({
       }
 
       // Finish move drag
-      if (isDraggingMoveRef.current && moveStartRef.current && selection) {
+      if (isDraggingMoveRef.current && moveStartRef.current && moveSelectedCells.size > 0) {
         const cell = getGridCoords(e.clientX, e.clientY);
         if (cell) {
           const dx = cell.x - moveStartRef.current.x;
           const dy = cell.y - moveStartRef.current.y;
           if (dx !== 0 || dy !== 0) {
-            onMoveSelection(
-              selection.x1,
-              selection.y1,
-              selection.x2,
-              selection.y2,
-              dx,
-              dy
-            );
-            // Update selection to new position
-            onSelectionChange({
-              x1: selection.x1 + dx,
-              y1: selection.y1 + dy,
-              x2: selection.x2 + dx,
-              y2: selection.y2 + dy,
-            });
+            onMoveSelection(moveSelectedCells, dx, dy);
+            // Update selected cells to new positions
+            const newSet = new Set<string>();
+            for (const key of moveSelectedCells) {
+              const [sx, sy] = key.split(",").map(Number);
+              newSet.add(`${sx + dx},${sy + dy}`);
+            }
+            onMoveSelectedCellsChange(newSet);
           }
         }
         isDraggingMoveRef.current = false;
@@ -265,7 +262,7 @@ export default function GridCanvas({
       lastPaintedCellRef.current = null;
       selStartRef.current = null;
     },
-    [getGridCoords, selection, onMoveSelection, onSelectionChange]
+    [getGridCoords, moveSelectedCells, onMoveSelection, onMoveSelectedCellsChange]
   );
 
   // Multi-touch gestures for pinch zoom and pan

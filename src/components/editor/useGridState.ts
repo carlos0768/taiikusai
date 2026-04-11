@@ -119,49 +119,34 @@ export function useGridState(initialGrid: GridData) {
   );
 
   /**
-   * Move a selected region by (dx, dy) cells.
+   * Move selected cells by (dx, dy).
+   * selectedCells: Set of "x,y" strings identifying selected cells.
    * Source cells become white (0). Destination cells get the selected colors.
-   * Cells outside the grid are clipped.
    */
   const moveSelection = useCallback(
-    (
-      selX1: number,
-      selY1: number,
-      selX2: number,
-      selY2: number,
-      dx: number,
-      dy: number
-    ) => {
+    (selectedCells: Set<string>, dx: number, dy: number) => {
       const grid = gridRef.current;
-      const minX = Math.max(0, Math.min(selX1, selX2));
-      const maxX = Math.min(grid.width - 1, Math.max(selX1, selX2));
-      const minY = Math.max(0, Math.min(selY1, selY2));
-      const maxY = Math.min(grid.height - 1, Math.max(selY1, selY2));
 
       pushUndo();
 
-      // Copy only non-white cells (colored cells are the "shape" to move)
-      const copied: { rx: number; ry: number; color: ColorIndex }[] = [];
-      for (let y = minY; y <= maxY; y++) {
-        for (let x = minX; x <= maxX; x++) {
-          const color = getCell(grid, x, y);
-          if (color !== 0) {
-            copied.push({ rx: x - minX, ry: y - minY, color });
-          }
+      // Collect cell data
+      const cells: { x: number; y: number; color: ColorIndex }[] = [];
+      for (const key of selectedCells) {
+        const [sx, sy] = key.split(",").map(Number);
+        if (sx >= 0 && sx < grid.width && sy >= 0 && sy < grid.height) {
+          cells.push({ x: sx, y: sy, color: getCell(grid, sx, sy) });
         }
       }
 
-      // Clear source positions of moved cells (set to white)
-      for (const { rx, ry } of copied) {
-        setCell(grid, minX + rx, minY + ry, 0);
+      // Clear source cells
+      for (const { x, y } of cells) {
+        setCell(grid, x, y, 0);
       }
 
       // Place at new position
-      const newMinX = minX + dx;
-      const newMinY = minY + dy;
-      for (const { rx, ry, color } of copied) {
-        const nx = newMinX + rx;
-        const ny = newMinY + ry;
+      for (const { x, y, color } of cells) {
+        const nx = x + dx;
+        const ny = y + dy;
         if (nx >= 0 && nx < grid.width && ny >= 0 && ny < grid.height) {
           setCell(grid, nx, ny, color);
         }
