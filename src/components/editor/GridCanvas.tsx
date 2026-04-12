@@ -198,6 +198,7 @@ export default function GridCanvas({
       moveSelectedCells,
       onMoveSelectedCellsChange,
       isMoveSelecting,
+      isEditing,
     ]
   );
 
