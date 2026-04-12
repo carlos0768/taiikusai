@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface CameraCaptureProps {
   onCapture: (imageBase64: string) => void;
@@ -56,13 +56,19 @@ export default function CameraCapture({
     onClose();
   }, [stopCamera, onClose]);
 
-  // Auto-start camera
-  useState(() => {
+  // Auto-start camera on mount; ensure cleanup on unmount.
+  // startCamera is async and only calls setState after awaiting getUserMedia,
+  // so it doesn't cause cascading synchronous renders.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     startCamera();
-  });
+    return () => {
+      stopCamera();
+    };
+  }, [startCamera, stopCamera]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black flex flex-col">
+    <div className="fixed inset-0 z-50 bg-black flex flex-col h-[100dvh]">
       {error ? (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
@@ -82,9 +88,9 @@ export default function CameraCapture({
             autoPlay
             playsInline
             muted
-            className="flex-1 object-cover"
+            className="flex-1 min-h-0 object-cover"
           />
-          <div className="flex items-center justify-center gap-6 p-4 bg-black/80">
+          <div className="flex items-center justify-center gap-6 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-black/80">
             <button
               onClick={handleClose}
               className="text-muted hover:text-foreground text-sm px-4 py-2"
