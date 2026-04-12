@@ -1,4 +1,9 @@
-import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
+import {
+  COLOR_MAP,
+  UNDEFINED_COLOR,
+  type ColorIndex,
+  type GridData,
+} from "@/lib/grid/types";
 
 export interface Viewport {
   scale: number;
@@ -36,7 +41,8 @@ export function renderGrid(
   const offsetX = (canvasWidth / viewport.scale - gridPixelW) / 2;
   const offsetY = (canvasHeight / viewport.scale - gridPixelH) / 2;
 
-  // Build set of cells being dragged (to draw as white at source)
+  // Build set of cells being dragged (to draw as undefined/gray at source,
+  // matching the actual post-drop state of moveSelection)
   const isDragging = moveSelectedCells && moveSelectedCells.size > 0 && moveDragOffset != null;
   const draggingSource = new Set<string>();
   if (isDragging) {
@@ -48,9 +54,10 @@ export function renderGrid(
   // Draw cells
   for (let y = 0; y < grid.height; y++) {
     for (let x = 0; x < grid.width; x++) {
-      // If this cell is being dragged away, show white
+      // If this cell is being dragged away, show as undefined (gray)
+      // — the same state it will have once the drop completes.
       if (draggingSource.has(`${x},${y}`)) {
-        ctx.fillStyle = COLOR_MAP[0]; // white
+        ctx.fillStyle = COLOR_MAP[UNDEFINED_COLOR];
       } else {
         const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
         ctx.fillStyle = COLOR_MAP[colorIdx];
@@ -148,7 +155,7 @@ export function renderGrid(
           }
         }
       }
-      // When dragging but not moved yet (dx=0,dy=0): source already white, no highlight
+      // When dragging but not moved yet (dx=0,dy=0): source already rendered as undefined, no highlight
     } else if (!isDragging) {
       // Not dragging: just highlight selected cells
       ctx.fillStyle = "rgba(255, 215, 0, 0.25)";
