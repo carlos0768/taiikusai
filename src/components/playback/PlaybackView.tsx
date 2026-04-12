@@ -1,20 +1,93 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
+import {
+  COLOR_MAP,
+  type ColorIndex,
+  type GridData,
+  type PlaybackFrame,
+  waveChangedColsAt,
+} from "@/lib/grid/types";
 import { usePlayback } from "./usePlayback";
 
 interface PlaybackViewProps {
-  frames: GridData[];
-  frameNames: string[];
+  frames: PlaybackFrame[];
   onBack: () => void;
 }
 
-export default function PlaybackView({
-  frames,
-  frameNames,
-  onBack,
-}: PlaybackViewProps) {
+function drawGrid(
+  ctx: CanvasRenderingContext2D,
+  grid: GridData,
+  canvasW: number,
+  canvasH: number
+) {
+  const cellW = canvasW / grid.width;
+  const cellH = canvasH / grid.height;
+  for (let y = 0; y < grid.height; y++) {
+    for (let x = 0; x < grid.width; x++) {
+      const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
+      ctx.fillStyle = COLOR_MAP[colorIdx];
+      ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
+    }
+  }
+  // Grid lines
+  ctx.strokeStyle = "rgba(128, 128, 128, 0.15)";
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x <= grid.width; x++) {
+    ctx.beginPath();
+    ctx.moveTo(x * cellW, 0);
+    ctx.lineTo(x * cellW, canvasH);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= grid.height; y++) {
+    ctx.beginPath();
+    ctx.moveTo(0, y * cellH);
+    ctx.lineTo(canvasW, y * cellH);
+    ctx.stroke();
+  }
+}
+
+function drawWave(
+  ctx: CanvasRenderingContext2D,
+  frame: Extract<PlaybackFrame, { kind: "wave" }>,
+  elapsedMs: number,
+  canvasW: number,
+  canvasH: number
+) {
+  const { before, after } = frame;
+  const cellW = canvasW / before.width;
+  const cellH = canvasH / before.height;
+  const changedCols = waveChangedColsAt(frame, elapsedMs);
+  for (let y = 0; y < before.height; y++) {
+    for (let x = 0; x < before.width; x++) {
+      const grid = x < changedCols ? after : before;
+      const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
+      ctx.fillStyle = COLOR_MAP[colorIdx];
+      ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
+    }
+  }
+  ctx.strokeStyle = "rgba(128, 128, 128, 0.15)";
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x <= before.width; x++) {
+    ctx.beginPath();
+    ctx.moveTo(x * cellW, 0);
+    ctx.lineTo(x * cellW, canvasH);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= before.height; y++) {
+    ctx.beginPath();
+    ctx.moveTo(0, y * cellH);
+    ctx.lineTo(canvasW, y * cellH);
+    ctx.stroke();
+  }
+}
+
+function frameDimensions(frame: PlaybackFrame): { width: number; height: number } {
+  if (frame.kind === "general") return { width: frame.grid.width, height: frame.grid.height };
+  return { width: frame.before.width, height: frame.before.height };
+}
+
+export default function PlaybackView({ frames, onBack }: PlaybackViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -22,6 +95,7 @@ export default function PlaybackView({
     currentIndex,
     isPlaying,
     isWhiteFrame,
+    frameElapsedMs,
     intervals,
     setGapInterval,
     play,
@@ -29,8 +103,7 @@ export default function PlaybackView({
     stop,
     next,
     prev,
-    goTo,
-  } = usePlayback(frames.length);
+  } = usePlayback(frames);
 
   // Render current frame
   useEffect(() => {
@@ -38,17 +111,15 @@ export default function PlaybackView({
     const container = containerRef.current;
     if (!canvas || !container || frames.length === 0) return;
 
-    const grid = frames[currentIndex];
+    const frame = frames[currentIndex];
+    if (!frame) return;
+    const dims = frameDimensions(frame);
     const rect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
 
-    // Fit grid to container
-    const cellSize = Math.min(
-      rect.width / grid.width,
-      rect.height / grid.height
-    );
-    const canvasW = grid.width * cellSize;
-    const canvasH = grid.height * cellSize;
+    const cellSize = Math.min(rect.width / dims.width, rect.height / dims.height);
+    const canvasW = dims.width * cellSize;
+    const canvasH = dims.height * cellSize;
 
     canvas.width = canvasW * dpr;
     canvas.height = canvasH * dpr;
@@ -57,34 +128,23 @@ export default function PlaybackView({
 
     const ctx = canvas.getContext("2d")!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, canvasW, canvasH);
 
-    const cellW = canvasW / grid.width;
-    const cellH = canvasH / grid.height;
-
-    for (let y = 0; y < grid.height; y++) {
-      for (let x = 0; x < grid.width; x++) {
-        const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
-        ctx.fillStyle = COLOR_MAP[colorIdx];
-        ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
-      }
+    if (isWhiteFrame) {
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fillRect(0, 0, canvasW, canvasH);
+      return;
     }
 
-    // Grid lines
-    ctx.strokeStyle = "rgba(128, 128, 128, 0.15)";
-    ctx.lineWidth = 0.5;
-    for (let x = 0; x <= grid.width; x++) {
-      ctx.beginPath();
-      ctx.moveTo(x * cellW, 0);
-      ctx.lineTo(x * cellW, canvasH);
-      ctx.stroke();
+    if (frame.kind === "general") {
+      drawGrid(ctx, frame.grid, canvasW, canvasH);
+    } else {
+      drawWave(ctx, frame, frameElapsedMs, canvasW, canvasH);
     }
-    for (let y = 0; y <= grid.height; y++) {
-      ctx.beginPath();
-      ctx.moveTo(0, y * cellH);
-      ctx.lineTo(canvasW, y * cellH);
-      ctx.stroke();
-    }
-  }, [currentIndex, frames]);
+  }, [currentIndex, frames, frameElapsedMs, isWhiteFrame]);
+
+  const currentFrame = frames[currentIndex];
+  const headerName = currentFrame?.name ?? `Frame ${currentIndex + 1}`;
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -96,9 +156,7 @@ export default function PlaybackView({
         >
           ←
         </button>
-        <span className="text-sm font-medium">
-          {frameNames[currentIndex] ?? `Frame ${currentIndex + 1}`}
-        </span>
+        <span className="text-sm font-medium">{headerName}</span>
         <span className="text-xs text-muted">
           {currentIndex + 1} / {frames.length}
         </span>
@@ -121,7 +179,6 @@ export default function PlaybackView({
               key={idx}
               onClick={() => {
                 pause();
-                // Direct set through goTo equivalent
               }}
               className={`w-2.5 h-2.5 rounded-full transition-colors ${
                 idx === currentIndex
@@ -163,26 +220,28 @@ export default function PlaybackView({
         </div>
 
         {/* Speed control — sets all intervals uniformly */}
-        <div className="flex items-center justify-center gap-3">
-          <span className="text-xs text-muted">折り時間</span>
-          <input
-            type="range"
-            min={200}
-            max={5000}
-            step={100}
-            value={intervals[0] ?? 1000}
-            onChange={(e) => {
-              const ms = Number(e.target.value);
-              for (let i = 0; i < intervals.length; i++) {
-                setGapInterval(i, ms);
-              }
-            }}
-            className="w-40 accent-accent"
-          />
-          <span className="text-xs text-muted w-12">
-            {((intervals[0] ?? 1000) / 1000).toFixed(1)}秒
-          </span>
-        </div>
+        {intervals.length > 0 && (
+          <div className="flex items-center justify-center gap-3">
+            <span className="text-xs text-muted">折り時間</span>
+            <input
+              type="range"
+              min={200}
+              max={5000}
+              step={100}
+              value={intervals[0] ?? 1000}
+              onChange={(e) => {
+                const ms = Number(e.target.value);
+                for (let i = 0; i < intervals.length; i++) {
+                  setGapInterval(i, ms);
+                }
+              }}
+              className="w-40 accent-accent"
+            />
+            <span className="text-xs text-muted w-12">
+              {((intervals[0] ?? 1000) / 1000).toFixed(1)}秒
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );

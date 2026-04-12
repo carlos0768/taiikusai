@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { decodeGrid } from "@/lib/grid/codec";
 import { findPlaybackRoutes } from "@/lib/api/connections";
-import type { GridData } from "@/lib/grid/types";
+import type { PlaybackFrame } from "@/lib/grid/types";
 import type { ZentaiGamen, Connection } from "@/types";
+import { zentaiGamenToPlaybackFrame } from "@/lib/playback/frameBuilder";
 import PlaybackView from "@/components/playback/PlaybackView";
 import RouteSelector from "@/components/playback/RouteSelector";
 
@@ -96,14 +96,12 @@ export default function PlaybackPage() {
   // Build frames for playback
   const route = routes[selectedRoute ?? 0] ?? [];
   const zgMap = new Map(zentaiGamen.map((zg) => [zg.id, zg]));
-  const frames: GridData[] = [];
-  const frameNames: string[] = [];
+  const frames: PlaybackFrame[] = [];
 
   for (const nodeId of route) {
     const zg = zgMap.get(nodeId);
     if (zg) {
-      frames.push(decodeGrid(zg.grid_data, gridWidth, gridHeight));
-      frameNames.push(zg.name);
+      frames.push(zentaiGamenToPlaybackFrame(zg, gridWidth, gridHeight));
     }
   }
 
@@ -123,7 +121,5 @@ export default function PlaybackPage() {
     );
   }
 
-  return (
-    <PlaybackView frames={frames} frameNames={frameNames} onBack={handleBack} />
-  );
+  return <PlaybackView frames={frames} onBack={handleBack} />;
 }

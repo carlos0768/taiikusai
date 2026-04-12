@@ -19,7 +19,6 @@ import "@xyflow/react/dist/style.css";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { encodeGrid } from "@/lib/grid/codec";
-import { createEmptyGrid } from "@/lib/grid/types";
 import type {
   Project,
   ZentaiGamen,
@@ -34,9 +33,10 @@ import Sidebar from "./Sidebar";
 import CameraCapture from "@/components/scan/CameraCapture";
 import PlaybackPanel from "./PlaybackPanel";
 import { parseExcel, parseCsv } from "@/lib/import/parseSpreadsheet";
-import { decodeGrid } from "@/lib/grid/codec";
 import { findPlaybackRoutes } from "@/lib/api/connections";
-import type { GridData } from "@/lib/grid/types";
+import { zentaiGamenToPlaybackFrame } from "@/lib/playback/frameBuilder";
+import { createEmptyGrid, type PlaybackFrame } from "@/lib/grid/types";
+import { DEFAULT_WAVE_MOTION_DATA } from "@/types";
 
 const nodeTypes = { zentaiGamen: ZentaiGamenNode };
 const edgeTypes = { connection: ConnectionEdge };
@@ -64,8 +64,7 @@ function DashboardCanvasInner({
   const [showCamera, setShowCamera] = useState(false);
   const [scanProcessing, setScanProcessing] = useState(false);
   const [playbackData, setPlaybackData] = useState<{
-    frames: GridData[];
-    frameNames: string[];
+    frames: PlaybackFrame[];
   } | null>(null);
 
   // Context menu state — store both screen pos and flow pos
@@ -126,6 +125,7 @@ function DashboardCanvasInner({
           gridWidth: project.grid_width,
           gridHeight: project.grid_height,
           hasOutgoingEdge: sourceIds.has(zg.id),
+          isWave: zg.panel_type === "motion" && zg.motion_type === "wave",
           onDoubleClick: handleNodeDoubleClick,
           onLongPress: handleNodeLongPress,
         },
@@ -297,6 +297,34 @@ function DashboardCanvasInner({
     await createAndNavigate(encodeGrid(emptyGrid), "Untitled");
   }, [project, createAndNavigate]);
 
+  // Wave (motion panel)
+  const handleCreateWave = useCallback(async () => {
+    const posX = contextMenu?.flowX ?? 0;
+    const posY = contextMenu?.flowY ?? 0;
+    const emptyGrid = createEmptyGrid(project.grid_width, project.grid_height);
+    const beforeEncoded = encodeGrid(emptyGrid);
+    const afterEncoded = encodeGrid(emptyGrid);
+    const motionData = DEFAULT_WAVE_MOTION_DATA(afterEncoded);
+
+    const { data, error } = await supabase
+      .from("zentai_gamen")
+      .insert({
+        project_id: project.id,
+        name: "ウェーブ",
+        grid_data: beforeEncoded,
+        position_x: posX,
+        position_y: posY,
+        panel_type: "motion",
+        motion_type: "wave",
+        motion_data: motionData,
+      })
+      .select()
+      .single();
+    setContextMenu(null);
+    if (error || !data) return;
+    router.push(`/project/${project.id}/editor/${data.id}`);
+  }, [project, supabase, contextMenu, router]);
+
   // Template
   const handleSelectTemplate = useCallback(
     async (templateId: string) => {
@@ -426,28 +454,41 @@ function DashboardCanvasInner({
     const startId = nodeMenu.nodeId;
     setNodeMenu(null);
 
-    const routes = findPlaybackRoutes(initialConnections, startId);
-    const route = routes[0];
-    if (!route || route.length === 0) return;
+    // ライブの edges から findPlaybackRoutes 用の Connection 構造を作る
+    // (初期 props の initialConnections は新規描画したエッジを含まないため)
+    const liveConnections: DBConnection[] = edges.map((e) => ({
+      id: e.id,
+      project_id: project.id,
+      source_id: e.source,
+      target_id: e.target,
+      sort_order: 0,
+      created_at: "",
+    }));
 
+    const routes = findPlaybackRoutes(liveConnections, startId);
+    let route = routes[0];
+    if (!route || route.length === 0) {
+      // No connections — just play this single node
+      route = [startId];
+    }
+
+    // ライブの nodes から最新の zentai_gamen データを引く (新規追加分も含める)
     const zgMap = new Map(initialZentaiGamen.map((z) => [z.id, z]));
-    const frames: GridData[] = [];
-    const frameNames: string[] = [];
+    const frames: PlaybackFrame[] = [];
 
     for (const nodeId of route) {
       const zg = zgMap.get(nodeId);
       if (zg) {
         frames.push(
-          decodeGrid(zg.grid_data, project.grid_width, project.grid_height)
+          zentaiGamenToPlaybackFrame(zg, project.grid_width, project.grid_height)
         );
-        frameNames.push(zg.name);
       }
     }
 
     if (frames.length > 0) {
-      setPlaybackData({ frames, frameNames });
+      setPlaybackData({ frames });
     }
-  }, [nodeMenu, initialConnections, initialZentaiGamen, project]);
+  }, [nodeMenu, edges, initialZentaiGamen, project]);
 
   // Build submenu items
   const templateMenuItems: SubMenuItem[] = templates.map((t) => ({
@@ -534,6 +575,7 @@ function DashboardCanvasInner({
           x={contextMenu.screenX}
           y={contextMenu.screenY}
           onManual={handleCreateManual}
+          onWave={handleCreateWave}
           onScan={handleScan}
           onSelectTemplate={handleSelectTemplate}
           onSelectExisting={handleSelectExisting}
@@ -578,7 +620,6 @@ function DashboardCanvasInner({
     {playbackData && (
       <PlaybackPanel
         frames={playbackData.frames}
-        frameNames={playbackData.frameNames}
         onClose={() => setPlaybackData(null)}
       />
     )}
