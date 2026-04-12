@@ -1,7 +1,12 @@
 import { createClient } from "@/lib/supabase/client";
 import { encodeGrid } from "@/lib/grid/codec";
 import { createEmptyGrid } from "@/lib/grid/types";
-import type { ZentaiGamen } from "@/types";
+import type {
+  MotionType,
+  PanelType,
+  WaveMotionData,
+  ZentaiGamen,
+} from "@/types";
 
 export async function getZentaiGamenByProject(
   projectId: string
@@ -36,7 +41,10 @@ export async function createZentaiGamen(
   positionX: number = 0,
   positionY: number = 0,
   name: string = "Untitled",
-  gridData?: string
+  gridData?: string,
+  panelType: PanelType = "general",
+  motionType: MotionType | null = null,
+  motionData: WaveMotionData | null = null
 ): Promise<ZentaiGamen> {
   const supabase = createClient();
   const data = gridData ?? encodeGrid(createEmptyGrid(gridWidth, gridHeight));
@@ -49,6 +57,9 @@ export async function createZentaiGamen(
       grid_data: data,
       position_x: positionX,
       position_y: positionY,
+      panel_type: panelType,
+      motion_type: motionType,
+      motion_data: motionData,
     })
     .select()
     .single();
@@ -62,7 +73,15 @@ export async function updateZentaiGamen(
   updates: Partial<
     Pick<
       ZentaiGamen,
-      "name" | "grid_data" | "thumbnail" | "position_x" | "position_y"
+      | "name"
+      | "grid_data"
+      | "thumbnail"
+      | "position_x"
+      | "position_y"
+      | "memo"
+      | "panel_type"
+      | "motion_type"
+      | "motion_data"
     >
   >
 ): Promise<ZentaiGamen> {

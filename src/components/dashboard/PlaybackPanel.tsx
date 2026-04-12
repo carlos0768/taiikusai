@@ -1,16 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
+import {
+  COLOR_MAP,
+  type ColorIndex,
+  type GridData,
+  type PlaybackFrame,
+  waveChangedColsAt,
+} from "@/lib/grid/types";
 import { usePlayback } from "@/components/playback/usePlayback";
 import MusicTrack from "./MusicTrack";
 
 const PX_PER_SECOND = 30;
 
 interface PlaybackPanelProps {
-  frames: GridData[];
-  frameNames: string[];
+  frames: PlaybackFrame[];
   onClose: () => void;
+}
+
+function frameThumbnailGrid(frame: PlaybackFrame): GridData {
+  return frame.kind === "general" ? frame.grid : frame.before;
 }
 
 type PanelSize = "side" | "fullscreen";
@@ -72,6 +81,7 @@ function FrameThumb({
   onTap,
   onDurationChange,
   thumbRef,
+  isWave,
 }: {
   grid: GridData;
   isActive: boolean;
@@ -80,6 +90,7 @@ function FrameThumb({
   onTap: () => void;
   onDurationChange: (ms: number) => void;
   thumbRef?: (el: HTMLDivElement | null) => void;
+  isWave?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -109,17 +120,25 @@ function FrameThumb({
 
   return (
     <div ref={thumbRef ?? undefined} className="shrink-0 flex flex-col items-center" style={{ width: thumbWidth }}>
-      <canvas
-        ref={canvasRef}
-        onClick={onTap}
-        className={`rounded cursor-pointer transition-all ${
-          isActive ? "ring-2 ring-accent scale-105" : "opacity-60 hover:opacity-100"
-        }`}
-        style={{ width: thumbWidth, imageRendering: "pixelated" }}
-      />
+      <div className="relative" style={{ width: thumbWidth }}>
+        <canvas
+          ref={canvasRef}
+          onClick={onTap}
+          className={`rounded cursor-pointer transition-all ${
+            isActive ? "ring-2 ring-accent scale-105" : "opacity-60 hover:opacity-100"
+          }`}
+          style={{ width: thumbWidth, imageRendering: "pixelated" }}
+        />
+        {isWave && (
+          <span className="absolute top-0 left-0 text-[8px] px-1 bg-accent/80 text-black rounded-br">
+            〜
+          </span>
+        )}
+      </div>
       <button
         ref={btnRef}
         onClick={() => {
+          if (isWave) return;
           if (btnRef.current) {
             setRect(btnRef.current.getBoundingClientRect());
             setShowPopup(true);
@@ -127,7 +146,7 @@ function FrameThumb({
         }}
         className={`text-[9px] mt-0.5 px-1.5 py-0.5 rounded transition-colors ${
           isActive ? "text-accent" : "text-muted hover:text-foreground"
-        }`}
+        } ${isWave ? "cursor-default" : ""}`}
       >
         {(durationMs / 1000).toFixed(1)}s
       </button>
@@ -195,7 +214,6 @@ function GapButton({
 
 export default function PlaybackPanel({
   frames,
-  frameNames,
   onClose,
 }: PlaybackPanelProps) {
   const mainCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -209,6 +227,7 @@ export default function PlaybackPanel({
     currentIndex,
     isPlaying,
     isWhiteFrame,
+    frameElapsedMs,
     intervals,
     durations,
     setGapInterval,
@@ -219,7 +238,7 @@ export default function PlaybackPanel({
     next,
     prev,
     goTo,
-  } = usePlayback(frames.length);
+  } = usePlayback(frames);
 
   const handleMusicStateChange = useCallback(
     (playing: boolean) => {
@@ -246,7 +265,7 @@ export default function PlaybackPanel({
     requestAnimationFrame(() => {
       const rect = container.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
-      const grid = frames[0];
+      const grid = frameThumbnailGrid(frames[0]);
       const cellSize = Math.min(rect.width / grid.width, rect.height / grid.height);
       setFixedSize({
         w: grid.width * cellSize,
@@ -261,7 +280,9 @@ export default function PlaybackPanel({
     if (!canvas || !fixedSize || frames.length === 0) return;
 
     const dpr = window.devicePixelRatio || 1;
-    const grid = frames[currentIndex];
+    const frame = frames[currentIndex];
+    if (!frame) return;
+    const baseGrid = frameThumbnailGrid(frame);
 
     // Use fixed size for side mode, recalculate for fullscreen
     let canvasW = fixedSize.w;
@@ -269,9 +290,12 @@ export default function PlaybackPanel({
 
     if (panelSize === "fullscreen" && containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
-      const cellSize = Math.min(rect.width / grid.width, rect.height / grid.height);
-      canvasW = grid.width * cellSize;
-      canvasH = grid.height * cellSize;
+      const cellSize = Math.min(
+        rect.width / baseGrid.width,
+        rect.height / baseGrid.height
+      );
+      canvasW = baseGrid.width * cellSize;
+      canvasH = baseGrid.height * cellSize;
     }
 
     canvas.width = canvasW * dpr;
@@ -280,8 +304,8 @@ export default function PlaybackPanel({
     canvas.style.height = `${canvasH}px`;
 
     const ctx = canvas.getContext("2d")!;
-    const cellW = canvasW / grid.width;
-    const cellH = canvasH / grid.height;
+    const cellW = canvasW / baseGrid.width;
+    const cellH = canvasH / baseGrid.height;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Grid background
@@ -291,13 +315,13 @@ export default function PlaybackPanel({
     // Grid lines
     ctx.strokeStyle = "#333333";
     ctx.lineWidth = 1;
-    for (let x = 0; x <= grid.width; x++) {
+    for (let x = 0; x <= baseGrid.width; x++) {
       ctx.beginPath();
       ctx.moveTo(x * cellW, 0);
       ctx.lineTo(x * cellW, canvasH);
       ctx.stroke();
     }
-    for (let y = 0; y <= grid.height; y++) {
+    for (let y = 0; y <= baseGrid.height; y++) {
       ctx.beginPath();
       ctx.moveTo(0, y * cellH);
       ctx.lineTo(canvasW, y * cellH);
@@ -306,11 +330,21 @@ export default function PlaybackPanel({
 
     // Cell colors
     const pad = Math.max(1, cellW * 0.06);
-    for (let y = 0; y < grid.height; y++) {
-      for (let x = 0; x < grid.width; x++) {
-        ctx.fillStyle = isWhiteFrame
-          ? "#FFFFFF"
-          : COLOR_MAP[grid.cells[y * grid.width + x] as ColorIndex];
+    let displayGridFor: (x: number) => GridData;
+    if (frame.kind === "general") {
+      displayGridFor = () => frame.grid;
+    } else {
+      const changedCols = waveChangedColsAt(frame, frameElapsedMs);
+      displayGridFor = (x: number) => (x < changedCols ? frame.after : frame.before);
+    }
+    for (let y = 0; y < baseGrid.height; y++) {
+      for (let x = 0; x < baseGrid.width; x++) {
+        if (isWhiteFrame) {
+          ctx.fillStyle = "#FFFFFF";
+        } else {
+          const g = displayGridFor(x);
+          ctx.fillStyle = COLOR_MAP[g.cells[y * g.width + x] as ColorIndex];
+        }
         ctx.fillRect(
           x * cellW + pad,
           y * cellH + pad,
@@ -319,7 +353,7 @@ export default function PlaybackPanel({
         );
       }
     }
-  }, [currentIndex, frames, isWhiteFrame, fixedSize, panelSize]);
+  }, [currentIndex, frames, frameElapsedMs, isWhiteFrame, fixedSize, panelSize]);
 
   return (
     <div
@@ -332,7 +366,10 @@ export default function PlaybackPanel({
         <span className="text-sm font-medium truncate">
           {isWhiteFrame
             ? "（折り中）"
-            : frameNames[currentIndex] ?? `Frame ${currentIndex + 1}`}
+            : frames[currentIndex]?.name ?? `Frame ${currentIndex + 1}`}
+          {frames[currentIndex]?.kind === "wave" && !isWhiteFrame && (
+            <span className="ml-1 text-[10px] text-accent">〜WAVE</span>
+          )}
         </span>
         <div className="flex items-center gap-1">
           <span className="text-xs text-muted mr-2">
@@ -375,13 +412,14 @@ export default function PlaybackPanel({
           {frames.map((frame, idx) => (
             <div key={idx} className="flex items-center shrink-0">
               <FrameThumb
-                grid={frame}
+                grid={frameThumbnailGrid(frame)}
                 isActive={currentIndex === idx && !isWhiteFrame}
                 durationMs={durations[idx] ?? 2000}
                 widthPx={(durations[idx] ?? 2000) / 1000 * PX_PER_SECOND}
                 onTap={() => { pause(); goTo(idx); }}
                 onDurationChange={(ms) => setFrameDuration(idx, ms)}
                 thumbRef={(el) => { frameRefs.current[idx] = el; }}
+                isWave={frame.kind === "wave"}
               />
               {idx < frames.length - 1 && (
                 <GapButton

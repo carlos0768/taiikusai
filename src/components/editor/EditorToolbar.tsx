@@ -11,6 +11,7 @@ interface EditorToolbarProps {
   canRedo: boolean;
   onBack: () => void;
   onPlay: () => void;
+  showPlayButton: boolean;
   saveStatus: "saved" | "saving" | "unsaved";
   name: string;
   onNameChange: (name: string) => void;
@@ -47,6 +48,7 @@ export default function EditorToolbar({
   canRedo,
   onBack,
   onPlay,
+  showPlayButton,
   saveStatus,
   name,
   onNameChange,
@@ -165,13 +167,15 @@ export default function EditorToolbar({
               : "未保存"}
         </span>
 
-        <button
-          onClick={onPlay}
-          className="text-accent hover:opacity-80 transition-opacity px-2 py-1 text-lg"
-          aria-label="再生"
-        >
-          ▶
-        </button>
+        {showPlayButton && (
+          <button
+            onClick={onPlay}
+            className="text-accent hover:opacity-80 transition-opacity px-2 py-1 text-lg"
+            aria-label="再生"
+          >
+            ▶
+          </button>
+        )}
       </div>
 
       {/* Bottom row: tools, undo/redo — only visible when editing */}

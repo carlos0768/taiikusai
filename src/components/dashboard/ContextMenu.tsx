@@ -11,6 +11,7 @@ interface ContextMenuProps {
   x: number;
   y: number;
   onManual: () => void;
+  onWave: () => void;
   onScan: () => void;
   onSelectTemplate: (templateId: string) => void;
   onSelectExisting: (zentaiGamenId: string) => void;
@@ -26,6 +27,7 @@ export default function ContextMenu({
   x,
   y,
   onManual,
+  onWave,
   onScan,
   onSelectTemplate,
   onSelectExisting,
@@ -84,6 +86,13 @@ export default function ContextMenu({
           className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-foreground hover:bg-accent/10 transition-colors"
         >
           <span>手動</span>
+        </button>
+        <button
+          onClick={onWave}
+          className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-foreground hover:bg-accent/10 transition-colors"
+        >
+          <span>ウェーブ</span>
+          <span className="text-[10px] text-accent">〜</span>
         </button>
 
         {(["template", "existing", "import"] as const).map((type) => {

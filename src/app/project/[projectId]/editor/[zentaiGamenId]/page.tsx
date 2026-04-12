@@ -6,10 +6,10 @@ import { createClient } from "@/lib/supabase/client";
 import { decodeGrid } from "@/lib/grid/codec";
 import type { GridData } from "@/lib/grid/types";
 import type { ColorIndex } from "@/lib/grid/types";
-import GridEditor from "@/components/editor/GridEditor";
+import GridEditor, { type GridEditorSavePayload } from "@/components/editor/GridEditor";
 import { findPlaybackRoutes } from "@/lib/api/connections";
 import { generateScriptHtml } from "@/lib/export/generateScript";
-import type { Project, ZentaiGamen, Connection } from "@/types";
+import type { Project, ZentaiGamen } from "@/types";
 import JSZip from "jszip";
 
 export default function EditorPage() {
@@ -17,6 +17,7 @@ export default function EditorPage() {
   const projectId = params.projectId as string;
   const zentaiGamenId = params.zentaiGamenId as string;
   const [grid, setGrid] = useState<GridData | null>(null);
+  const [afterGrid, setAfterGrid] = useState<GridData | null>(null);
   const [zentaiGamen, setZentaiGamen] = useState<ZentaiGamen | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,6 +43,19 @@ export default function EditorPage() {
           proj.grid_height
         );
         setGrid(gridData);
+        if (
+          zg.panel_type === "motion" &&
+          zg.motion_type === "wave" &&
+          zg.motion_data
+        ) {
+          setAfterGrid(
+            decodeGrid(
+              zg.motion_data.after_grid_data,
+              proj.grid_width,
+              proj.grid_height
+            )
+          );
+        }
       }
       setLoading(false);
     }
@@ -49,15 +63,19 @@ export default function EditorPage() {
   }, [projectId, zentaiGamenId]);
 
   const handleSave = useCallback(
-    async (gridData: string, name: string, memo: string) => {
+    async (payload: GridEditorSavePayload) => {
+      const update: Record<string, unknown> = {
+        grid_data: payload.gridData,
+        name: payload.name,
+        memo: payload.memo,
+        updated_at: new Date().toISOString(),
+      };
+      if (payload.motionData !== undefined) {
+        update.motion_data = payload.motionData;
+      }
       await supabase
         .from("zentai_gamen")
-        .update({
-          grid_data: gridData,
-          name,
-          memo,
-          updated_at: new Date().toISOString(),
-        })
+        .update(update)
         .eq("id", zentaiGamenId);
     },
     [zentaiGamenId, supabase]
@@ -168,6 +186,10 @@ export default function EditorPage() {
   return (
     <GridEditor
       initialGrid={grid}
+      initialAfterGrid={afterGrid}
+      panelType={zentaiGamen.panel_type ?? "general"}
+      motionType={zentaiGamen.motion_type ?? null}
+      initialMotionData={zentaiGamen.motion_data ?? null}
       zentaiGamenId={zentaiGamenId}
       projectId={projectId}
       initialName={zentaiGamen.name}
