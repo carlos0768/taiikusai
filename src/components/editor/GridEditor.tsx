@@ -288,7 +288,7 @@ export default function GridEditor({
                   : "bg-card text-muted hover:text-foreground"
               }`}
             >
-              素地
+              ウェーブ前
             </button>
             <button
               onClick={() => setActiveTab("after")}
@@ -298,7 +298,7 @@ export default function GridEditor({
                   : "bg-card text-muted hover:text-foreground"
               }`}
             >
-              適用後
+              ウェーブ後
             </button>
           </div>
 
@@ -326,7 +326,7 @@ export default function GridEditor({
           </label>
 
           <label className="flex items-center gap-1 text-xs text-muted shrink-0">
-            素地表示
+            ウェーブ前表示
             <input
               type="number"
               min={0}
@@ -347,7 +347,7 @@ export default function GridEditor({
           </label>
 
           <label className="flex items-center gap-1 text-xs text-muted shrink-0">
-            適用後表示
+            ウェーブ後表示
             <input
               type="number"
               min={0}

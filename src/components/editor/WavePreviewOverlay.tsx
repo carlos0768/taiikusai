@@ -20,7 +20,7 @@ interface Props {
 
 /**
  * エディタ画面内でウェーブパネルをプレビュー再生するフルスクリーンオーバーレイ。
- * 流れ: 素地表示 (beforeMs) → 列単位伝播 (width / speedColPerSec 秒) → 適用後表示 (afterMs)
+ * 流れ: ウェーブ前表示 (beforeMs) → 列単位伝播 (width / speedColPerSec 秒) → ウェーブ後表示 (afterMs)
  */
 export default function WavePreviewOverlay({
   before,

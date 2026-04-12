@@ -454,13 +454,25 @@ function DashboardCanvasInner({
     const startId = nodeMenu.nodeId;
     setNodeMenu(null);
 
-    const routes = findPlaybackRoutes(initialConnections, startId);
+    // ライブの edges から findPlaybackRoutes 用の Connection 構造を作る
+    // (初期 props の initialConnections は新規描画したエッジを含まないため)
+    const liveConnections: DBConnection[] = edges.map((e) => ({
+      id: e.id,
+      project_id: project.id,
+      source_id: e.source,
+      target_id: e.target,
+      sort_order: 0,
+      created_at: "",
+    }));
+
+    const routes = findPlaybackRoutes(liveConnections, startId);
     let route = routes[0];
     if (!route || route.length === 0) {
       // No connections — just play this single node
       route = [startId];
     }
 
+    // ライブの nodes から最新の zentai_gamen データを引く (新規追加分も含める)
     const zgMap = new Map(initialZentaiGamen.map((z) => [z.id, z]));
     const frames: PlaybackFrame[] = [];
 
@@ -476,7 +488,7 @@ function DashboardCanvasInner({
     if (frames.length > 0) {
       setPlaybackData({ frames });
     }
-  }, [nodeMenu, initialConnections, initialZentaiGamen, project]);
+  }, [nodeMenu, edges, initialZentaiGamen, project]);
 
   // Build submenu items
   const templateMenuItems: SubMenuItem[] = templates.map((t) => ({
