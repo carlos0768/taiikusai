@@ -23,10 +23,14 @@ export const runtime = "nodejs";
 const NL_PROMPT = (W: number, H: number): string =>
   `この画像を、体育祭のパネル競技 (${W}×${H} セル、色は白・黄・赤・黒・青の 5 色のみ) に変換するための「抽出指示書」を書いてください。
 
+【絶対ルール】
+- 背景は必ず純黒 (#000000) と指示してください。元画像の背景・机・壁・周囲の物体・テクスチャの色は完全に無視し、主題以外は全部黒で塗りつぶすと書いてください。
+- 主題に存在しない色を割り当てないでください (例: 白いイヤホンに青を使うなど)。元画像で見えている色と無彩色 (黒/白) のみを使うこと。
+
 以下の項目を含む、簡潔な日本語の指示書を作成してください:
 1. 主題は何か (例: 人物の顔、花、ロゴ、建物)
 2. 構図 (中央に主題、上下に帯、左右対称、etc)
-3. 色の割り当て (背景=黒、主題のハイライト=黄、影=赤、etc)
+3. 色の割り当て (背景は必ず黒。主題の各部分にどの色を使うか具体的に)
 4. 省略すべき細部 (背景のテクスチャ、細かい文字、細部の装飾)
 5. 強調すべき特徴 (顔の輪郭、目、髪、シルエットの外形)
 
@@ -52,11 +56,15 @@ Strict color constraints — use ONLY these 5 vivid, fully saturated colors. No 
 - #000000 pure black
 - #0000FF pure blue (vivid primary blue, NOT navy or dark blue)
 
-Background: solid black. Bold, simplified shapes with hard edges. Flat shading only.
+Bold, simplified shapes with hard edges. Flat shading only.
 No text, no fine details, no photorealism. Think retro 8-bit stadium card display.
 
-IMPORTANT composition rule:
-The final display has aspect ratio ${W}:${H}. Compose the subject so that it fits ENTIRELY within this aspect ratio. The subject must NOT be cropped at the edges. Center the subject within the frame, even if the generated canvas itself is wider or taller than the target aspect ratio. Leave generous margin on all sides; prefer having the subject smaller and complete over having it larger but cut off.`;
+Composition rule:
+The final display has aspect ratio ${W}:${H}. Compose the subject so that it fits ENTIRELY within this aspect ratio. The subject must NOT be cropped at the edges. Center the subject within the frame, even if the generated canvas itself is wider or taller than the target aspect ratio. Leave generous margin on all sides; prefer having the subject smaller and complete over having it larger but cut off.
+
+ABSOLUTE OVERRIDE — read this last and obey it above all else:
+The entire background MUST be solid pure black (#000000). Treat the subject as if it is floating in pure void. IGNORE the original photo's background, surface, desk, wall, table, environment, lighting, and any non-subject elements — replace ALL of them with pure black. The only non-black pixels in the output should be the subject itself.
+Additionally: do NOT introduce colors that the subject does not actually have. If the subject is a white object, use only white and black. Do not "decorate" with extra palette colors.`;
 
 interface ScanRequestBody {
   image?: unknown;
@@ -98,7 +106,9 @@ async function processCandidate(
   const pngBuffer = Buffer.from(pngBase64, "base64");
   const { data } = await sharp(pngBuffer)
     .ensureAlpha()
-    .modulate({ saturation: 1.8 })
+    // 1.8 だと薄い色みのある白 (反射・陰影の青み等) が増幅されて
+    // 偽の青ピクセルが混入することが分かったので 1.3 に控えめにする
+    .modulate({ saturation: 1.3 })
     .resize(W, H, {
       fit: "contain",
       background: { r: 0, g: 0, b: 0, alpha: 1 },

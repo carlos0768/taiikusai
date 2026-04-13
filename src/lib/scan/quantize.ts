@@ -36,7 +36,9 @@ const PAINTABLE_INDICES = [0, 1, 2, 3, 4] as const satisfies readonly ColorIndex
  *   - ACHROMATIC_CHROMA_THRESHOLD を下げる → わずかでも色がついていれば有彩色扱い
  *   - ACHROMATIC_LIGHTNESS_THRESHOLD を下げる → 中間グレーを黒寄りに倒す
  */
-const ACHROMATIC_CHROMA_THRESHOLD = 20;
+// 値 35 は実機テストの結果。20 だと「白いイヤホンの薄い反射光」のような
+// 微かな色味も有彩色扱いになり、青/黄に誤分類されることが分かった。
+const ACHROMATIC_CHROMA_THRESHOLD = 35;
 const ACHROMATIC_LIGHTNESS_THRESHOLD = 50;
 
 interface Lab {
