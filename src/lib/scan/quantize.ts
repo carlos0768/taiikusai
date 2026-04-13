@@ -14,6 +14,31 @@ import { COLOR_MAP, type ColorIndex } from "@/lib/grid/types";
 // パネルに塗れる 5 色のインデックス (UNDEFINED_COLOR=5 は除く)
 const PAINTABLE_INDICES = [0, 1, 2, 3, 4] as const satisfies readonly ColorIndex[];
 
+/**
+ * パレットがビビッドな 3 原色 (黄/赤/青) と 無彩色 2 つ (白/黒) しかない場合、
+ * 単純な LAB ユークリッド距離は「暗い有彩色」を必ず黒に丸めてしまう。
+ *
+ * 例: 暗い紺色 LAB ≈ (12, 18, -32) は、純青 LAB ≈ (32, 79, -108) と比べて
+ * 各成分の絶対座標が遠く、#000000 (LAB 0,0,0) のほうが「近い」と判定される。
+ * 重み付けで a/b を強調しても、絶対値の差を覆すことはできない。
+ *
+ * そこで以下のヒューリスティクスで 2 段階に分ける:
+ *   1. 入力の chroma C = sqrt(a^2 + b^2) が ACHROMATIC_CHROMA_THRESHOLD 未満
+ *      → 無彩色とみなし、明度 L で白 (>= ACHROMATIC_LIGHTNESS_THRESHOLD) か
+ *        黒 (それ未満) を選ぶ
+ *   2. それ以外 → 色相角度 atan2(b, a) で有彩色 3 つ (黄/赤/青) のうち最も
+ *      近いものを選ぶ
+ *
+ * 体育祭パネルは「主題はバキッとした原色、それ以外は黒」という用途なので、
+ * 「彩度がある = 主題」「彩度がない = 背景/陰影」の二分が現実に即している。
+ *
+ * チューニングは閾値 2 つで行う:
+ *   - ACHROMATIC_CHROMA_THRESHOLD を下げる → わずかでも色がついていれば有彩色扱い
+ *   - ACHROMATIC_LIGHTNESS_THRESHOLD を下げる → 中間グレーを黒寄りに倒す
+ */
+const ACHROMATIC_CHROMA_THRESHOLD = 20;
+const ACHROMATIC_LIGHTNESS_THRESHOLD = 50;
+
 interface Lab {
   L: number;
   a: number;
@@ -70,18 +95,40 @@ const PALETTE_LAB: readonly Lab[] = PAINTABLE_INDICES.map((idx) => {
   return rgbToLab(r, g, b);
 });
 
+// 有彩色 (黄/赤/青) と無彩色 (白/黒) の分類
+const WHITE_INDEX: ColorIndex = 0;
+const BLACK_INDEX: ColorIndex = 3;
+const CHROMATIC_INDICES = [1, 2, 4] as const satisfies readonly ColorIndex[]; // yellow, red, blue
+
+// 有彩色パレットの色相角 (radian) を事前計算
+const CHROMATIC_HUES: readonly { idx: ColorIndex; hue: number }[] =
+  CHROMATIC_INDICES.map((idx) => {
+    const palLab = PALETTE_LAB[PAINTABLE_INDICES.indexOf(idx)];
+    return { idx, hue: Math.atan2(palLab.b, palLab.a) };
+  });
+
 function nearestPaletteIndex(lab: Lab): ColorIndex {
-  let bestDistSq = Infinity;
-  let bestIdx: ColorIndex = PAINTABLE_INDICES[0];
-  for (let i = 0; i < PALETTE_LAB.length; i++) {
-    const p = PALETTE_LAB[i];
-    const dL = lab.L - p.L;
-    const da = lab.a - p.a;
-    const db = lab.b - p.b;
-    const distSq = dL * dL + da * da + db * db;
-    if (distSq < bestDistSq) {
-      bestDistSq = distSq;
-      bestIdx = PAINTABLE_INDICES[i];
+  // 1. 彩度ベースの分岐
+  const chroma = Math.sqrt(lab.a * lab.a + lab.b * lab.b);
+
+  if (chroma < ACHROMATIC_CHROMA_THRESHOLD) {
+    // 無彩色 → 明度で白 or 黒
+    return lab.L >= ACHROMATIC_LIGHTNESS_THRESHOLD ? WHITE_INDEX : BLACK_INDEX;
+  }
+
+  // 2. 有彩色 → 色相角度で yellow/red/blue から最近傍
+  const hue = Math.atan2(lab.b, lab.a);
+  let bestDh = Infinity;
+  let bestIdx: ColorIndex = CHROMATIC_HUES[0].idx;
+  for (const { idx, hue: palHue } of CHROMATIC_HUES) {
+    let dh = Math.abs(hue - palHue);
+    // 角度の循環: π を超えたら逆周りの方が近い
+    if (dh > Math.PI) {
+      dh = 2 * Math.PI - dh;
+    }
+    if (dh < bestDh) {
+      bestDh = dh;
+      bestIdx = idx;
     }
   }
   return bestIdx;

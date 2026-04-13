@@ -11,11 +11,11 @@ import {
  *
  * 1. Claude Vision: 画像から「本質抽出の指示書」を自然言語で生成
  * 2. gpt-image-1 (images.edit): 元画像 + 指示書 + 5 色パレット制約で画像生成
- * 3. sharp: W×H に area-average リサイズ
+ * 3. sharp: 彩度ブースト → contain リサイズ (黒パディング) で W×H
  * 4. LAB 量子化で 5 色 ColorIndex grid に変換
  *
- * LLM 2 段で「①意味判断 = Claude が言語で抽出、②ピクセル化 = gpt-image-1 が描画」
- * という分業を厳密に検証するルート。SVG パイプライン (ルート A) と並行で評価する。
+ * env SCAN_DEBUG_CANDIDATES=true のときだけ gpt-image-1 を n=3 で叩き、
+ * 全候補を debug.candidates に返す (検証用)。本番デフォルトは n=1。
  */
 
 export const runtime = "nodejs";
@@ -45,15 +45,18 @@ const IMAGE_EDIT_PROMPT = (
 Render the above as pixel art for a sports festival stand performance panel.
 Target aspect ratio: ${W}:${H}.
 
-Strict color constraints — use ONLY these 5 colors, no gradients, no anti-aliasing, no intermediate shades:
-- #FFFFFF (white)
-- #FFD700 (yellow)
-- #FF0000 (red)
-- #000000 (black)
-- #0000FF (blue)
+Strict color constraints — use ONLY these 5 vivid, fully saturated colors. No gradients, no anti-aliasing, no intermediate shades, no muted tones:
+- #FFFFFF pure white
+- #FFD700 pure yellow
+- #FF0000 pure red
+- #000000 pure black
+- #0000FF pure blue (vivid primary blue, NOT navy or dark blue)
 
 Background: solid black. Bold, simplified shapes with hard edges. Flat shading only.
-No text, no fine details, no photorealism. Think retro 8-bit stadium card display.`;
+No text, no fine details, no photorealism. Think retro 8-bit stadium card display.
+
+IMPORTANT composition rule:
+The final display has aspect ratio ${W}:${H}. Compose the subject so that it fits ENTIRELY within this aspect ratio. The subject must NOT be cropped at the edges. Center the subject within the frame, even if the generated canvas itself is wider or taller than the target aspect ratio. Leave generous margin on all sides; prefer having the subject smaller and complete over having it larger but cut off.`;
 
 interface ScanRequestBody {
   image?: unknown;
@@ -68,6 +71,46 @@ interface AnthropicContentBlock {
 
 interface AnthropicResponse {
   content?: AnthropicContentBlock[];
+}
+
+interface Candidate {
+  gridData: string;
+  generatedImagePngBase64: string;
+}
+
+/**
+ * 1 枚の生成 PNG (base64) を ColorIndex grid (base64) に変換する。
+ *
+ * sharp チェーン:
+ *   1. ensureAlpha() — α なし PNG にも対応
+ *   2. modulate({ saturation: 1.8 }) — 彩度ブースト
+ *      gpt-image-1 が鈍い色を出した場合に純色側に寄せる
+ *   3. resize(W, H, fit:"contain", bg:black) — アスペクト比を保ったまま
+ *      パネル内に主題が完全に収まるよう縮小、余白は黒で埋める
+ *   4. raw() → RGBA Buffer
+ * その後 quantizeToIndexGrid で LAB → hue ベースの 5 色量子化。
+ */
+async function processCandidate(
+  pngBase64: string,
+  W: number,
+  H: number
+): Promise<Candidate> {
+  const pngBuffer = Buffer.from(pngBase64, "base64");
+  const { data } = await sharp(pngBuffer)
+    .ensureAlpha()
+    .modulate({ saturation: 1.8 })
+    .resize(W, H, {
+      fit: "contain",
+      background: { r: 0, g: 0, b: 0, alpha: 1 },
+      kernel: sharp.kernel.lanczos3,
+    })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const grid = quantizeToIndexGrid(data, W, H, W, H, 4);
+  return {
+    gridData: uint8ArrayToBase64(grid),
+    generatedImagePngBase64: pngBase64,
+  };
 }
 
 export async function POST(request: Request) {
@@ -160,8 +203,12 @@ export async function POST(request: Request) {
 
   // ──────────────────────────────────────────
   // Step 2: gpt-image-1 (images.edit) で画像生成
+  //   - 検証モード時は n=3 で複数候補を取得
   // ──────────────────────────────────────────
-  let generatedPngB64: string;
+  const debugCandidatesMode = process.env.SCAN_DEBUG_CANDIDATES === "true";
+  const requestedN = debugCandidatesMode ? 3 : 1;
+
+  let imageEntries: Array<{ b64_json?: string }>;
   try {
     const openai = new OpenAI({ apiKey: openaiKey });
 
@@ -182,20 +229,10 @@ export async function POST(request: Request) {
       prompt: IMAGE_EDIT_PROMPT(nlInstruction, W, H),
       size,
       quality: "high",
-      n: 1,
+      n: requestedN,
     });
 
-    const b64 = result.data?.[0]?.b64_json;
-    if (!b64) {
-      return NextResponse.json(
-        {
-          error: "gpt-image-1 returned no image data",
-          debug: { nlInstruction },
-        },
-        { status: 500 }
-      );
-    }
-    generatedPngB64 = b64;
+    imageEntries = result.data ?? [];
   } catch (err) {
     return NextResponse.json(
       {
@@ -206,53 +243,51 @@ export async function POST(request: Request) {
     );
   }
 
-  // ──────────────────────────────────────────
-  // Step 3: sharp で W×H にリサイズ + RGBA raw pixels 取得
-  // ──────────────────────────────────────────
-  let rgba: Buffer;
-  try {
-    const pngBuffer = Buffer.from(generatedPngB64, "base64");
-    const { data } = await sharp(pngBuffer)
-      .ensureAlpha()
-      .resize(W, H, {
-        fit: "cover",
-        kernel: sharp.kernel.lanczos3,
-      })
-      .raw()
-      .toBuffer({ resolveWithObject: true });
-    rgba = data;
-  } catch (err) {
+  if (imageEntries.length === 0) {
     return NextResponse.json(
       {
-        error: `Image post-processing failed: ${String(err)}`,
-        debug: { nlInstruction, generatedImagePngBase64: generatedPngB64 },
+        error: "gpt-image-1 returned no image data",
+        debug: { nlInstruction },
       },
       { status: 500 }
     );
   }
 
   // ──────────────────────────────────────────
-  // Step 4: LAB 量子化で 5 色 ColorIndex grid へ
-  //  (sharp が既に W×H に resize 済みなので、src=dst の恒等変換)
+  // Step 3+4: 各候補を sharp で後処理 + 量子化
+  //   失敗した候補はスキップし、全滅したらエラー返却
   // ──────────────────────────────────────────
-  let grid: Uint8Array;
-  try {
-    grid = quantizeToIndexGrid(rgba, W, H, W, H, 4);
-  } catch (err) {
+  const candidates: Candidate[] = [];
+  for (const entry of imageEntries) {
+    const b64 = entry.b64_json;
+    if (!b64) continue;
+    try {
+      const c = await processCandidate(b64, W, H);
+      candidates.push(c);
+    } catch (err) {
+      // 個別候補の失敗は致命ではない。最低 1 つ通れば OK
+      console.error("scan: candidate post-processing failed", err);
+    }
+  }
+
+  if (candidates.length === 0) {
     return NextResponse.json(
       {
-        error: `Quantization failed: ${String(err)}`,
-        debug: { nlInstruction, generatedImagePngBase64: generatedPngB64 },
+        error: "All candidates failed post-processing",
+        debug: { nlInstruction },
       },
       { status: 500 }
     );
   }
 
+  // 互換: 既存呼び出し側は debug.generatedImagePngBase64 と gridData を見ている
+  // 検証モード時のみ debug.candidates に全候補を追加
   return NextResponse.json({
-    gridData: uint8ArrayToBase64(grid),
+    gridData: candidates[0].gridData,
     debug: {
       nlInstruction,
-      generatedImagePngBase64: generatedPngB64,
+      generatedImagePngBase64: candidates[0].generatedImagePngBase64,
+      ...(debugCandidatesMode ? { candidates } : {}),
     },
   });
 }
