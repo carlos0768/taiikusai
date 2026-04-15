@@ -20,11 +20,13 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { encodeGrid } from "@/lib/grid/codec";
 import type {
+  MusicData,
   Project,
   ZentaiGamen,
   Connection as DBConnection,
   Template,
 } from "@/types";
+import { updateProjectMusic } from "@/lib/api/projects";
 import ZentaiGamenNode from "./ZentaiGamenNode";
 import ConnectionEdge from "./ConnectionEdge";
 import ContextMenu, { type SubMenuItem } from "./ContextMenu";
@@ -66,6 +68,20 @@ function DashboardCanvasInner({
   const [playbackData, setPlaybackData] = useState<{
     frames: PlaybackFrame[];
   } | null>(null);
+
+  // Project music (hydrated from DB on every PlaybackPanel mount).
+  // Stored locally so debounced saves from MusicTrack update the UI state.
+  const [currentMusic, setCurrentMusic] = useState<MusicData | null>(
+    project.music_data ?? null
+  );
+
+  const handleMusicChange = useCallback(
+    async (data: MusicData | null) => {
+      setCurrentMusic(data);
+      await updateProjectMusic(project.id, data);
+    },
+    [project.id]
+  );
 
   // Context menu state — store both screen pos and flow pos
   const [contextMenu, setContextMenu] = useState<{
@@ -621,6 +637,9 @@ function DashboardCanvasInner({
       <PlaybackPanel
         frames={playbackData.frames}
         onClose={() => setPlaybackData(null)}
+        projectId={project.id}
+        initialMusic={currentMusic}
+        onMusicChange={handleMusicChange}
       />
     )}
     </div>

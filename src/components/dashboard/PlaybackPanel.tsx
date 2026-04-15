@@ -8,6 +8,7 @@ import {
   type PlaybackFrame,
   waveChangedColsAt,
 } from "@/lib/grid/types";
+import type { MusicData } from "@/types";
 import { usePlayback } from "@/components/playback/usePlayback";
 import MusicTrack from "./MusicTrack";
 
@@ -16,6 +17,9 @@ const PX_PER_SECOND = 30;
 interface PlaybackPanelProps {
   frames: PlaybackFrame[];
   onClose: () => void;
+  projectId: string;
+  initialMusic: MusicData | null;
+  onMusicChange: (data: MusicData | null) => Promise<void> | void;
 }
 
 function frameThumbnailGrid(frame: PlaybackFrame): GridData {
@@ -215,6 +219,9 @@ function GapButton({
 export default function PlaybackPanel({
   frames,
   onClose,
+  projectId,
+  initialMusic,
+  onMusicChange,
 }: PlaybackPanelProps) {
   const mainCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -405,6 +412,9 @@ export default function PlaybackPanel({
           isPlaying={isPlaying}
           onPlayStateChange={handleMusicStateChange}
           pxPerSecond={PX_PER_SECOND}
+          projectId={projectId}
+          initialMusic={initialMusic}
+          onMusicChange={onMusicChange}
         />
 
         {/* Frame timeline */}
