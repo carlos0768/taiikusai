@@ -65,7 +65,9 @@ export default function MusicTrack({
   pxPerSecond,
 }: MusicTrackProps) {
   const [url, setUrl] = useState("");
+  const [sourceType, setSourceType] = useState<"youtube" | "file" | null>(null);
   const [videoId, setVideoId] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
   const [startTime, setStartTime] = useState(0);
   const [endTime, setEndTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -77,6 +79,9 @@ export default function MusicTrack({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const ytContainerRef = useRef<HTMLDivElement | null>(null);
   const playerReadyRef = useRef(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const fileUrlRef = useRef<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Load YouTube IFrame API
   useEffect(() => {
@@ -160,33 +165,66 @@ export default function MusicTrack({
   startTimeRef.current = startTime;
   endTimeRef.current = endTime;
 
-  // Sync play/pause with panel playback
+  // Sync play/pause with panel playback (handles both YouTube and file sources)
   const wasPlayingRef = useRef(false);
   useEffect(() => {
-    const player = playerRef.current;
-    if (!player || !videoId || !playerReadyRef.current) return;
+    if (!sourceType) return;
+
+    const ready =
+      sourceType === "youtube"
+        ? !!playerRef.current && playerReadyRef.current
+        : !!audioRef.current;
+    if (!ready) return;
+
+    const play = () => {
+      if (sourceType === "youtube") {
+        playerRef.current?.playVideo();
+      } else {
+        audioRef.current?.play().catch(() => {});
+      }
+    };
+    const pause = () => {
+      if (sourceType === "youtube") {
+        playerRef.current?.pauseVideo();
+      } else {
+        audioRef.current?.pause();
+      }
+    };
+    const seek = (t: number) => {
+      if (sourceType === "youtube") {
+        playerRef.current?.seekTo(t, true);
+      } else if (audioRef.current) {
+        audioRef.current.currentTime = t;
+      }
+    };
+    const getTime = () => {
+      if (sourceType === "youtube") {
+        return playerRef.current?.getCurrentTime() ?? 0;
+      }
+      return audioRef.current?.currentTime ?? 0;
+    };
 
     if (isPlaying) {
       // Only seek to start when playback begins (false → true)
       if (!wasPlayingRef.current) {
-        player.seekTo(startTimeRef.current, true);
+        seek(startTimeRef.current);
       }
       wasPlayingRef.current = true;
-      player.playVideo();
+      play();
 
       // Track current time
       timerRef.current = setInterval(() => {
-        const t = player.getCurrentTime();
+        const t = getTime();
         setCurrentTime(t);
         const end = endTimeRef.current;
         if (end > 0 && t >= end) {
-          player.pauseVideo();
+          pause();
           onPlayStateChange(false);
         }
       }, 100);
     } else {
       wasPlayingRef.current = false;
-      player.pauseVideo();
+      pause();
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -199,27 +237,122 @@ export default function MusicTrack({
         timerRef.current = null;
       }
     };
-  }, [isPlaying, videoId, onPlayStateChange]);
+  }, [isPlaying, sourceType, videoId, onPlayStateChange]);
 
   const handleUrlSubmit = useCallback(() => {
     const id = extractVideoId(url);
     if (id) {
+      // Clear any existing file source
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      if (fileUrlRef.current) {
+        URL.revokeObjectURL(fileUrlRef.current);
+        fileUrlRef.current = null;
+      }
+      setFileName(null);
+
       setVideoId(id);
+      setSourceType("youtube");
       setShowInput(false);
+      setStartTime(0);
+      setEndTime(0);
+      setDuration(0);
+      setCurrentTime(0);
+      setOffsetSec(0);
     }
   }, [url]);
+
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      // Reset so the same file can be reselected later
+      e.target.value = "";
+      if (!file) return;
+
+      // Clear any existing YouTube source
+      if (playerRef.current) {
+        playerReadyRef.current = false;
+        playerRef.current.destroy();
+        playerRef.current = null;
+      }
+      setVideoId(null);
+      setUrl("");
+
+      // Clean up any previous file source
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      if (fileUrlRef.current) {
+        URL.revokeObjectURL(fileUrlRef.current);
+        fileUrlRef.current = null;
+      }
+
+      const objectUrl = URL.createObjectURL(file);
+      fileUrlRef.current = objectUrl;
+
+      const audio = new Audio(objectUrl);
+      audio.preload = "metadata";
+      audio.addEventListener("loadedmetadata", () => {
+        const dur = audio.duration;
+        if (isFinite(dur) && dur > 0) {
+          setDuration(dur);
+          setEndTime((prev) => (prev === 0 ? dur : prev));
+        }
+      });
+      audioRef.current = audio;
+
+      setFileName(file.name);
+      setSourceType("file");
+      setShowInput(false);
+      setStartTime(0);
+      setEndTime(0);
+      setDuration(0);
+      setCurrentTime(0);
+      setOffsetSec(0);
+    },
+    []
+  );
 
   const handleRemove = useCallback(() => {
     playerReadyRef.current = false;
     playerRef.current?.destroy();
     playerRef.current = null;
     setVideoId(null);
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (fileUrlRef.current) {
+      URL.revokeObjectURL(fileUrlRef.current);
+      fileUrlRef.current = null;
+    }
+    setFileName(null);
+
+    setSourceType(null);
     setUrl("");
     setStartTime(0);
     setEndTime(0);
     setDuration(0);
     setCurrentTime(0);
     setOffsetSec(0);
+  }, []);
+
+  // Clean up object URL on unmount
+  useEffect(() => {
+    return () => {
+      if (fileUrlRef.current) {
+        URL.revokeObjectURL(fileUrlRef.current);
+        fileUrlRef.current = null;
+      }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
   }, []);
 
   // Drag-to-trim / drag-to-move logic
@@ -284,7 +417,7 @@ export default function MusicTrack({
 
   const barWidth = Math.max(100, duration * pxPerSecond);
 
-  if (!videoId) {
+  if (!sourceType) {
     return (
       <div className="py-1 shrink-0">
         <div className="sticky left-0 px-3" style={{ width: "fit-content" }}>
@@ -305,6 +438,13 @@ export default function MusicTrack({
               >
                 追加
               </button>
+              <span className="text-[9px] text-muted">または</span>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="text-xs text-accent hover:opacity-80 px-2"
+              >
+                ファイル選択
+              </button>
               <button
                 onClick={() => setShowInput(false)}
                 className="text-xs text-muted hover:text-foreground px-1"
@@ -320,6 +460,13 @@ export default function MusicTrack({
               + 音楽を追加
             </button>
           )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="audio/*"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
         </div>
       </div>
     );
@@ -333,6 +480,14 @@ export default function MusicTrack({
       {/* Sticky controls */}
       <div className="sticky left-0 z-10 flex items-center gap-2 px-3 pb-0.5" style={{ width: "fit-content" }}>
         <span className="text-[9px] text-muted">♪</span>
+        {sourceType === "file" && fileName && (
+          <span
+            className="text-[9px] text-muted max-w-[140px] truncate"
+            title={fileName}
+          >
+            {fileName}
+          </span>
+        )}
         <span className="text-[9px] text-muted">
           {Math.floor(currentTime / 60)}:{String(Math.floor(currentTime % 60)).padStart(2, "0")}
           {" / "}
