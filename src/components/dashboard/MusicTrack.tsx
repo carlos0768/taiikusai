@@ -1,6 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { MusicData } from "@/types";
+import {
+  deleteProjectAudio,
+  uploadProjectAudio,
+} from "@/lib/api/projectAudio";
 
 // YouTube IFrame API types
 declare global {
@@ -43,6 +48,9 @@ interface MusicTrackProps {
   isPlaying: boolean;
   onPlayStateChange: (playing: boolean) => void;
   pxPerSecond: number;
+  projectId: string;
+  initialMusic: MusicData | null;
+  onMusicChange: (data: MusicData | null) => Promise<void> | void;
 }
 
 function extractVideoId(url: string): string | null {
@@ -63,25 +71,44 @@ export default function MusicTrack({
   isPlaying,
   onPlayStateChange,
   pxPerSecond,
+  projectId,
+  initialMusic,
+  onMusicChange,
 }: MusicTrackProps) {
   const [url, setUrl] = useState("");
-  const [sourceType, setSourceType] = useState<"youtube" | "file" | null>(null);
-  const [videoId, setVideoId] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [startTime, setStartTime] = useState(0);
-  const [endTime, setEndTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [sourceType, setSourceType] = useState<"youtube" | "file" | null>(
+    initialMusic?.source_type ?? null
+  );
+  const [videoId, setVideoId] = useState<string | null>(
+    initialMusic?.source_type === "youtube" ? initialMusic.video_id ?? null : null
+  );
+  const [fileName, setFileName] = useState<string | null>(
+    initialMusic?.source_type === "file" ? initialMusic.file_name ?? null : null
+  );
+  const [fileUrl, setFileUrl] = useState<string | null>(
+    initialMusic?.source_type === "file" ? initialMusic.file_url ?? null : null
+  );
+  const [startTime, setStartTime] = useState(initialMusic?.start_sec ?? 0);
+  const [endTime, setEndTime] = useState(initialMusic?.end_sec ?? 0);
+  const [duration, setDuration] = useState(initialMusic?.duration ?? 0);
   const [currentTime, setCurrentTime] = useState(0);
-  const [offsetSec, setOffsetSec] = useState(0);
+  const [offsetSec, setOffsetSec] = useState(initialMusic?.offset_sec ?? 0);
   const [showInput, setShowInput] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const apiLoadedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const ytContainerRef = useRef<HTMLDivElement | null>(null);
   const playerReadyRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const fileUrlRef = useRef<string | null>(null);
+  const filePathRef = useRef<string | null>(
+    initialMusic?.source_type === "file" ? initialMusic.file_path ?? null : null
+  );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Skip the first auto-save effect run (triggered by hydration itself)
+  const hydratedRef = useRef(false);
 
   // Load YouTube IFrame API
   useEffect(() => {
@@ -158,6 +185,88 @@ export default function MusicTrack({
       }
     };
   }, [videoId]);
+
+  // Hydrate the <audio> element on mount when the project already has a
+  // persisted file source. New selections (handleFileSelect) create their
+  // own Audio element, so this effect only fires for the initial restore.
+  useEffect(() => {
+    if (
+      initialMusic?.source_type === "file" &&
+      initialMusic.file_url &&
+      !audioRef.current
+    ) {
+      const audio = new Audio(initialMusic.file_url);
+      audio.preload = "metadata";
+      audio.addEventListener("loadedmetadata", () => {
+        const dur = audio.duration;
+        if (isFinite(dur) && dur > 0) {
+          setDuration((prev) => (prev > 0 ? prev : dur));
+          setEndTime((prev) => (prev > 0 ? prev : dur));
+        }
+      });
+      audioRef.current = audio;
+    }
+    // Only runs on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep the latest onMusicChange in a ref so the debounce effect doesn't
+  // resubscribe when the parent passes a new callback instance.
+  const onMusicChangeRef = useRef(onMusicChange);
+  onMusicChangeRef.current = onMusicChange;
+
+  // Debounced auto-save (2s) — mirrors GridEditor's pattern so the editing
+  // experience feels consistent across the app.
+  useEffect(() => {
+    // Skip the very first run (triggered by hydration state).
+    if (!hydratedRef.current) {
+      hydratedRef.current = true;
+      return;
+    }
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+
+    saveTimerRef.current = setTimeout(() => {
+      let data: MusicData | null = null;
+      if (sourceType === "youtube" && videoId) {
+        data = {
+          source_type: "youtube",
+          video_id: videoId,
+          start_sec: startTime,
+          end_sec: endTime,
+          offset_sec: offsetSec,
+          duration,
+        };
+      } else if (sourceType === "file" && fileUrl) {
+        data = {
+          source_type: "file",
+          file_url: fileUrl,
+          file_path: filePathRef.current ?? undefined,
+          file_name: fileName ?? undefined,
+          start_sec: startTime,
+          end_sec: endTime,
+          offset_sec: offsetSec,
+          duration,
+        };
+      }
+      void Promise.resolve(onMusicChangeRef.current(data)).catch(() => {
+        // Silent — next edit will retry the save.
+      });
+    }, 2000);
+
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [
+    sourceType,
+    videoId,
+    fileUrl,
+    fileName,
+    startTime,
+    endTime,
+    offsetSec,
+    duration,
+  ]);
 
   // Refs to keep trim values accessible without re-triggering the effect
   const startTimeRef = useRef(startTime);
@@ -241,79 +350,97 @@ export default function MusicTrack({
 
   const handleUrlSubmit = useCallback(() => {
     const id = extractVideoId(url);
-    if (id) {
-      // Clear any existing file source
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-      if (fileUrlRef.current) {
-        URL.revokeObjectURL(fileUrlRef.current);
-        fileUrlRef.current = null;
-      }
-      setFileName(null);
+    if (!id) return;
 
-      setVideoId(id);
-      setSourceType("youtube");
-      setShowInput(false);
-      setStartTime(0);
-      setEndTime(0);
-      setDuration(0);
-      setCurrentTime(0);
-      setOffsetSec(0);
+    // Clear any existing file source (both in memory and in storage)
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
     }
+    const oldPath = filePathRef.current;
+    filePathRef.current = null;
+    if (oldPath) {
+      void deleteProjectAudio(oldPath);
+    }
+    setFileName(null);
+    setFileUrl(null);
+
+    setVideoId(id);
+    setSourceType("youtube");
+    setShowInput(false);
+    setStartTime(0);
+    setEndTime(0);
+    setDuration(0);
+    setCurrentTime(0);
+    setOffsetSec(0);
+    setUploadError(null);
   }, [url]);
 
   const handleFileSelect = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       // Reset so the same file can be reselected later
       e.target.value = "";
       if (!file) return;
 
-      // Clear any existing YouTube source
-      if (playerRef.current) {
-        playerReadyRef.current = false;
-        playerRef.current.destroy();
-        playerRef.current = null;
-      }
-      setVideoId(null);
-      setUrl("");
+      setUploadError(null);
+      setUploading(true);
 
-      // Clean up any previous file source
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-      if (fileUrlRef.current) {
-        URL.revokeObjectURL(fileUrlRef.current);
-        fileUrlRef.current = null;
-      }
+      try {
+        // Upload first so we always play from a persisted URL
+        const { url: publicUrl, path } = await uploadProjectAudio(
+          projectId,
+          file
+        );
 
-      const objectUrl = URL.createObjectURL(file);
-      fileUrlRef.current = objectUrl;
-
-      const audio = new Audio(objectUrl);
-      audio.preload = "metadata";
-      audio.addEventListener("loadedmetadata", () => {
-        const dur = audio.duration;
-        if (isFinite(dur) && dur > 0) {
-          setDuration(dur);
-          setEndTime((prev) => (prev === 0 ? dur : prev));
+        // Clear any existing YouTube source
+        if (playerRef.current) {
+          playerReadyRef.current = false;
+          playerRef.current.destroy();
+          playerRef.current = null;
         }
-      });
-      audioRef.current = audio;
+        setVideoId(null);
+        setUrl("");
 
-      setFileName(file.name);
-      setSourceType("file");
-      setShowInput(false);
-      setStartTime(0);
-      setEndTime(0);
-      setDuration(0);
-      setCurrentTime(0);
-      setOffsetSec(0);
+        // Delete any previous file from storage (best-effort)
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current = null;
+        }
+        const oldPath = filePathRef.current;
+        if (oldPath && oldPath !== path) {
+          void deleteProjectAudio(oldPath);
+        }
+        filePathRef.current = path;
+
+        const audio = new Audio(publicUrl);
+        audio.preload = "metadata";
+        audio.addEventListener("loadedmetadata", () => {
+          const dur = audio.duration;
+          if (isFinite(dur) && dur > 0) {
+            setDuration(dur);
+            setEndTime((prev) => (prev === 0 ? dur : prev));
+          }
+        });
+        audioRef.current = audio;
+
+        setFileName(file.name);
+        setFileUrl(publicUrl);
+        setSourceType("file");
+        setShowInput(false);
+        setStartTime(0);
+        setEndTime(0);
+        setDuration(0);
+        setCurrentTime(0);
+        setOffsetSec(0);
+      } catch (err) {
+        console.error(err);
+        setUploadError("アップロードに失敗しました");
+      } finally {
+        setUploading(false);
+      }
     },
-    []
+    [projectId]
   );
 
   const handleRemove = useCallback(() => {
@@ -326,11 +453,13 @@ export default function MusicTrack({
       audioRef.current.pause();
       audioRef.current = null;
     }
-    if (fileUrlRef.current) {
-      URL.revokeObjectURL(fileUrlRef.current);
-      fileUrlRef.current = null;
+    const oldPath = filePathRef.current;
+    filePathRef.current = null;
+    if (oldPath) {
+      void deleteProjectAudio(oldPath);
     }
     setFileName(null);
+    setFileUrl(null);
 
     setSourceType(null);
     setUrl("");
@@ -339,15 +468,13 @@ export default function MusicTrack({
     setDuration(0);
     setCurrentTime(0);
     setOffsetSec(0);
+    setUploadError(null);
   }, []);
 
-  // Clean up object URL on unmount
+  // Clean up the audio element on unmount (do NOT delete storage files —
+  // they persist with the project and must survive unmounting).
   useEffect(() => {
     return () => {
-      if (fileUrlRef.current) {
-        URL.revokeObjectURL(fileUrlRef.current);
-        fileUrlRef.current = null;
-      }
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;
@@ -421,7 +548,9 @@ export default function MusicTrack({
     return (
       <div className="py-1 shrink-0">
         <div className="sticky left-0 px-3" style={{ width: "fit-content" }}>
-          {showInput ? (
+          {uploading ? (
+            <span className="text-xs text-muted">アップロード中...</span>
+          ) : showInput ? (
             <div className="flex items-center gap-2">
               <input
                 type="text"
@@ -459,6 +588,9 @@ export default function MusicTrack({
             >
               + 音楽を追加
             </button>
+          )}
+          {uploadError && (
+            <p className="text-[9px] text-danger mt-1">{uploadError}</p>
           )}
           <input
             ref={fileInputRef}

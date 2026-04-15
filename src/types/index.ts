@@ -4,6 +4,21 @@ export interface Profile {
   created_at: string;
 }
 
+export interface MusicData {
+  source_type: "youtube" | "file";
+  // youtube
+  video_id?: string;
+  // file (uploaded to storage bucket project-audio)
+  file_url?: string; // 再生に使う公開 URL
+  file_path?: string; // storage object key (削除用)
+  file_name?: string; // 表示用
+  // 共通
+  start_sec: number;
+  end_sec: number;
+  offset_sec: number;
+  duration: number;
+}
+
 export interface Project {
   id: string;
   owner_id: string;
@@ -11,6 +26,7 @@ export interface Project {
   grid_width: number;
   grid_height: number;
   colors: string[];
+  music_data: MusicData | null;
   created_at: string;
   updated_at: string;
 }
