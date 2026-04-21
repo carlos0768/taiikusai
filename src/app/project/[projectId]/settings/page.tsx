@@ -268,6 +268,9 @@ export default function ProjectSettingsPage() {
                   <p className="text-sm text-muted mt-1">
                     既存パネルを一括補正してからプロジェクトのマス数を更新します。
                   </p>
+                  <p className="text-xs text-muted mt-2">
+                    更新前の編集状態は、リサイズ実行ごとに履歴として自動保存されます。
+                  </p>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

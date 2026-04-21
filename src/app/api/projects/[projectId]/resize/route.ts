@@ -6,7 +6,13 @@ import {
   type GridResizeOptions,
 } from "@/lib/grid/resize";
 import { createClient } from "@/lib/supabase/server";
-import type { WaveMotionData, ZentaiGamen } from "@/types";
+import type {
+  Project,
+  ProjectGridResizeHistorySnapshot,
+  ProjectGridResizeHistorySnapshotPanel,
+  WaveMotionData,
+  ZentaiGamen,
+} from "@/types";
 
 interface ResizeRequestBody {
   gridWidth: number;
@@ -30,6 +36,41 @@ function isWavePanel(zentaiGamen: ZentaiGamen): boolean {
     zentaiGamen.motion_type === "wave" &&
     zentaiGamen.motion_data !== null
   );
+}
+
+function buildSnapshotPanels(
+  panels: ZentaiGamen[]
+): ProjectGridResizeHistorySnapshotPanel[] {
+  return panels.map((panel) => ({
+    id: panel.id,
+    name: panel.name,
+    grid_data: panel.grid_data,
+    position_x: panel.position_x,
+    position_y: panel.position_y,
+    memo: panel.memo,
+    panel_type: panel.panel_type,
+    motion_type: panel.motion_type,
+    motion_data: panel.motion_data,
+    panel_duration_override_ms: panel.panel_duration_override_ms,
+    updated_at: panel.updated_at,
+  }));
+}
+
+function buildResizeHistorySnapshot(
+  project: Project,
+  panels: ZentaiGamen[]
+): ProjectGridResizeHistorySnapshot {
+  return {
+    project: {
+      id: project.id,
+      name: project.name,
+      grid_width: project.grid_width,
+      grid_height: project.grid_height,
+      default_panel_duration_ms: project.default_panel_duration_ms,
+      default_interval_ms: project.default_interval_ms,
+    },
+    panels: buildSnapshotPanels(panels),
+  };
 }
 
 export async function POST(
@@ -98,10 +139,11 @@ export async function POST(
     autoAdjustIllustration,
   };
 
+  const allPanels = panels ?? [];
   const preparedUpdates: PreparedPanelUpdate[] = [];
   let resizedWavePanelCount = 0;
 
-  for (const panel of panels ?? []) {
+  for (const panel of allPanels) {
     const beforeGrid = decodeGrid(
       panel.grid_data,
       project.grid_width,
@@ -136,7 +178,7 @@ export async function POST(
   }
 
   const originalPanels = new Map(
-    (panels ?? []).map((panel) => [
+    allPanels.map((panel) => [
       panel.id,
       {
         gridData: panel.grid_data,
@@ -145,8 +187,29 @@ export async function POST(
     ])
   );
   const appliedPanelIds: string[] = [];
+  const resizeHistorySnapshot = buildResizeHistorySnapshot(project, allPanels);
+  let resizeHistoryId: string | null = null;
 
   try {
+    const { data: historyRow, error: historyError } = await supabase
+      .from("project_grid_resize_history")
+      .insert({
+        project_id: projectId,
+        from_grid_width: project.grid_width,
+        from_grid_height: project.grid_height,
+        to_grid_width: gridWidth,
+        to_grid_height: gridHeight,
+        auto_adjust_illustration: autoAdjustIllustration,
+        snapshot: resizeHistorySnapshot,
+      })
+      .select("id")
+      .single();
+
+    if (historyError || !historyRow) {
+      throw historyError ?? new Error("Resize history insert failed");
+    }
+    resizeHistoryId = historyRow.id;
+
     for (const update of preparedUpdates) {
       const { error } = await supabase
         .from("zentai_gamen")
@@ -195,6 +258,13 @@ export async function POST(
           updated_at: new Date().toISOString(),
         })
         .eq("id", panelId);
+    }
+
+    if (resizeHistoryId) {
+      await supabase
+        .from("project_grid_resize_history")
+        .delete()
+        .eq("id", resizeHistoryId);
     }
 
     return NextResponse.json(
