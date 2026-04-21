@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
-import type { Project } from "@/types";
+import type { MusicData, Project } from "@/types";
 
 export async function getProjects(): Promise<Project[]> {
   const supabase = createClient();
@@ -67,4 +67,20 @@ export async function updateProject(
 
   if (error) throw error;
   return data;
+}
+
+export async function updateProjectMusic(
+  projectId: string,
+  musicData: MusicData | null
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("projects")
+    .update({
+      music_data: musicData,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", projectId);
+
+  if (error) throw error;
 }

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import type { GridData } from "@/lib/grid/types";
-import type { ColorIndex } from "@/lib/grid/types";
+import { UNDEFINED_COLOR, type ColorIndex } from "@/lib/grid/types";
 import { renderGrid, screenToGrid, type Viewport } from "./gridRenderer";
 import type { Tool } from "./useGridState";
 
@@ -155,7 +155,7 @@ export default function GridCanvas({
       if (!cell) return;
 
       if (activeTool === "paint" || activeTool === "eraser") {
-        const color = activeTool === "eraser" ? 0 as ColorIndex : activeColor;
+        const color = activeTool === "eraser" ? UNDEFINED_COLOR : activeColor;
         isPaintingRef.current = true;
         lastPaintedCellRef.current = cell;
         onStartBatchPaint();
@@ -198,6 +198,7 @@ export default function GridCanvas({
       moveSelectedCells,
       onMoveSelectedCellsChange,
       isMoveSelecting,
+      isEditing,
     ]
   );
 
@@ -206,7 +207,7 @@ export default function GridCanvas({
       if (touchCountRef.current > 1) return;
 
       if (isPaintingRef.current && (activeTool === "paint" || activeTool === "eraser")) {
-        const color = activeTool === "eraser" ? 0 as ColorIndex : activeColor;
+        const color = activeTool === "eraser" ? UNDEFINED_COLOR : activeColor;
         const cell = getGridCoords(e.clientX, e.clientY);
         if (
           cell &&

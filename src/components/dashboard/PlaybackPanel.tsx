@@ -9,6 +9,7 @@ import {
   type PlaybackFrame,
   waveChangedColsAt,
 } from "@/lib/grid/types";
+import type { MusicData } from "@/types";
 import {
   clampTimingMs,
   msToSecondsString,
@@ -27,6 +28,8 @@ interface PlaybackPanelProps {
   projectId: string;
   timeline: PlaybackTimeline;
   onClose: () => void;
+  initialMusic: MusicData | null;
+  onMusicChange: (data: MusicData | null) => Promise<void> | void;
 }
 
 function frameThumbnailGrid(frame: PlaybackFrame): GridData {
@@ -298,6 +301,8 @@ export default function PlaybackPanel({
   projectId,
   timeline,
   onClose,
+  initialMusic,
+  onMusicChange,
 }: PlaybackPanelProps) {
   const supabase = useMemo(() => createClient(), []);
   const mainCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -603,6 +608,9 @@ export default function PlaybackPanel({
           isPlaying={isPlaying}
           onPlayStateChange={handleMusicStateChange}
           pxPerSecond={PX_PER_SECOND}
+          projectId={projectId}
+          initialMusic={initialMusic}
+          onMusicChange={onMusicChange}
         />
 
         <div className="flex items-end gap-0 px-3 pb-1">

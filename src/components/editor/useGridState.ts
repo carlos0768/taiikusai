@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import {
+  UNDEFINED_COLOR,
   type ColorIndex,
   type GridData,
   cloneGrid,
@@ -121,7 +122,7 @@ export function useGridState(initialGrid: GridData) {
   /**
    * Move selected cells by (dx, dy).
    * selectedCells: Set of "x,y" strings identifying selected cells.
-   * Source cells become white (0). Destination cells get the selected colors.
+   * Source cells become UNDEFINED_COLOR (gray). Destination cells get the selected colors.
    */
   const moveSelection = useCallback(
     (selectedCells: Set<string>, dx: number, dy: number) => {
@@ -138,9 +139,9 @@ export function useGridState(initialGrid: GridData) {
         }
       }
 
-      // Clear source cells
+      // Clear source cells to undefined (gray)
       for (const { x, y } of cells) {
-        setCell(grid, x, y, 0);
+        setCell(grid, x, y, UNDEFINED_COLOR);
       }
 
       // Place at new position
