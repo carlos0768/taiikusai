@@ -15,6 +15,7 @@ interface ResizeResponse {
   project: Project;
   resizedPanelCount: number;
   resizedWavePanelCount: number;
+  warning?: string | null;
 }
 
 function parseTimingInput(value: string): number | null {
@@ -150,12 +151,14 @@ export default function ProjectSettingsPage() {
         throw new Error("プロジェクトの更新に失敗しました");
       }
 
-      alert(
+      const successMessage =
         `${result.resizedPanelCount} 枚のパネルを ${gridWidth} × ${gridHeight} に更新しました。` +
-          (result.resizedWavePanelCount > 0
-            ? ` ウェーブ ${result.resizedWavePanelCount} 枚も補正済みです。`
-            : "")
-      );
+        (result.resizedWavePanelCount > 0
+          ? ` ウェーブ ${result.resizedWavePanelCount} 枚も補正済みです。`
+          : "") +
+        (result.warning ? `\n\n${result.warning}` : "");
+
+      alert(successMessage);
       router.push(`/project/${projectId}`);
       router.refresh();
     } catch (error) {

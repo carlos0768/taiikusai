@@ -26,6 +26,37 @@ interface PreparedPanelUpdate {
   motionData: WaveMotionData | null;
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+
+  return "プロジェクトのリサイズに失敗しました";
+}
+
+function getResizeHistoryWarning(error: unknown): string | null {
+  const message = getErrorMessage(error);
+  const refersHistoryTable = message.includes("project_grid_resize_history");
+  const isHistorySchemaError =
+    refersHistoryTable &&
+    (message.includes("schema cache") ||
+      message.includes("does not exist") ||
+      message.includes("relation"));
+
+  if (!isHistorySchemaError) return null;
+
+  return "リサイズ履歴用のDBテーブルが未適用のため、今回は変更前状態を保存せずにリサイズしました。`supabase/migrations/20260422000000_add_project_grid_resize_history.sql` を適用してください。";
+}
+
 function isValidGridSize(value: number): boolean {
   return Number.isInteger(value) && value >= 5 && value <= 200;
 }
@@ -189,6 +220,7 @@ export async function POST(
   const appliedPanelIds: string[] = [];
   const resizeHistorySnapshot = buildResizeHistorySnapshot(project, allPanels);
   let resizeHistoryId: string | null = null;
+  let warning: string | null = null;
 
   try {
     const { data: historyRow, error: historyError } = await supabase
@@ -206,9 +238,17 @@ export async function POST(
       .single();
 
     if (historyError || !historyRow) {
-      throw historyError ?? new Error("Resize history insert failed");
+      const historyWarning = getResizeHistoryWarning(
+        historyError ?? new Error("Resize history insert failed")
+      );
+      if (historyWarning) {
+        warning = historyWarning;
+      } else {
+        throw historyError ?? new Error("Resize history insert failed");
+      }
+    } else {
+      resizeHistoryId = historyRow.id;
     }
-    resizeHistoryId = historyRow.id;
 
     for (const update of preparedUpdates) {
       const { error } = await supabase
@@ -243,6 +283,7 @@ export async function POST(
       project: updatedProject,
       resizedPanelCount: preparedUpdates.length,
       resizedWavePanelCount,
+      warning,
     });
   } catch (error) {
     for (let index = appliedPanelIds.length - 1; index >= 0; index--) {
@@ -269,10 +310,7 @@ export async function POST(
 
     return NextResponse.json(
       {
-        error:
-          error instanceof Error
-            ? error.message
-            : "プロジェクトのリサイズに失敗しました",
+        error: getErrorMessage(error),
       },
       { status: 500 }
     );
