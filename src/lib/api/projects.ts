@@ -46,7 +46,16 @@ export async function deleteProject(id: string): Promise<void> {
 
 export async function updateProject(
   id: string,
-  updates: Partial<Pick<Project, "name" | "grid_width" | "grid_height">>
+  updates: Partial<
+    Pick<
+      Project,
+      | "name"
+      | "grid_width"
+      | "grid_height"
+      | "default_panel_duration_ms"
+      | "default_interval_ms"
+    >
+  >
 ): Promise<Project> {
   const supabase = createClient();
   const { data, error } = await supabase
