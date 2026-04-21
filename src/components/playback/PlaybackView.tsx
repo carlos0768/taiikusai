@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   COLOR_MAP,
   type ColorIndex,
@@ -8,10 +8,12 @@ import {
   type PlaybackFrame,
   waveChangedColsAt,
 } from "@/lib/grid/types";
+import type { PlaybackTimeline } from "@/lib/playback/frameBuilder";
+import { msToSecondsString } from "@/lib/playback/timing";
 import { usePlayback } from "./usePlayback";
 
 interface PlaybackViewProps {
-  frames: PlaybackFrame[];
+  timeline: PlaybackTimeline;
   onBack: () => void;
 }
 
@@ -87,23 +89,33 @@ function frameDimensions(frame: PlaybackFrame): { width: number; height: number 
   return { width: frame.before.width, height: frame.before.height };
 }
 
-export default function PlaybackView({ frames, onBack }: PlaybackViewProps) {
+export default function PlaybackView({ timeline, onBack }: PlaybackViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const frames = useMemo(
+    () => timeline.frameItems.map((item) => item.frame),
+    [timeline.frameItems]
+  );
+  const durations = useMemo(
+    () => timeline.frameItems.map((item) => item.durationMs),
+    [timeline.frameItems]
+  );
+  const intervals = useMemo(
+    () => timeline.gapItems.map((item) => item.intervalMs),
+    [timeline.gapItems]
+  );
 
   const {
     currentIndex,
     isPlaying,
     isWhiteFrame,
     frameElapsedMs,
-    intervals,
-    setGapInterval,
     play,
     pause,
     stop,
     next,
     prev,
-  } = usePlayback(frames);
+  } = usePlayback({ frames, durations, intervals });
 
   // Render current frame
   useEffect(() => {
@@ -219,29 +231,10 @@ export default function PlaybackView({ frames, onBack }: PlaybackViewProps) {
           </button>
         </div>
 
-        {/* Speed control — sets all intervals uniformly */}
-        {intervals.length > 0 && (
-          <div className="flex items-center justify-center gap-3">
-            <span className="text-xs text-muted">折り時間</span>
-            <input
-              type="range"
-              min={200}
-              max={5000}
-              step={100}
-              value={intervals[0] ?? 1000}
-              onChange={(e) => {
-                const ms = Number(e.target.value);
-                for (let i = 0; i < intervals.length; i++) {
-                  setGapInterval(i, ms);
-                }
-              }}
-              className="w-40 accent-accent"
-            />
-            <span className="text-xs text-muted w-12">
-              {((intervals[0] ?? 1000) / 1000).toFixed(1)}秒
-            </span>
-          </div>
-        )}
+        <div className="text-center text-[11px] text-muted">
+          通常パネル基本 {msToSecondsString(timeline.defaultPanelDurationMs)}秒 / 折り基本{" "}
+          {msToSecondsString(timeline.defaultIntervalMs)}秒
+        </div>
       </div>
     </div>
   );

@@ -82,6 +82,7 @@ export async function updateZentaiGamen(
       | "panel_type"
       | "motion_type"
       | "motion_data"
+      | "panel_duration_override_ms"
     >
   >
 ): Promise<ZentaiGamen> {

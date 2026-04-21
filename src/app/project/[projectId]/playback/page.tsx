@@ -1,12 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { findPlaybackRoutes } from "@/lib/api/connections";
-import type { PlaybackFrame } from "@/lib/grid/types";
-import type { ZentaiGamen, Connection } from "@/types";
-import { zentaiGamenToPlaybackFrame } from "@/lib/playback/frameBuilder";
+import type { Project, ZentaiGamen, Connection } from "@/types";
+import { buildPlaybackTimeline } from "@/lib/playback/frameBuilder";
 import PlaybackView from "@/components/playback/PlaybackView";
 import RouteSelector from "@/components/playback/RouteSelector";
 
@@ -18,14 +17,13 @@ export default function PlaybackPage() {
   const startId = searchParams.get("start");
 
   const [loading, setLoading] = useState(true);
+  const [project, setProject] = useState<Project | null>(null);
   const [zentaiGamen, setZentaiGamen] = useState<ZentaiGamen[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [routes, setRoutes] = useState<string[][]>([]);
   const [selectedRoute, setSelectedRoute] = useState<number | null>(null);
-  const [gridWidth, setGridWidth] = useState(50);
-  const [gridHeight, setGridHeight] = useState(30);
 
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
     async function load() {
@@ -43,8 +41,7 @@ export default function PlaybackPage() {
         ]);
 
       if (proj) {
-        setGridWidth(proj.grid_width);
-        setGridHeight(proj.grid_height);
+        setProject(proj);
       }
       setZentaiGamen(zg ?? []);
       setConnections(conns ?? []);
@@ -66,7 +63,7 @@ export default function PlaybackPage() {
       setLoading(false);
     }
     load();
-  }, [projectId, startId]);
+  }, [projectId, startId, supabase]);
 
   const handleBack = useCallback(() => {
     router.push(`/project/${projectId}`);
@@ -93,19 +90,26 @@ export default function PlaybackPage() {
     );
   }
 
-  // Build frames for playback
-  const route = routes[selectedRoute ?? 0] ?? [];
-  const zgMap = new Map(zentaiGamen.map((zg) => [zg.id, zg]));
-  const frames: PlaybackFrame[] = [];
-
-  for (const nodeId of route) {
-    const zg = zgMap.get(nodeId);
-    if (zg) {
-      frames.push(zentaiGamenToPlaybackFrame(zg, gridWidth, gridHeight));
-    }
+  if (!project) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <p className="text-muted">プロジェクトが見つかりません</p>
+      </div>
+    );
   }
 
-  if (frames.length === 0) {
+  const route = routes[selectedRoute ?? 0] ?? [];
+  const timeline = buildPlaybackTimeline({
+    route,
+    zentaiGamen,
+    connections,
+    gridWidth: project.grid_width,
+    gridHeight: project.grid_height,
+    defaultPanelDurationMs: project.default_panel_duration_ms,
+    defaultIntervalMs: project.default_interval_ms,
+  });
+
+  if (timeline.frameItems.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
@@ -121,5 +125,5 @@ export default function PlaybackPage() {
     );
   }
 
-  return <PlaybackView frames={frames} onBack={handleBack} />;
+  return <PlaybackView timeline={timeline} onBack={handleBack} />;
 }

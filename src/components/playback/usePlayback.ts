@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getFrameTotalMs, type PlaybackFrame } from "@/lib/grid/types";
+import { DEFAULT_INTERVAL_MS } from "@/lib/playback/timing";
 
 /**
  * 再生フック。
@@ -12,40 +13,30 @@ import { getFrameTotalMs, type PlaybackFrame } from "@/lib/grid/types";
  * `frameElapsedMs` はウェーブの描画進捗 (現在のフレーム内での経過 ms) を返す。
  * 一般フレームでは 0 のまま。
  */
-export function usePlayback(frames: PlaybackFrame[]) {
+export function usePlayback(params: {
+  frames: PlaybackFrame[];
+  durations: number[];
+  intervals: number[];
+}) {
+  const { frames, durations, intervals } = params;
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isWhiteFrame, setIsWhiteFrame] = useState(false);
   const [frameElapsedMs, setFrameElapsedMs] = useState(0);
-  // 各フレームの実効表示時間 (一般: 編集可、ウェーブ: 内部時間の合計、表示用)
-  const [durations, setDurations] = useState<number[]>(() =>
-    frames.map((f) => getFrameTotalMs(f))
-  );
-  // 折り (白フレーム) の時間: フレーム数 - 1
-  const [intervals, setIntervals] = useState<number[]>(() =>
-    Array(Math.max(0, frames.length - 1)).fill(1000)
-  );
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rafRef = useRef<number | null>(null);
-
-  // フレーム数が変わったら intervals / durations を再構築
-  // (React 推奨パターン: 前回のキーを state で保持し、render 中に検知して setState)
   const [prevFramesLen, setPrevFramesLen] = useState(frames.length);
+
   if (prevFramesLen !== frames.length) {
     setPrevFramesLen(frames.length);
-    setIntervals((prev) => {
-      const target = Math.max(0, frames.length - 1);
-      if (prev.length === target) return prev;
-      const next: number[] = Array(target).fill(1000);
-      for (let i = 0; i < Math.min(prev.length, target); i++) next[i] = prev[i];
-      return next;
-    });
-    setDurations((prev) => {
-      if (prev.length === frames.length) return prev;
-      return frames.map((f, i) =>
-        i < prev.length && f.kind === "general" ? prev[i] : getFrameTotalMs(f)
-      );
-    });
+    if (frames.length === 0) {
+      if (currentIndex !== 0) setCurrentIndex(0);
+      if (isPlaying) setIsPlaying(false);
+      if (isWhiteFrame) setIsWhiteFrame(false);
+      if (frameElapsedMs !== 0) setFrameElapsedMs(0);
+    } else if (currentIndex > frames.length - 1) {
+      setCurrentIndex(frames.length - 1);
+    }
   }
 
   const clearTimer = useCallback(() => {
@@ -100,27 +91,9 @@ export function usePlayback(frames: PlaybackFrame[]) {
     [frames.length]
   );
 
-  const setGapInterval = useCallback((index: number, ms: number) => {
-    setIntervals((prev) => {
-      const copy = [...prev];
-      if (index >= 0 && index < copy.length) copy[index] = ms;
-      return copy;
-    });
-  }, []);
-
-  // 一般フレームのみ表示時間を編集可能。ウェーブフレームは無視 (内部時間で固定)。
-  const setFrameDuration = useCallback(
-    (index: number, ms: number) => {
-      const frame = frames[index];
-      if (!frame || frame.kind !== "general") return;
-      setDurations((prev) => {
-        const copy = [...prev];
-        if (index >= 0 && index < copy.length) copy[index] = ms;
-        return copy;
-      });
-    },
-    [frames]
-  );
+  useEffect(() => {
+    if (frames.length === 0) clearTimer();
+  }, [frames.length, clearTimer]);
 
   // フレーム表示 (general: setTimeout, wave: rAF) → 白 → 次
   useEffect(() => {
@@ -165,7 +138,7 @@ export function usePlayback(frames: PlaybackFrame[]) {
         rafRef.current = requestAnimationFrame(tick);
       }
     } else {
-      const gapMs = intervals[currentIndex] ?? 1000;
+      const gapMs = intervals[currentIndex] ?? DEFAULT_INTERVAL_MS;
       timerRef.current = setTimeout(() => {
         setIsWhiteFrame(false);
         setFrameElapsedMs(0);
@@ -181,10 +154,6 @@ export function usePlayback(frames: PlaybackFrame[]) {
     isPlaying,
     isWhiteFrame,
     frameElapsedMs,
-    intervals,
-    durations,
-    setGapInterval,
-    setFrameDuration,
     play,
     pause,
     stop,

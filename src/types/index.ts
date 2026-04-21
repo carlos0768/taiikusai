@@ -11,6 +11,8 @@ export interface Project {
   grid_width: number;
   grid_height: number;
   colors: string[];
+  default_panel_duration_ms: number;
+  default_interval_ms: number;
   created_at: string;
   updated_at: string;
 }
@@ -46,6 +48,7 @@ export interface ZentaiGamen {
   panel_type: PanelType;
   motion_type: MotionType | null;
   motion_data: WaveMotionData | null;
+  panel_duration_override_ms: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -56,6 +59,7 @@ export interface Connection {
   source_id: string;
   target_id: string;
   sort_order: number;
+  interval_override_ms: number | null;
   created_at: string;
 }
 
