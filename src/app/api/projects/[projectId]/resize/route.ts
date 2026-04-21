@@ -50,11 +50,12 @@ function getResizeHistoryWarning(error: unknown): string | null {
     refersHistoryTable &&
     (message.includes("schema cache") ||
       message.includes("does not exist") ||
-      message.includes("relation"));
+      message.includes("relation") ||
+      message.includes("row-level security policy"));
 
   if (!isHistorySchemaError) return null;
 
-  return "リサイズ履歴用のDBテーブルが未適用のため、今回は変更前状態を保存せずにリサイズしました。`supabase/migrations/20260422000000_add_project_grid_resize_history.sql` を適用してください。";
+  return "リサイズ履歴用のDB設定が未適用のため、今回は変更前状態を保存せずにリサイズしました。`supabase/migrations/20260422000000_add_project_grid_resize_history.sql` と `supabase/migrations/20260422001000_add_project_grid_resize_history_policies.sql` を適用してください。";
 }
 
 function isValidGridSize(value: number): boolean {
