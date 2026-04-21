@@ -90,3 +90,43 @@ export interface Template {
   tags: string[];
   created_at: string;
 }
+
+export interface ProjectGridResizeHistorySnapshotProject {
+  id: string;
+  name: string;
+  grid_width: number;
+  grid_height: number;
+  default_panel_duration_ms: number;
+  default_interval_ms: number;
+}
+
+export interface ProjectGridResizeHistorySnapshotPanel {
+  id: string;
+  name: string;
+  grid_data: string;
+  position_x: number;
+  position_y: number;
+  memo: string;
+  panel_type: PanelType;
+  motion_type: MotionType | null;
+  motion_data: WaveMotionData | null;
+  panel_duration_override_ms: number | null;
+  updated_at: string;
+}
+
+export interface ProjectGridResizeHistorySnapshot {
+  project: ProjectGridResizeHistorySnapshotProject;
+  panels: ProjectGridResizeHistorySnapshotPanel[];
+}
+
+export interface ProjectGridResizeHistory {
+  id: string;
+  project_id: string;
+  from_grid_width: number;
+  from_grid_height: number;
+  to_grid_width: number;
+  to_grid_height: number;
+  auto_adjust_illustration: boolean;
+  snapshot: ProjectGridResizeHistorySnapshot;
+  created_at: string;
+}
