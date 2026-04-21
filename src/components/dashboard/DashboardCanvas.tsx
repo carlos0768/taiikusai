@@ -18,7 +18,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { encodeGrid } from "@/lib/grid/codec";
+import { decodeGrid, encodeGrid } from "@/lib/grid/codec";
 import type {
   MusicData,
   Project,
@@ -38,6 +38,7 @@ import { parseExcel, parseCsv } from "@/lib/import/parseSpreadsheet";
 import { findPlaybackRoutes } from "@/lib/api/connections";
 import { buildPlaybackTimeline, type PlaybackTimeline } from "@/lib/playback/frameBuilder";
 import { createEmptyGrid } from "@/lib/grid/types";
+import { resizeGrid } from "@/lib/grid/resize";
 import { DEFAULT_WAVE_MOTION_DATA } from "@/types";
 
 const nodeTypes = { zentaiGamen: ZentaiGamenNode };
@@ -344,9 +345,30 @@ function DashboardCanvasInner({
     async (templateId: string) => {
       const template = templates.find((t) => t.id === templateId);
       if (!template) return;
-      await createAndNavigate(template.grid_data, `${template.name} (コピー)`);
+
+      let gridData = template.grid_data;
+      if (
+        template.grid_width !== project.grid_width ||
+        template.grid_height !== project.grid_height
+      ) {
+        const resizedGrid = resizeGrid(
+          decodeGrid(
+            template.grid_data,
+            template.grid_width,
+            template.grid_height
+          ),
+          {
+            targetWidth: project.grid_width,
+            targetHeight: project.grid_height,
+            autoAdjustIllustration: true,
+          }
+        );
+        gridData = encodeGrid(resizedGrid);
+      }
+
+      await createAndNavigate(gridData, `${template.name} (コピー)`);
     },
-    [templates, createAndNavigate]
+    [templates, createAndNavigate, project.grid_width, project.grid_height]
   );
 
   // Existing
