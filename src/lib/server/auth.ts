@@ -65,7 +65,7 @@ export async function ensureSeedAdminAccount() {
 
   const { error: upsertProfileError } = await admin.from("profiles").upsert({
     id: userId,
-    login_id: loginId,
+    ...buildProfileIdentityFields(loginId),
     display_name: DEFAULT_ADMIN_DISPLAY_NAME,
     is_admin: true,
     status: "active",
@@ -157,6 +157,14 @@ export function assertLoginId(input: string) {
 
 export function normalizeStatus(input?: string): "active" | "disabled" {
   return input === "disabled" ? "disabled" : "active";
+}
+
+export function buildProfileIdentityFields(loginId: string) {
+  const normalized = normalizeLoginId(loginId);
+  return {
+    login_id: normalized,
+    username: normalized,
+  };
 }
 
 export function buildPermissionRecord(userId: string, isAdmin: boolean = false) {
