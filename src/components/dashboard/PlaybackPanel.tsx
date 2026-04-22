@@ -7,6 +7,7 @@ import {
   type ColorIndex,
   type GridData,
   type PlaybackFrame,
+  getPlaybackFrameBaseGrid,
   waveChangedColsAt,
 } from "@/lib/grid/types";
 import type { MusicData } from "@/types";
@@ -35,7 +36,9 @@ interface PlaybackPanelProps {
 }
 
 function frameThumbnailGrid(frame: PlaybackFrame): GridData {
-  return frame.kind === "general" ? frame.grid : frame.before;
+  if (frame.kind === "general") return frame.grid;
+  if (frame.kind === "keep") return frame.mask;
+  return frame.before;
 }
 
 type PanelSize = "side" | "fullscreen";
@@ -121,6 +124,7 @@ function FrameThumb({
   onDurationReset,
   thumbRef,
   isWave,
+  isKeep,
   isOverride,
   isSaving,
 }: {
@@ -133,6 +137,7 @@ function FrameThumb({
   onDurationReset?: () => Promise<void> | void;
   thumbRef?: (el: HTMLDivElement | null) => void;
   isWave?: boolean;
+  isKeep?: boolean;
   isOverride?: boolean;
   isSaving?: boolean;
 }) {
@@ -184,11 +189,16 @@ function FrameThumb({
             〜
           </span>
         )}
+        {isKeep && (
+          <span className="absolute top-0 left-0 text-[8px] px-1 bg-accent/80 text-black rounded-br">
+            KEEP
+          </span>
+        )}
       </div>
       <button
         ref={btnRef}
         onClick={() => {
-          if (isWave) return;
+          if (isWave || isKeep) return;
           if (btnRef.current) {
             setRect(btnRef.current.getBoundingClientRect());
             setShowPopup(true);
@@ -196,11 +206,13 @@ function FrameThumb({
         }}
         className={`mt-0.5 flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${
           isActive ? "text-accent" : "text-muted hover:text-foreground"
-        } ${isWave ? "cursor-default" : ""} ${
+        } ${isWave || isKeep ? "cursor-default" : ""} ${
           isOverride ? "bg-accent/10 border border-accent/40" : ""
         }`}
       >
-        <span className="text-[9px]">{msToSecondsString(durationMs)}s</span>
+        <span className="text-[9px]">
+          {isKeep ? "keep" : `${msToSecondsString(durationMs)}s`}
+        </span>
         {isOverride && <span className="text-[8px] text-accent">個別</span>}
       </button>
       {showPopup && rect && (
@@ -291,6 +303,7 @@ function updateFrameItemDuration(
   return {
     ...item,
     durationMs,
+    timelineWidthMs: durationMs,
     isDurationOverride,
     frame: {
       ...item.frame,
@@ -478,7 +491,7 @@ export default function PlaybackPanel({
     requestAnimationFrame(() => {
       const rect = container.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
-      const grid = frameThumbnailGrid(frames[0]);
+      const grid = getPlaybackFrameBaseGrid(frames[0]);
       const cellSize = Math.min(
         rect.width / grid.width,
         rect.height / grid.height
@@ -497,7 +510,7 @@ export default function PlaybackPanel({
     const dpr = window.devicePixelRatio || 1;
     const frame = frames[currentIndex];
     if (!frame) return;
-    const baseGrid = frameThumbnailGrid(frame);
+    const baseGrid = getPlaybackFrameBaseGrid(frame);
 
     let canvasW = fixedSize.w;
     let canvasH = fixedSize.h;
@@ -545,6 +558,8 @@ export default function PlaybackPanel({
     let displayGridFor: (x: number) => GridData;
     if (frame.kind === "general") {
       displayGridFor = () => frame.grid;
+    } else if (frame.kind === "keep") {
+      displayGridFor = () => frame.displayGrid;
     } else {
       const changedCols = waveChangedColsAt(frame, frameElapsedMs);
       displayGridFor = (x: number) =>
@@ -581,6 +596,9 @@ export default function PlaybackPanel({
             : frames[currentIndex]?.name ?? `Frame ${currentIndex + 1}`}
           {frames[currentIndex]?.kind === "wave" && !isWhiteFrame && (
             <span className="ml-1 text-[10px] text-accent">〜WAVE</span>
+          )}
+          {frames[currentIndex]?.kind === "keep" && !isWhiteFrame && (
+            <span className="ml-1 text-[10px] text-accent">KEEP</span>
           )}
         </span>
         <div className="flex items-center gap-1">
@@ -634,7 +652,7 @@ export default function PlaybackPanel({
                 grid={frameThumbnailGrid(frameItem.frame)}
                 isActive={currentIndex === idx && !isWhiteFrame}
                 durationMs={frameItem.durationMs}
-                widthPx={(frameItem.durationMs / 1000) * PX_PER_SECOND}
+                widthPx={(frameItem.timelineWidthMs / 1000) * PX_PER_SECOND}
                 onTap={() => {
                   pause();
                   goTo(idx);
@@ -645,6 +663,7 @@ export default function PlaybackPanel({
                   frameRefs.current[idx] = el;
                 }}
                 isWave={frameItem.frame.kind === "wave"}
+                isKeep={frameItem.frame.kind === "keep"}
                 isOverride={frameItem.isDurationOverride}
                 isSaving={savingKey === `frame:${frameItem.zentaiGamenId}`}
               />
@@ -652,7 +671,11 @@ export default function PlaybackPanel({
                 <GapButton
                   intervalMs={gapItems[idx].intervalMs}
                   widthPx={(gapItems[idx].intervalMs / 1000) * PX_PER_SECOND}
-                  isActive={isWhiteFrame && currentIndex === idx}
+                  isActive={
+                    gapItems[idx].transitionKind === "keep"
+                      ? !isWhiteFrame && currentIndex === idx + 1
+                      : isWhiteFrame && currentIndex === idx
+                  }
                   isOverride={gapItems[idx].isIntervalOverride}
                   isSaving={
                     gapItems[idx].connectionId !== null &&

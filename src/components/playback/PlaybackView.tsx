@@ -6,6 +6,7 @@ import {
   type ColorIndex,
   type GridData,
   type PlaybackFrame,
+  getPlaybackFrameBaseGrid,
   waveChangedColsAt,
 } from "@/lib/grid/types";
 import type { PlaybackTimeline } from "@/lib/playback/frameBuilder";
@@ -85,8 +86,8 @@ function drawWave(
 }
 
 function frameDimensions(frame: PlaybackFrame): { width: number; height: number } {
-  if (frame.kind === "general") return { width: frame.grid.width, height: frame.grid.height };
-  return { width: frame.before.width, height: frame.before.height };
+  const grid = getPlaybackFrameBaseGrid(frame);
+  return { width: grid.width, height: grid.height };
 }
 
 export default function PlaybackView({ timeline, onBack }: PlaybackViewProps) {
@@ -150,6 +151,8 @@ export default function PlaybackView({ timeline, onBack }: PlaybackViewProps) {
 
     if (frame.kind === "general") {
       drawGrid(ctx, frame.grid, canvasW, canvasH);
+    } else if (frame.kind === "keep") {
+      drawGrid(ctx, frame.displayGrid, canvasW, canvasH);
     } else {
       drawWave(ctx, frame, frameElapsedMs, canvasW, canvasH);
     }
@@ -168,7 +171,15 @@ export default function PlaybackView({ timeline, onBack }: PlaybackViewProps) {
         >
           ←
         </button>
-        <span className="text-sm font-medium">{headerName}</span>
+        <span className="text-sm font-medium">
+          {headerName}
+          {currentFrame?.kind === "keep" && !isWhiteFrame && (
+            <span className="ml-1 text-[10px] text-accent">KEEP</span>
+          )}
+          {currentFrame?.kind === "wave" && !isWhiteFrame && (
+            <span className="ml-1 text-[10px] text-accent">〜WAVE</span>
+          )}
+        </span>
         <span className="text-xs text-muted">
           {currentIndex + 1} / {frames.length}
         </span>

@@ -4,12 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { decodeGrid } from "@/lib/grid/codec";
+import { getPlaybackFrameFinalGrid } from "@/lib/grid/types";
 import { fetchProjectBranchContext } from "@/lib/projectBranches";
 import type { GridData } from "@/lib/grid/types";
 import type { ColorIndex } from "@/lib/grid/types";
 import GridEditor, { type GridEditorSavePayload } from "@/components/editor/GridEditor";
 import { findPlaybackRoutes } from "@/lib/api/connections";
 import { generateScriptHtml } from "@/lib/export/generateScript";
+import { isKeepMaskSelected } from "@/lib/keep";
+import { zentaiGamenToPlaybackFrame } from "@/lib/playback/frameBuilder";
 import type { BranchScopedProject, ZentaiGamen } from "@/types";
 import JSZip from "jszip";
 
@@ -127,19 +130,35 @@ export default function EditorPage() {
 
     // Build scene data
     const zgMap = new Map(allZg.map((z: ZentaiGamen) => [z.id, z]));
-    const scenes: { grid: GridData; memo: string }[] = [];
+    const scenes: {
+      grid: GridData;
+      keepMask: GridData | null;
+      keepHasPreviousDisplay: boolean;
+      memo: string;
+    }[] = [];
+    let previousVisibleGrid: GridData | null = null;
+
     for (const nodeId of route) {
       const zg = zgMap.get(nodeId);
-      if (zg) {
-        scenes.push({
-          grid: decodeGrid(
-            zg.grid_data,
-            project.grid_width,
-            project.grid_height
-          ),
-          memo: zg.memo || "",
-        });
-      }
+      if (!zg) continue;
+
+      const frame = zentaiGamenToPlaybackFrame({
+        zentaiGamen: zg,
+        gridWidth: project.grid_width,
+        gridHeight: project.grid_height,
+        defaultPanelDurationMs: project.default_panel_duration_ms,
+        previousVisibleGrid,
+        keepDurationMs: 0,
+      });
+
+      scenes.push({
+        grid: getPlaybackFrameFinalGrid(frame),
+        keepMask: frame.kind === "keep" ? frame.mask : null,
+        keepHasPreviousDisplay:
+          frame.kind === "keep" ? previousVisibleGrid !== null : false,
+        memo: zg.memo || "",
+      });
+      previousVisibleGrid = getPlaybackFrameFinalGrid(frame);
     }
 
     if (scenes.length === 0) {
@@ -156,18 +175,17 @@ export default function EditorPage() {
       for (let x = 0; x < w; x++) {
         const cellScenes = scenes.map((scene, idx) => ({
           sceneNumber: idx + 1,
+          action:
+            scene.keepMask &&
+            scene.keepHasPreviousDisplay &&
+            isKeepMaskSelected(scene.keepMask.cells[y * w + x])
+              ? ("keep" as const)
+              : ("color" as const),
           colorIndex: scene.grid.cells[y * w + x] as ColorIndex,
           memo: scene.memo,
         }));
 
-        const html = generateScriptHtml(
-          x,
-          y,
-          cellScenes,
-          project.name,
-          w,
-          h
-        );
+        const html = generateScriptHtml(x, y, cellScenes, project.name);
 
         zip.file(`${y + 1}列${x + 1}番.html`, html);
       }

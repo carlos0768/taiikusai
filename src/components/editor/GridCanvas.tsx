@@ -28,6 +28,7 @@ interface GridCanvasProps {
   moveDragOffset: { dx: number; dy: number } | null;
   onMoveDragOffsetChange: (offset: { dx: number; dy: number } | null) => void;
   isMoveSelecting: boolean;
+  disableMoveDrag?: boolean;
 }
 
 export default function GridCanvas({
@@ -50,6 +51,7 @@ export default function GridCanvas({
   moveDragOffset,
   onMoveDragOffsetChange,
   isMoveSelecting,
+  disableMoveDrag = false,
 }: GridCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -179,7 +181,7 @@ export default function GridCanvas({
             isRemovingRef.current = false; // dragging will add cells
           }
           onMoveSelectedCellsChange(newSet);
-        } else if (moveSelectedCells.has(key)) {
+        } else if (moveSelectedCells.has(key) && !disableMoveDrag) {
           // Not selecting, click inside selection → start drag move
           isDraggingMoveRef.current = true;
           moveStartRef.current = cell;
@@ -199,6 +201,7 @@ export default function GridCanvas({
       onMoveSelectedCellsChange,
       isMoveSelecting,
       isEditing,
+      disableMoveDrag,
     ]
   );
 

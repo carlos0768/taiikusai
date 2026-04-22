@@ -23,10 +23,13 @@ import { buildBranchPath } from "@/lib/projectBranches";
 import type {
   BranchScopedProject,
   MusicData,
+  MotionType,
+  PanelType,
   ProjectBranch,
   ZentaiGamen,
   Connection as DBConnection,
   Template,
+  WaveMotionData,
 } from "@/types";
 import { updateProjectMusic } from "@/lib/api/projects";
 import ZentaiGamenNode from "./ZentaiGamenNode";
@@ -40,6 +43,7 @@ import { parseExcel, parseCsv } from "@/lib/import/parseSpreadsheet";
 import { findPlaybackRoutes } from "@/lib/api/connections";
 import { buildPlaybackTimeline, type PlaybackTimeline } from "@/lib/playback/frameBuilder";
 import { createEmptyGrid } from "@/lib/grid/types";
+import { createKeepMaskGrid } from "@/lib/keep";
 import { resizeGrid } from "@/lib/grid/resize";
 import { DEFAULT_WAVE_MOTION_DATA } from "@/types";
 import ProjectBranchSwitcher from "./ProjectBranchSwitcher";
@@ -159,6 +163,7 @@ function DashboardCanvasInner({
           gridHeight: project.grid_height,
           hasOutgoingEdge: sourceIds.has(zg.id),
           isWave: zg.panel_type === "motion" && zg.motion_type === "wave",
+          isKeep: zg.panel_type === "keep",
           onDoubleClick: handleNodeDoubleClick,
           onLongPress: handleNodeLongPress,
         },
@@ -320,9 +325,20 @@ function DashboardCanvasInner({
 
   // Helper: create zentai_gamen at the flow position and navigate
   const createAndNavigate = useCallback(
-    async (gridData: string, name: string) => {
+    async (
+      gridData: string,
+      name: string,
+      options?: {
+        panelType?: PanelType;
+        motionType?: MotionType | null;
+        motionData?: WaveMotionData | null;
+      }
+    ) => {
       const posX = contextMenu?.flowX ?? 0;
       const posY = contextMenu?.flowY ?? 0;
+      const panelType = options?.panelType ?? "general";
+      const motionType = options?.motionType ?? null;
+      const motionData = options?.motionData ?? null;
 
       const { data, error } = await supabase
         .from("zentai_gamen")
@@ -333,6 +349,9 @@ function DashboardCanvasInner({
           grid_data: gridData,
           position_x: posX,
           position_y: posY,
+          panel_type: panelType,
+          motion_type: motionType,
+          motion_data: motionData,
         })
         .select()
         .single();
@@ -350,6 +369,13 @@ function DashboardCanvasInner({
     const emptyGrid = createEmptyGrid(project.grid_width, project.grid_height);
     await createAndNavigate(encodeGrid(emptyGrid), "Untitled");
   }, [project, createAndNavigate]);
+
+  const handleCreateKeep = useCallback(async () => {
+    const keepMask = createKeepMaskGrid(project.grid_width, project.grid_height);
+    await createAndNavigate(encodeGrid(keepMask), "keep", {
+      panelType: "keep",
+    });
+  }, [project.grid_width, project.grid_height, createAndNavigate]);
 
   // Wave (motion panel)
   const handleCreateWave = useCallback(async () => {
@@ -418,7 +444,11 @@ function DashboardCanvasInner({
     async (zentaiGamenId: string) => {
       const existing = initialZentaiGamen.find((z) => z.id === zentaiGamenId);
       if (!existing) return;
-      await createAndNavigate(existing.grid_data, `${existing.name} (コピー)`);
+      await createAndNavigate(existing.grid_data, `${existing.name} (コピー)`, {
+        panelType: existing.panel_type,
+        motionType: existing.motion_type,
+        motionData: existing.motion_data ? { ...existing.motion_data } : null,
+      });
     },
     [initialZentaiGamen, createAndNavigate]
   );
@@ -683,6 +713,7 @@ function DashboardCanvasInner({
           x={contextMenu.screenX}
           y={contextMenu.screenY}
           onManual={handleCreateManual}
+          onKeep={handleCreateKeep}
           onWave={handleCreateWave}
           onScan={handleScan}
           onSelectTemplate={handleSelectTemplate}
