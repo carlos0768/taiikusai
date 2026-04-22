@@ -1,13 +1,14 @@
 "use client";
 
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { buildBranchPath } from "@/lib/projectBranches";
 import TemplateGrid from "@/components/templates/TemplateGrid";
 
 export default function TemplatesPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const projectId = params.projectId as string;
-  const branchName = searchParams.get("branch") ?? "main";
+  const branchId = searchParams.get("branch");
   const router = useRouter();
 
   return (
@@ -16,7 +17,9 @@ export default function TemplatesPage() {
         <button
           onClick={() =>
             router.push(
-              `/project/${projectId}${branchName === "main" ? "" : `?branch=${branchName}`}`
+              branchId
+                ? buildBranchPath(`/project/${projectId}`, branchId)
+                : `/project/${projectId}`
             )
           }
           className="text-muted hover:text-foreground transition-colors text-lg px-2"

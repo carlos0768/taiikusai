@@ -11,6 +11,7 @@ interface EditorToolbarProps {
   canRedo: boolean;
   onBack: () => void;
   onPlay: () => void;
+  showPlayButton: boolean;
   saveStatus: "saved" | "saving" | "unsaved";
   name: string;
   onNameChange: (name: string) => void;
@@ -23,6 +24,17 @@ interface EditorToolbarProps {
   onExport: () => void;
   onToggleMemo: () => void;
   showMemo: boolean;
+  isMoveMode: boolean;
+  onToggleMove: () => void;
+  hasMoveSelection: boolean;
+  onClearMoveSelection: () => void;
+  isMoveSelecting: boolean;
+  onToggleMoveSelecting: () => void;
+  isKeepMode?: boolean;
+  isKeepSelecting?: boolean;
+  hasKeepSelection?: boolean;
+  onToggleKeepSelecting?: () => void;
+  onClearKeepSelection?: () => void;
   canEdit: boolean;
 }
 
@@ -42,6 +54,7 @@ export default function EditorToolbar({
   canRedo,
   onBack,
   onPlay,
+  showPlayButton,
   saveStatus,
   name,
   onNameChange,
@@ -53,12 +66,22 @@ export default function EditorToolbar({
   onToggleEdit,
   onExport,
   onToggleMemo,
+  isMoveMode,
+  onToggleMove,
+  hasMoveSelection,
+  onClearMoveSelection,
+  isMoveSelecting,
+  onToggleMoveSelecting,
+  isKeepMode = false,
+  isKeepSelecting = true,
+  hasKeepSelection = false,
+  onToggleKeepSelecting,
+  onClearKeepSelection,
   showMemo,
   canEdit,
 }: EditorToolbarProps) {
   return (
     <div className="flex flex-col bg-card border-b border-card-border">
-      {/* Top row: back, name, edit toggle, save status, play */}
       <div className="flex items-center gap-2 px-3 py-2">
         <button
           onClick={onBack}
@@ -71,8 +94,9 @@ export default function EditorToolbar({
         <input
           type="text"
           value={name}
-          onChange={(e) => onNameChange(e.target.value)}
-          className="flex-1 bg-transparent text-foreground font-medium px-2 py-1 border-b border-transparent hover:border-card-border focus:border-accent focus:outline-none transition-colors min-w-0"
+          onChange={(event) => onNameChange(event.target.value)}
+          readOnly={!canEdit}
+          className="flex-1 bg-transparent text-foreground font-medium px-2 py-1 border-b border-transparent hover:border-card-border focus:border-accent focus:outline-none transition-colors min-w-0 read-only:cursor-default read-only:opacity-80"
         />
 
         <button
@@ -84,7 +108,6 @@ export default function EditorToolbar({
 
         <button
           onClick={onToggleMemo}
-          disabled={!canEdit}
           className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
             showMemo
               ? "bg-accent/20 text-accent"
@@ -94,17 +117,105 @@ export default function EditorToolbar({
           メモ
         </button>
 
-        <button
-          onClick={onToggleEdit}
-          disabled={!canEdit}
-          className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
-            isEditing
-              ? "bg-accent/20 text-accent"
-              : "text-muted hover:text-foreground"
-          }`}
-        >
-          編集
-        </button>
+        {isKeepMode ? (
+          <>
+            <button
+              onClick={onToggleKeepSelecting}
+              disabled={!canEdit}
+              className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 disabled:opacity-40 ${
+                isKeepSelecting
+                  ? "bg-accent/20 text-accent"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              keep選択
+            </button>
+            {(hasKeepSelection || !isKeepSelecting) && (
+              <button
+                onClick={onToggleKeepSelecting}
+                disabled={!canEdit}
+                className={`px-2 py-1 text-[10px] rounded transition-colors shrink-0 disabled:opacity-40 ${
+                  isKeepSelecting
+                    ? "bg-accent/20 text-accent"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                {isKeepSelecting ? "選択確定" : "再選択"}
+              </button>
+            )}
+            {hasKeepSelection && (
+              <button
+                onClick={onClearKeepSelection}
+                disabled={!canEdit}
+                className="px-2 py-1 text-[10px] text-muted hover:text-foreground transition-colors shrink-0 disabled:opacity-40"
+              >
+                選択解除
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <button
+              onClick={onToggleMove}
+              disabled={!canEdit}
+              className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 disabled:opacity-40 ${
+                isMoveMode
+                  ? "bg-accent/20 text-accent"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              移動
+            </button>
+
+            {isMoveMode && (
+              <>
+                {(hasMoveSelection || !isMoveSelecting) && (
+                  <button
+                    onClick={onToggleMoveSelecting}
+                    disabled={!canEdit}
+                    className={`px-2 py-1 text-[10px] rounded transition-colors shrink-0 disabled:opacity-40 ${
+                      isMoveSelecting
+                        ? "bg-accent/20 text-accent"
+                        : "text-muted hover:text-foreground"
+                    }`}
+                  >
+                    {isMoveSelecting ? "選択確定" : "再選択"}
+                  </button>
+                )}
+                <button
+                  onClick={onUndo}
+                  disabled={!canEdit || !canUndo}
+                  className="px-2 py-1 text-[10px] text-muted hover:text-foreground disabled:opacity-30 transition-colors shrink-0"
+                >
+                  ↩ 戻す
+                </button>
+                {hasMoveSelection && (
+                  <button
+                    onClick={onClearMoveSelection}
+                    disabled={!canEdit}
+                    className="px-2 py-1 text-[10px] text-muted hover:text-foreground transition-colors shrink-0 disabled:opacity-40"
+                  >
+                    選択解除
+                  </button>
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        {!isKeepMode && (
+          <button
+            onClick={onToggleEdit}
+            disabled={!canEdit}
+            className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 disabled:opacity-40 ${
+              isEditing
+                ? "bg-accent/20 text-accent"
+                : "text-muted hover:text-foreground"
+            }`}
+          >
+            編集
+          </button>
+        )}
 
         <span className="text-xs text-muted shrink-0">
           {saveStatus === "saving"
@@ -114,17 +225,18 @@ export default function EditorToolbar({
               : "未保存"}
         </span>
 
-        <button
-          onClick={onPlay}
-          className="text-accent hover:opacity-80 transition-opacity px-2 py-1 text-lg"
-          aria-label="再生"
-        >
-          ▶
-        </button>
+        {showPlayButton && (
+          <button
+            onClick={onPlay}
+            className="text-accent hover:opacity-80 transition-opacity px-2 py-1 text-lg"
+            aria-label="再生"
+          >
+            ▶
+          </button>
+        )}
       </div>
 
-      {/* Bottom row: tools, undo/redo — only visible when editing */}
-      {isEditing && canEdit && (
+      {isEditing && !isKeepMode && canEdit && (
         <div className="flex items-center gap-1 px-3 py-1.5 overflow-x-auto">
           {tools.map((tool) => (
             <button

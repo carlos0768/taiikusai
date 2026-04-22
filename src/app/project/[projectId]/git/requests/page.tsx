@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { fetchJson } from "@/lib/client/api";
+import { buildBranchPath } from "@/lib/projectBranches";
 import type { AuthProfile, MergeRequestListItem } from "@/types";
 
 interface RequestsResponse {
@@ -13,16 +14,12 @@ interface MeResponse {
   profile: AuthProfile;
 }
 
-function branchQuery(branchName: string) {
-  return branchName === "main" ? "" : `?branch=${branchName}`;
-}
-
 export default function GitRequestsPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
   const projectId = params.projectId as string;
-  const branchName = searchParams.get("branch") ?? "main";
+  const branchId = searchParams.get("branch");
 
   const [profile, setProfile] = useState<AuthProfile | null>(null);
   const [requests, setRequests] = useState<MergeRequestListItem[]>([]);
@@ -77,7 +74,13 @@ export default function GitRequestsPage() {
     <div className="h-full flex flex-col">
       <header className="flex items-center gap-2 px-4 py-3 border-b border-card-border">
         <button
-          onClick={() => router.push(`/project/${projectId}${branchQuery(branchName)}`)}
+          onClick={() =>
+            router.push(
+              branchId
+                ? buildBranchPath(`/project/${projectId}`, branchId)
+                : `/project/${projectId}`
+            )
+          }
           className="text-muted hover:text-foreground transition-colors text-lg px-2"
         >
           ←

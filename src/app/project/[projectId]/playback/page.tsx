@@ -1,13 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { fetchJson } from "@/lib/client/api";
-import { decodeGrid } from "@/lib/grid/codec";
+import { buildBranchPath, fetchProjectBranchContext } from "@/lib/projectBranches";
 import { findPlaybackRoutes } from "@/lib/api/connections";
-import type { GridData } from "@/lib/grid/types";
-import type { BranchContextResponse, Connection, ZentaiGamen } from "@/types";
+import type { BranchScopedProject, ZentaiGamen, Connection } from "@/types";
+import { buildPlaybackTimeline } from "@/lib/playback/frameBuilder";
 import PlaybackView from "@/components/playback/PlaybackView";
 import RouteSelector from "@/components/playback/RouteSelector";
 
@@ -17,63 +16,68 @@ export default function PlaybackPage() {
   const router = useRouter();
   const projectId = params.projectId as string;
   const startId = searchParams.get("start");
-  const branchName = searchParams.get("branch") ?? "main";
-  const [supabase] = useState(() => createClient());
+  const requestedBranchId = searchParams.get("branch");
 
   const [loading, setLoading] = useState(true);
+  const [project, setProject] = useState<BranchScopedProject | null>(null);
   const [zentaiGamen, setZentaiGamen] = useState<ZentaiGamen[]>([]);
+  const [connections, setConnections] = useState<Connection[]>([]);
   const [routes, setRoutes] = useState<string[][]>([]);
   const [selectedRoute, setSelectedRoute] = useState<number | null>(null);
-  const [gridWidth, setGridWidth] = useState(50);
-  const [gridHeight, setGridHeight] = useState(30);
+
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
     async function load() {
       setLoading(true);
+      setSelectedRoute(null);
+      setRoutes([]);
+      try {
+        const contextResult = await fetchProjectBranchContext(
+          supabase,
+          projectId,
+          requestedBranchId
+        );
+        const [{ data: zg }, { data: conns }] = await Promise.all([
+          supabase
+            .from("zentai_gamen")
+            .select("*")
+            .eq("project_id", projectId)
+            .eq("branch_id", contextResult.currentBranch.id),
+          supabase
+            .from("connections")
+            .select("*")
+            .eq("project_id", projectId)
+            .eq("branch_id", contextResult.currentBranch.id),
+        ]);
 
-      const context = await fetchJson<BranchContextResponse>(
-        `/api/projects/${projectId}/branches?branch=${branchName}`
-      );
+        setProject(contextResult.projectView);
+        setZentaiGamen(zg ?? []);
+        setConnections(conns ?? []);
 
-      const [{ data: nextZentaiGamen }, { data: nextConnections }] = await Promise.all([
-        supabase
-          .from("zentai_gamen")
-          .select("*")
-          .eq("project_id", projectId)
-          .eq("branch_id", context.currentBranch.id),
-        supabase
-          .from("connections")
-          .select("*")
-          .eq("project_id", projectId)
-          .eq("branch_id", context.currentBranch.id),
-      ]);
+        if (startId && conns) {
+          const foundRoutes = findPlaybackRoutes(conns, startId);
+          setRoutes(foundRoutes);
 
-      setGridWidth(context.project.grid_width);
-      setGridHeight(context.project.grid_height);
-      setZentaiGamen((nextZentaiGamen ?? []) as ZentaiGamen[]);
-
-      const currentConnections = (nextConnections ?? []) as Connection[];
-      if (startId && currentConnections) {
-        const foundRoutes = findPlaybackRoutes(currentConnections, startId);
-        setRoutes(foundRoutes);
-
-        if (foundRoutes.length === 1) {
-          setSelectedRoute(0);
-        } else if (foundRoutes.length === 0) {
-          setRoutes([[startId]]);
-          setSelectedRoute(0);
+          if (foundRoutes.length === 1) {
+            setSelectedRoute(0);
+          } else if (foundRoutes.length === 0) {
+            setRoutes([[startId]]);
+            setSelectedRoute(0);
+          }
         }
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     }
-
     void load();
-  }, [branchName, projectId, startId, supabase]);
+  }, [projectId, requestedBranchId, startId, supabase]);
 
   const handleBack = useCallback(() => {
-    router.push(`/project/${projectId}${branchName === "main" ? "" : `?branch=${branchName}`}`);
-  }, [branchName, projectId, router]);
+    router.push(
+      buildBranchPath(`/project/${projectId}`, requestedBranchId ?? project?.active_branch_id ?? "")
+    );
+  }, [project?.active_branch_id, projectId, requestedBranchId, router]);
 
   if (loading) {
     return (
@@ -83,8 +87,9 @@ export default function PlaybackPage() {
     );
   }
 
+  // Route selection needed
   if (selectedRoute === null && routes.length > 1) {
-    const nodeNames = new Map(zentaiGamen.map((item) => [item.id, item.name]));
+    const nodeNames = new Map(zentaiGamen.map((zg) => [zg.id, zg.name]));
     return (
       <RouteSelector
         routes={routes}
@@ -95,19 +100,26 @@ export default function PlaybackPage() {
     );
   }
 
-  const route = routes[selectedRoute ?? 0] ?? [];
-  const zentaiGamenMap = new Map(zentaiGamen.map((item) => [item.id, item]));
-  const frames: GridData[] = [];
-  const frameNames: string[] = [];
+  if (!project) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <p className="text-muted">プロジェクトが見つかりません</p>
+      </div>
+    );
+  }
 
-  route.forEach((nodeId) => {
-    const item = zentaiGamenMap.get(nodeId);
-    if (!item) return;
-    frames.push(decodeGrid(item.grid_data, gridWidth, gridHeight));
-    frameNames.push(item.name);
+  const route = routes[selectedRoute ?? 0] ?? [];
+  const timeline = buildPlaybackTimeline({
+    route,
+    zentaiGamen,
+    connections,
+    gridWidth: project.grid_width,
+    gridHeight: project.grid_height,
+    defaultPanelDurationMs: project.default_panel_duration_ms,
+    defaultIntervalMs: project.default_interval_ms,
   });
 
-  if (frames.length === 0) {
+  if (timeline.frameItems.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
@@ -123,7 +135,5 @@ export default function PlaybackPage() {
     );
   }
 
-  return (
-    <PlaybackView frames={frames} frameNames={frameNames} onBack={handleBack} />
-  );
+  return <PlaybackView timeline={timeline} onBack={handleBack} />;
 }
