@@ -6,8 +6,6 @@ import type {
   ProjectBranch,
   ProjectBranchMergeSnapshot,
   ProjectBranchSettings,
-  ProjectGridResizeHistorySnapshotConnection,
-  ProjectGridResizeHistorySnapshotPanel,
   ZentaiGamen,
 } from "@/types";
 
@@ -185,38 +183,6 @@ export function cloneConnectionsToBranch(params: {
     branch_id: branchId,
     source_id: panelIdMap.get(connection.source_id) ?? connection.source_id,
     target_id: panelIdMap.get(connection.target_id) ?? connection.target_id,
-    created_at: now,
-  }));
-}
-
-export function buildPanelsFromHistorySnapshot(
-  projectId: string,
-  branchId: string,
-  panels: ProjectGridResizeHistorySnapshotPanel[]
-): ZentaiGamen[] {
-  const now = new Date().toISOString();
-
-  return panels.map((panel) => ({
-    ...panel,
-    project_id: projectId,
-    branch_id: branchId,
-    thumbnail: null,
-    created_at: now,
-    updated_at: now,
-  }));
-}
-
-export function buildConnectionsFromHistorySnapshot(
-  projectId: string,
-  branchId: string,
-  connections: ProjectGridResizeHistorySnapshotConnection[]
-): Connection[] {
-  const now = new Date().toISOString();
-
-  return connections.map((connection) => ({
-    ...connection,
-    project_id: projectId,
-    branch_id: branchId,
     created_at: now,
   }));
 }
