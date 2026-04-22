@@ -128,9 +128,6 @@ ALTER TABLE zentai_gamen
 ALTER TABLE connections
   ADD COLUMN IF NOT EXISTS branch_id uuid;
 
-ALTER TABLE project_grid_resize_history
-  ADD COLUMN IF NOT EXISTS branch_id uuid;
-
 UPDATE zentai_gamen
 SET branch_id = project_branches.id
 FROM project_branches
@@ -145,20 +142,10 @@ WHERE project_branches.project_id = connections.project_id
   AND project_branches.is_main = true
   AND connections.branch_id IS NULL;
 
-UPDATE project_grid_resize_history
-SET branch_id = project_branches.id
-FROM project_branches
-WHERE project_branches.project_id = project_grid_resize_history.project_id
-  AND project_branches.is_main = true
-  AND project_grid_resize_history.branch_id IS NULL;
-
 ALTER TABLE zentai_gamen
   ALTER COLUMN branch_id SET NOT NULL;
 
 ALTER TABLE connections
-  ALTER COLUMN branch_id SET NOT NULL;
-
-ALTER TABLE project_grid_resize_history
   ALTER COLUMN branch_id SET NOT NULL;
 
 ALTER TABLE zentai_gamen
@@ -173,20 +160,11 @@ ALTER TABLE connections
   ADD CONSTRAINT connections_branch_id_fkey
   FOREIGN KEY (branch_id) REFERENCES project_branches(id) ON DELETE CASCADE;
 
-ALTER TABLE project_grid_resize_history
-  DROP CONSTRAINT IF EXISTS project_grid_resize_history_branch_id_fkey;
-ALTER TABLE project_grid_resize_history
-  ADD CONSTRAINT project_grid_resize_history_branch_id_fkey
-  FOREIGN KEY (branch_id) REFERENCES project_branches(id) ON DELETE CASCADE;
-
 CREATE INDEX IF NOT EXISTS zentai_gamen_project_id_branch_id_created_at_idx
   ON zentai_gamen (project_id, branch_id, created_at ASC);
 
 CREATE INDEX IF NOT EXISTS connections_project_id_branch_id_sort_order_idx
   ON connections (project_id, branch_id, sort_order ASC);
-
-CREATE INDEX IF NOT EXISTS project_grid_resize_history_project_id_branch_id_created_at_idx
-  ON project_grid_resize_history (project_id, branch_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS project_branch_merges (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

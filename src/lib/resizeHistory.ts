@@ -1,11 +1,9 @@
 import type {
   Connection,
   Project,
-  ProjectGridResizeHistory,
   ProjectGridResizeHistorySnapshot,
   ProjectGridResizeHistorySnapshotConnection,
   ProjectGridResizeHistorySnapshotPanel,
-  RestorableProjectGridResizeHistorySnapshot,
   ZentaiGamen,
 } from "@/types";
 
@@ -58,27 +56,4 @@ export function buildResizeHistorySnapshot(
     panels: buildResizeHistorySnapshotPanels(panels),
     connections: buildResizeHistorySnapshotConnections(connections),
   };
-}
-
-export function isRestorableResizeHistorySnapshot(
-  snapshot: ProjectGridResizeHistorySnapshot
-): snapshot is RestorableProjectGridResizeHistorySnapshot {
-  return (
-    Array.isArray(snapshot.panels) &&
-    Array.isArray(snapshot.connections) &&
-    Array.isArray(snapshot.project.colors) &&
-    Object.prototype.hasOwnProperty.call(snapshot.project, "music_data")
-  );
-}
-
-export function isResizeHistoryRestorable(
-  history: Pick<ProjectGridResizeHistory, "snapshot">
-): boolean {
-  return isRestorableResizeHistorySnapshot(history.snapshot);
-}
-
-export function getResizeHistoryPanelCount(
-  history: Pick<ProjectGridResizeHistory, "snapshot">
-): number {
-  return Array.isArray(history.snapshot.panels) ? history.snapshot.panels.length : 0;
 }

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { decodeGrid, encodeGrid } from "@/lib/grid/codec";
 import {
-  fetchBranchConnections,
   fetchBranchPanels,
   getProjectBranchSettings,
 } from "@/lib/projectBranchState";
@@ -15,11 +14,9 @@ import {
   resizeWaveGrids,
   type GridResizeOptions,
 } from "@/lib/grid/resize";
-import { buildResizeHistorySnapshot } from "@/lib/resizeHistory";
 import { createClient } from "@/lib/supabase/server";
 import type {
   BranchScopedProject,
-  Connection,
   ProjectBranch,
   WaveMotionData,
   ZentaiGamen,
@@ -52,21 +49,6 @@ function getErrorMessage(error: unknown): string {
   }
 
   return "プロジェクトのリサイズに失敗しました";
-}
-
-function getResizeHistoryWarning(error: unknown): string | null {
-  const message = getErrorMessage(error);
-  const refersHistoryTable = message.includes("project_grid_resize_history");
-  const isHistorySchemaError =
-    refersHistoryTable &&
-    (message.includes("schema cache") ||
-      message.includes("does not exist") ||
-      message.includes("relation") ||
-      message.includes("row-level security policy"));
-
-  if (!isHistorySchemaError) return null;
-
-  return "リサイズ履歴用のDB設定が未適用のため、今回は変更前状態を保存せずにリサイズしました。`supabase/migrations/20260422000000_add_project_grid_resize_history.sql` と `supabase/migrations/20260422001000_add_project_grid_resize_history_policies.sql` を適用してください。";
 }
 
 function isValidGridSize(value: number): boolean {
@@ -112,7 +94,6 @@ export async function POST(
   let projectView!: BranchScopedProject;
   let currentBranch!: ProjectBranch;
   let panels: ZentaiGamen[] = [];
-  let connections: Connection[] = [];
 
   try {
     const contextResult = await fetchProjectBranchContext(
@@ -122,10 +103,7 @@ export async function POST(
     );
     projectView = contextResult.projectView;
     currentBranch = contextResult.currentBranch;
-    [panels, connections] = await Promise.all([
-      fetchBranchPanels(supabase, projectId, currentBranch.id),
-      fetchBranchConnections(supabase, projectId, currentBranch.id),
-    ]);
+    panels = await fetchBranchPanels(supabase, projectId, currentBranch.id);
   } catch {
     return NextResponse.json(
       { error: "プロジェクトまたはブランチの取得に失敗しました" },
@@ -151,7 +129,6 @@ export async function POST(
   };
 
   const allPanels = panels ?? [];
-  const allConnections = (connections ?? []) as Connection[];
   const preparedUpdates: PreparedPanelUpdate[] = [];
   let resizedWavePanelCount = 0;
 
@@ -199,44 +176,9 @@ export async function POST(
     ])
   );
   const appliedPanelIds: string[] = [];
-  const resizeHistorySnapshot = buildResizeHistorySnapshot(
-    projectView,
-    allPanels,
-    allConnections
-  );
-  let resizeHistoryId: string | null = null;
-  let warning: string | null = null;
   let branchUpdated = false;
 
   try {
-    const { data: historyRow, error: historyError } = await supabase
-      .from("project_grid_resize_history")
-      .insert({
-        project_id: projectId,
-        branch_id: currentBranch.id,
-        from_grid_width: projectView.grid_width,
-        from_grid_height: projectView.grid_height,
-        to_grid_width: gridWidth,
-        to_grid_height: gridHeight,
-        auto_adjust_illustration: autoAdjustIllustration,
-        snapshot: resizeHistorySnapshot,
-      })
-      .select("id")
-      .single();
-
-    if (historyError || !historyRow) {
-      const historyWarning = getResizeHistoryWarning(
-        historyError ?? new Error("Resize history insert failed")
-      );
-      if (historyWarning) {
-        warning = historyWarning;
-      } else {
-        throw historyError ?? new Error("Resize history insert failed");
-      }
-    } else {
-      resizeHistoryId = historyRow.id;
-    }
-
     for (const update of preparedUpdates) {
       const { error } = await supabase
         .from("zentai_gamen")
@@ -286,7 +228,6 @@ export async function POST(
       ),
       resizedPanelCount: preparedUpdates.length,
       resizedWavePanelCount,
-      warning,
     });
   } catch (error) {
     for (let index = appliedPanelIds.length - 1; index >= 0; index--) {
@@ -321,14 +262,6 @@ export async function POST(
           getProjectBranchSettings(projectView)
         );
       }
-    }
-
-    if (resizeHistoryId) {
-      await supabase
-        .from("project_grid_resize_history")
-        .delete()
-        .eq("id", resizeHistoryId)
-        .eq("branch_id", currentBranch.id);
     }
 
     return NextResponse.json(
