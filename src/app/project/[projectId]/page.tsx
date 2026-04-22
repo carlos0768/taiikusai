@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
+import { getClientErrorMessage } from "@/lib/client/errors";
 import { createClient } from "@/lib/supabase/client";
 import { fetchJson } from "@/lib/client/api";
 import DashboardCanvas from "@/components/dashboard/DashboardCanvas";
@@ -58,7 +59,7 @@ export default function ProjectPage() {
       setZentaiGamen((nextZentaiGamen ?? []) as ZentaiGamen[]);
       setConnections((nextConnections ?? []) as Connection[]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "プロジェクトを読み込めませんでした");
+      setError(getClientErrorMessage(err, "プロジェクトを読み込めませんでした"));
     } finally {
       setLoading(false);
     }
