@@ -42,17 +42,25 @@ export interface GridData {
   cells: Uint8Array;
 }
 
-export function createEmptyGrid(width: number, height: number): GridData {
+export function createFilledGrid(
+  width: number,
+  height: number,
+  color: ColorIndex
+): GridData {
   const cells = new Uint8Array(width * height);
-  // 新規グリッドは全セルを「未定義（灰色）」で初期化する。
-  // 既存の保存済みグリッドは grid_data が全 0 バイトのまま保存されており、
-  // 0 = 白（実パネル色）のままレンダリングされるので互換性は保たれる。
-  cells.fill(UNDEFINED_COLOR);
+  cells.fill(color);
   return {
     width,
     height,
     cells,
   };
+}
+
+export function createEmptyGrid(width: number, height: number): GridData {
+  // 新規グリッドは全セルを「未定義（灰色）」で初期化する。
+  // 既存の保存済みグリッドは grid_data が全 0 バイトのまま保存されており、
+  // 0 = 白（実パネル色）のままレンダリングされるので互換性は保たれる。
+  return createFilledGrid(width, height, UNDEFINED_COLOR);
 }
 
 export function getCell(grid: GridData, x: number, y: number): ColorIndex {
@@ -89,6 +97,13 @@ export type PlaybackFrame =
       name: string;
     }
   | {
+      kind: "keep";
+      mask: GridData;
+      displayGrid: GridData;
+      durationMs: number;
+      name: string;
+    }
+  | {
       kind: "wave";
       before: GridData;
       after: GridData;
@@ -109,8 +124,22 @@ export function waveSweepMs(
 
 /** PlaybackFrame の総表示時間 (ms)。usePlayback の遷移計算で使用。 */
 export function getFrameTotalMs(frame: PlaybackFrame): number {
-  if (frame.kind === "general") return frame.durationMs;
+  if (frame.kind === "general" || frame.kind === "keep") {
+    return frame.durationMs;
+  }
   return frame.beforeMs + waveSweepMs(frame.before.width, frame.speedColPerSec) + frame.afterMs;
+}
+
+export function getPlaybackFrameBaseGrid(frame: PlaybackFrame): GridData {
+  if (frame.kind === "general") return frame.grid;
+  if (frame.kind === "keep") return frame.displayGrid;
+  return frame.before;
+}
+
+export function getPlaybackFrameFinalGrid(frame: PlaybackFrame): GridData {
+  if (frame.kind === "general") return frame.grid;
+  if (frame.kind === "keep") return frame.displayGrid;
+  return frame.after;
 }
 
 /**

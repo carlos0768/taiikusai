@@ -7,8 +7,13 @@ import {
   type ColorIndex,
   type GridData,
   createEmptyGrid,
+  createFilledGrid,
 } from "@/lib/grid/types";
 import { encodeGrid } from "@/lib/grid/codec";
+import {
+  buildKeepMaskFromSelectedCells,
+  getKeepSelectedCells,
+} from "@/lib/keep";
 import { useGridState, type Tool } from "./useGridState";
 import GridCanvas from "./GridCanvas";
 import ColorPalette from "./ColorPalette";
@@ -58,9 +63,14 @@ export default function GridEditor({
 }: GridEditorProps) {
   const isMotion = panelType === "motion";
   const isWave = isMotion && motionType === "wave";
+  const isKeep = panelType === "keep";
+  const keepCanvasGrid = useMemo(
+    () => createFilledGrid(initialGrid.width, initialGrid.height, 0),
+    [initialGrid.height, initialGrid.width]
+  );
 
   // before / after の編集状態を独立に持つ
-  const beforeState = useGridState(initialGrid);
+  const beforeState = useGridState(isKeep ? keepCanvasGrid : initialGrid);
   const afterState = useGridState(
     initialAfterGrid ??
       createEmptyGrid(initialGrid.width, initialGrid.height)
@@ -80,6 +90,11 @@ export default function GridEditor({
   const [moveSelectedCells, setMoveSelectedCells] = useState<Set<string>>(new Set());
   const [moveDragOffset, setMoveDragOffset] = useState<{ dx: number; dy: number } | null>(null);
   const [isMoveSelecting, setIsMoveSelecting] = useState(true);
+  const [keepSelectedCells, setKeepSelectedCells] = useState<Set<string>>(
+    () => (isKeep ? getKeepSelectedCells(initialGrid) : new Set())
+  );
+  const [isKeepSelecting, setIsKeepSelecting] = useState(true);
+  const [keepRevision, setKeepRevision] = useState(0);
   const [activeTool, setActiveTool] = useState<Tool>("paint");
   const [activeColor, setActiveColor] = useState<ColorIndex>(1);
   const [viewport, setViewport] = useState<Viewport>({
@@ -112,13 +127,27 @@ export default function GridEditor({
 
   // 編集時の dirty 検知 (before / after / motionData)
   const dirty =
-    beforeState.dirty || (isWave && afterState.dirty) || motionDataRevision > 0;
+    beforeState.dirty ||
+    (isWave && afterState.dirty) ||
+    motionDataRevision > 0 ||
+    keepRevision > 0;
   const combinedRevision =
-    beforeState.revision + (isWave ? afterState.revision : 0) + motionDataRevision;
+    beforeState.revision +
+    (isWave ? afterState.revision : 0) +
+    motionDataRevision +
+    keepRevision;
 
   const buildPayload = useCallback((): GridEditorSavePayload => {
     const payload: GridEditorSavePayload = {
-      gridData: encodeGrid(beforeState.gridRef.current!),
+      gridData: encodeGrid(
+        isKeep
+          ? buildKeepMaskFromSelectedCells(
+              initialGrid.width,
+              initialGrid.height,
+              keepSelectedCells
+            )
+          : beforeState.gridRef.current!
+      ),
       name,
       memo,
     };
@@ -129,7 +158,18 @@ export default function GridEditor({
       };
     }
     return payload;
-  }, [beforeState, afterState, name, memo, isWave, motionData]);
+  }, [
+    afterState,
+    beforeState,
+    initialGrid.height,
+    initialGrid.width,
+    isKeep,
+    isWave,
+    keepSelectedCells,
+    memo,
+    motionData,
+    name,
+  ]);
 
   // Auto-save with 2-second debounce
   useEffect(() => {
@@ -147,6 +187,7 @@ export default function GridEditor({
         beforeState.clearDirty();
         afterState.clearDirty();
         setMotionDataRevision(0);
+        setKeepRevision(0);
         setSaveStatus("saved");
       } catch {
         setSaveStatus("unsaved");
@@ -210,6 +251,7 @@ export default function GridEditor({
 
   const handleSaveAsTemplate = useCallback(
     async (templateName: string) => {
+      if (isKeep) return;
       const grid = activeState.gridRef.current!;
       const encoded = encodeGrid(grid);
       const thumbnail = generateThumbnailDataUrl(grid);
@@ -221,7 +263,7 @@ export default function GridEditor({
         thumbnail
       );
     },
-    [activeState]
+    [activeState, isKeep]
   );
 
   // ウェーブ設定の更新
@@ -247,10 +289,15 @@ export default function GridEditor({
     };
   }, [isWave, motionData, beforeState, afterState, showWavePreview]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleKeepSelectionChange = useCallback((cells: Set<string>) => {
+    setKeepSelectedCells(cells);
+    setKeepRevision((revision) => revision + 1);
+  }, []);
+
   return (
     <div className="h-full flex flex-col">
       <EditorToolbar
-        activeTool={isMoveMode ? "move" : activeTool}
+        activeTool={isKeep || isMoveMode ? "move" : activeTool}
         onToolChange={setActiveTool}
         onUndo={activeState.undo}
         onRedo={activeState.redo}
@@ -266,17 +313,26 @@ export default function GridEditor({
         onFillSelection={handleFillSelection}
         onClearSelection={handleClearSelection}
         onSaveAsTemplate={() => setShowTemplateSave(true)}
-        isEditing={isEditing}
+        isEditing={isKeep ? false : isEditing}
         onToggleEdit={() => { setIsEditing(!isEditing); if (isMoveMode) setIsMoveMode(false); }}
         onExport={onExport}
         onToggleMemo={() => setShowMemo(!showMemo)}
         showMemo={showMemo}
-        isMoveMode={isMoveMode}
+        isMoveMode={isKeep ? false : isMoveMode}
         onToggleMove={() => { setIsMoveMode(!isMoveMode); setMoveSelectedCells(new Set()); setIsMoveSelecting(true); if (isEditing) setIsEditing(false); }}
         hasMoveSelection={moveSelectedCells.size > 0}
         onClearMoveSelection={() => { setMoveSelectedCells(new Set()); setIsMoveSelecting(true); }}
         isMoveSelecting={isMoveSelecting}
         onToggleMoveSelecting={() => setIsMoveSelecting(!isMoveSelecting)}
+        isKeepMode={isKeep}
+        isKeepSelecting={isKeepSelecting}
+        hasKeepSelection={keepSelectedCells.size > 0}
+        onToggleKeepSelecting={() => setIsKeepSelecting(!isKeepSelecting)}
+        onClearKeepSelection={() => {
+          setKeepSelectedCells(new Set());
+          setIsKeepSelecting(true);
+          setKeepRevision((revision) => revision + 1);
+        }}
       />
 
       {/* Wave: before/after タブ + 設定 */}
@@ -388,9 +444,9 @@ export default function GridEditor({
 
       <GridCanvas
         gridRef={activeState.gridRef as React.RefObject<GridData>}
-        revision={activeState.revision}
+        revision={activeState.revision + (isKeep ? keepRevision : 0)}
         viewport={viewport}
-        activeTool={isMoveMode ? "move" : activeTool}
+        activeTool={isKeep || isMoveMode ? "move" : activeTool}
         activeColor={activeColor}
         selection={selection}
         onPaintCell={activeState.paintCell}
@@ -399,20 +455,23 @@ export default function GridEditor({
         onFloodFill={activeState.floodFill}
         onSelectionChange={setSelection}
         onViewportChange={setViewport}
-        isEditing={isEditing}
-        onMoveSelection={activeState.moveSelection}
-        moveSelectedCells={moveSelectedCells}
-        onMoveSelectedCellsChange={setMoveSelectedCells}
-        moveDragOffset={moveDragOffset}
-        onMoveDragOffsetChange={setMoveDragOffset}
-        isMoveSelecting={isMoveSelecting}
+        isEditing={isKeep ? false : isEditing}
+        onMoveSelection={isKeep ? () => {} : activeState.moveSelection}
+        moveSelectedCells={isKeep ? keepSelectedCells : moveSelectedCells}
+        onMoveSelectedCellsChange={
+          isKeep ? handleKeepSelectionChange : setMoveSelectedCells
+        }
+        moveDragOffset={isKeep ? null : moveDragOffset}
+        onMoveDragOffsetChange={isKeep ? () => {} : setMoveDragOffset}
+        isMoveSelecting={isKeep ? isKeepSelecting : isMoveSelecting}
+        disableMoveDrag={isKeep}
       />
 
-      {isEditing && (
+      {isEditing && !isKeep && (
         <ColorPalette activeColor={activeColor} onColorChange={setActiveColor} />
       )}
 
-      {showTemplateSave && (
+      {showTemplateSave && !isKeep && (
         <TemplateSaveDialog
           onSave={handleSaveAsTemplate}
           onClose={() => setShowTemplateSave(false)}

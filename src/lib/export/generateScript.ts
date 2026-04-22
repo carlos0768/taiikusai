@@ -2,6 +2,7 @@ import type { ColorIndex } from "@/lib/grid/types";
 
 interface SceneData {
   sceneNumber: number;
+  action: "color" | "keep";
   colorIndex: ColorIndex;
   memo: string;
 }
@@ -15,14 +16,11 @@ const COLOR_DISPLAY: Record<number, string> = {
   5: "・", // undefined (designer hasn't decided yet)
 };
 
-function getColorDisplay(
-  colorIndex: ColorIndex,
-  prevColorIndex: ColorIndex | null
-): string {
-  if (prevColorIndex !== null && colorIndex === prevColorIndex) {
+function getColorDisplay(scene: SceneData): string {
+  if (scene.action === "keep") {
     return "keep";
   }
-  return COLOR_DISPLAY[colorIndex] ?? "ー";
+  return COLOR_DISPLAY[scene.colorIndex] ?? "ー";
 }
 
 const CSS = `
@@ -68,9 +66,7 @@ export function generateScriptHtml(
   cellX: number,
   cellY: number,
   scenes: SceneData[],
-  projectName: string,
-  gridWidth: number,
-  gridHeight: number
+  projectName: string
 ): string {
   const position = `${cellY + 1}列${cellX + 1}番`;
   const COLS_PER_GROUP = 3; // 番号, 色, 動き
@@ -87,11 +83,7 @@ export function generateScriptHtml(
       const sceneIdx = group * ROWS_PER_PAGE + row;
       if (sceneIdx < scenes.length) {
         const scene = scenes[sceneIdx];
-        const prevScene = sceneIdx > 0 ? scenes[sceneIdx - 1] : null;
-        const colorText = getColorDisplay(
-          scene.colorIndex,
-          prevScene?.colorIndex ?? null
-        );
+        const colorText = getColorDisplay(scene);
         const isKeep = colorText === "keep";
         const colorClass = isKeep ? "keep" : COLOR_CLASS[scene.colorIndex] ?? "";
 

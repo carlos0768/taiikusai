@@ -58,7 +58,7 @@ export interface BranchScopedProject extends Project {
   active_branch_is_main: boolean;
 }
 
-export type PanelType = "general" | "motion";
+export type PanelType = "general" | "motion" | "keep";
 export type MotionType = "wave"; // 将来 'fade' 'sweep' 等を追加可能
 
 export interface WaveMotionData {

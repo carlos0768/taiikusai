@@ -14,6 +14,7 @@ import {
   resizeWaveGrids,
   type GridResizeOptions,
 } from "@/lib/grid/resize";
+import { normalizeKeepMaskGrid } from "@/lib/keep";
 import { createClient } from "@/lib/supabase/server";
 import type {
   BranchScopedProject,
@@ -156,6 +157,15 @@ export async function POST(
         },
       });
       resizedWavePanelCount += 1;
+      continue;
+    }
+
+    if (panel.panel_type === "keep") {
+      preparedUpdates.push({
+        id: panel.id,
+        gridData: encodeGrid(normalizeKeepMaskGrid(resizeGrid(beforeGrid, resizeOptions))),
+        motionData: null,
+      });
       continue;
     }
 

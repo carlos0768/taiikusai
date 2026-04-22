@@ -11,6 +11,7 @@ interface ContextMenuProps {
   x: number;
   y: number;
   onManual: () => void;
+  onKeep: () => void;
   onWave: () => void;
   onScan: () => void;
   onSelectTemplate: (templateId: string) => void;
@@ -27,6 +28,7 @@ export default function ContextMenu({
   x,
   y,
   onManual,
+  onKeep,
   onWave,
   onScan,
   onSelectTemplate,
@@ -86,6 +88,12 @@ export default function ContextMenu({
           className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-foreground hover:bg-accent/10 transition-colors"
         >
           <span>手動</span>
+        </button>
+        <button
+          onClick={onKeep}
+          className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-foreground hover:bg-accent/10 transition-colors"
+        >
+          <span>keep</span>
         </button>
         <button
           onClick={onWave}

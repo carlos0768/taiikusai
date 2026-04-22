@@ -8,6 +8,7 @@ import { DEFAULT_INTERVAL_MS } from "@/lib/playback/timing";
  * 再生フック。
  *
  * 一般フレーム: そのまま durationMs だけ表示 → 白フレーム → 次。
+ * keep フレーム: 直前 gap の長さだけ保持表示 → 次。
  * ウェーブフレーム: 素地表示 → 列単位伝播 → 適用後表示 (合計時間は frame の各時間の和) → 白 → 次。
  *
  * `frameElapsedMs` はウェーブの描画進捗 (現在のフレーム内での経過 ms) を返す。
@@ -108,13 +109,19 @@ export function usePlayback(params: {
           ? durations[currentIndex] ?? frame.durationMs
           : getFrameTotalMs(frame);
 
-      if (frame.kind === "general") {
+      if (frame.kind === "general" || frame.kind === "keep") {
         // 一般: 単に時間が経つのを待つ (frameElapsedMs は使わない)
         timerRef.current = setTimeout(() => {
           if (currentIndex >= frames.length - 1) {
             setIsPlaying(false);
           } else {
-            setIsWhiteFrame(true);
+            const nextFrame = frames[currentIndex + 1];
+            if (nextFrame?.kind === "keep") {
+              setFrameElapsedMs(0);
+              setCurrentIndex((prev) => Math.min(prev + 1, frames.length - 1));
+            } else {
+              setIsWhiteFrame(true);
+            }
           }
         }, totalMs);
       } else {
@@ -127,7 +134,13 @@ export function usePlayback(params: {
             if (currentIndex >= frames.length - 1) {
               setIsPlaying(false);
             } else {
-              setIsWhiteFrame(true);
+              const nextFrame = frames[currentIndex + 1];
+              if (nextFrame?.kind === "keep") {
+                setFrameElapsedMs(0);
+                setCurrentIndex((prev) => Math.min(prev + 1, frames.length - 1));
+              } else {
+                setIsWhiteFrame(true);
+              }
             }
             rafRef.current = null;
             return;

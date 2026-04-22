@@ -30,6 +30,11 @@ interface EditorToolbarProps {
   onClearMoveSelection: () => void;
   isMoveSelecting: boolean;
   onToggleMoveSelecting: () => void;
+  isKeepMode?: boolean;
+  isKeepSelecting?: boolean;
+  hasKeepSelection?: boolean;
+  onToggleKeepSelecting?: () => void;
+  onClearKeepSelection?: () => void;
 }
 
 const tools: { id: Tool; label: string; icon: string }[] = [
@@ -66,6 +71,11 @@ export default function EditorToolbar({
   onClearMoveSelection,
   isMoveSelecting,
   onToggleMoveSelecting,
+  isKeepMode = false,
+  isKeepSelecting = true,
+  hasKeepSelection = false,
+  onToggleKeepSelecting,
+  onClearKeepSelection,
   showMemo,
 }: EditorToolbarProps) {
   return (
@@ -105,59 +115,98 @@ export default function EditorToolbar({
           メモ
         </button>
 
-        <button
-          onClick={onToggleMove}
-          className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
-            isMoveMode
-              ? "bg-accent/20 text-accent"
-              : "text-muted hover:text-foreground"
-          }`}
-        >
-          移動
-        </button>
-
-        {isMoveMode && (
+        {isKeepMode ? (
           <>
-            {(hasMoveSelection || !isMoveSelecting) && (
+            <button
+              onClick={onToggleKeepSelecting}
+              className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
+                isKeepSelecting
+                  ? "bg-accent/20 text-accent"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              keep選択
+            </button>
+            {(hasKeepSelection || !isKeepSelecting) && (
               <button
-                onClick={onToggleMoveSelecting}
+                onClick={onToggleKeepSelecting}
                 className={`px-2 py-1 text-[10px] rounded transition-colors shrink-0 ${
-                  isMoveSelecting
+                  isKeepSelecting
                     ? "bg-accent/20 text-accent"
                     : "text-muted hover:text-foreground"
                 }`}
               >
-                {isMoveSelecting ? "選択確定" : "再選択"}
+                {isKeepSelecting ? "選択確定" : "再選択"}
               </button>
             )}
-            <button
-              onClick={onUndo}
-              disabled={!canUndo}
-              className="px-2 py-1 text-[10px] text-muted hover:text-foreground disabled:opacity-30 transition-colors shrink-0"
-            >
-              ↩ 戻す
-            </button>
-            {hasMoveSelection && (
+            {hasKeepSelection && (
               <button
-                onClick={onClearMoveSelection}
+                onClick={onClearKeepSelection}
                 className="px-2 py-1 text-[10px] text-muted hover:text-foreground transition-colors shrink-0"
               >
                 選択解除
               </button>
             )}
           </>
+        ) : (
+          <>
+            <button
+              onClick={onToggleMove}
+              className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
+                isMoveMode
+                  ? "bg-accent/20 text-accent"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              移動
+            </button>
+
+            {isMoveMode && (
+              <>
+                {(hasMoveSelection || !isMoveSelecting) && (
+                  <button
+                    onClick={onToggleMoveSelecting}
+                    className={`px-2 py-1 text-[10px] rounded transition-colors shrink-0 ${
+                      isMoveSelecting
+                        ? "bg-accent/20 text-accent"
+                        : "text-muted hover:text-foreground"
+                    }`}
+                  >
+                    {isMoveSelecting ? "選択確定" : "再選択"}
+                  </button>
+                )}
+                <button
+                  onClick={onUndo}
+                  disabled={!canUndo}
+                  className="px-2 py-1 text-[10px] text-muted hover:text-foreground disabled:opacity-30 transition-colors shrink-0"
+                >
+                  ↩ 戻す
+                </button>
+                {hasMoveSelection && (
+                  <button
+                    onClick={onClearMoveSelection}
+                    className="px-2 py-1 text-[10px] text-muted hover:text-foreground transition-colors shrink-0"
+                  >
+                    選択解除
+                  </button>
+                )}
+              </>
+            )}
+          </>
         )}
 
-        <button
-          onClick={onToggleEdit}
-          className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
-            isEditing
-              ? "bg-accent/20 text-accent"
-              : "text-muted hover:text-foreground"
-          }`}
-        >
-          編集
-        </button>
+        {!isKeepMode && (
+          <button
+            onClick={onToggleEdit}
+            className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
+              isEditing
+                ? "bg-accent/20 text-accent"
+                : "text-muted hover:text-foreground"
+            }`}
+          >
+            編集
+          </button>
+        )}
 
         <span className="text-xs text-muted shrink-0">
           {saveStatus === "saving"
@@ -179,7 +228,7 @@ export default function EditorToolbar({
       </div>
 
       {/* Bottom row: tools, undo/redo — only visible when editing */}
-      {isEditing && (
+      {isEditing && !isKeepMode && (
         <div className="flex items-center gap-1 px-3 py-1.5 overflow-x-auto">
           {tools.map((tool) => (
             <button

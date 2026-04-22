@@ -12,6 +12,7 @@ export interface ZentaiGamenNodeData {
   gridHeight: number;
   hasOutgoingEdge: boolean;
   isWave: boolean;
+  isKeep: boolean;
   onDoubleClick: (id: string) => void;
   onLongPress: (id: string, name: string, x: number, y: number) => void;
   [key: string]: unknown;
@@ -48,11 +49,15 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
     for (let y = 0; y < grid.height; y++) {
       for (let x = 0; x < grid.width; x++) {
         const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
-        ctx.fillStyle = COLOR_MAP[colorIdx];
+        ctx.fillStyle = nodeData.isKeep
+          ? colorIdx === 1
+            ? "#FFD700"
+            : "#FFFFFF"
+          : COLOR_MAP[colorIdx];
         ctx.fillRect(x * cellW, y * cellH, Math.ceil(cellW), Math.ceil(cellH));
       }
     }
-  }, [nodeData.gridData, nodeData.gridWidth, nodeData.gridHeight]);
+  }, [nodeData.gridData, nodeData.gridWidth, nodeData.gridHeight, nodeData.isKeep]);
 
   const didMoveRef = useRef(false);
   const longPressTriggeredRef = useRef(false);
@@ -133,6 +138,11 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
         {nodeData.isWave && (
           <span className="absolute top-1 left-1 px-1.5 py-0.5 text-[9px] font-bold bg-accent text-black rounded">
             〜 WAVE
+          </span>
+        )}
+        {nodeData.isKeep && (
+          <span className="absolute top-1 left-1 px-1.5 py-0.5 text-[9px] font-bold bg-accent text-black rounded">
+            KEEP
           </span>
         )}
       </div>
