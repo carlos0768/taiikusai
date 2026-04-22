@@ -12,6 +12,7 @@ import {
 import type { MusicData } from "@/types";
 import {
   clampTimingMs,
+  getTimingPersistenceErrorMessage,
   msToSecondsString,
 } from "@/lib/playback/timing";
 import {
@@ -389,12 +390,13 @@ export default function PlaybackPanel({
         .eq("project_id", projectId);
 
       if (error) {
+        console.error("Failed to persist frame duration override", error);
         setFrameItems((prev) =>
           prev.map((frameItem, frameIndex) =>
             frameIndex === index ? prevItem : frameItem
           )
         );
-        alert("表示時間の保存に失敗しました");
+        alert(getTimingPersistenceErrorMessage(error, "frame"));
       }
 
       setSavingKey((current) => (current === key ? null : current));
@@ -432,12 +434,13 @@ export default function PlaybackPanel({
         .eq("project_id", projectId);
 
       if (error) {
+        console.error("Failed to persist gap duration override", error);
         setGapItems((prev) =>
           prev.map((gapItem, gapIndex) =>
             gapIndex === index ? prevItem : gapItem
           )
         );
-        alert("折り時間の保存に失敗しました");
+        alert(getTimingPersistenceErrorMessage(error, "gap"));
       }
 
       setSavingKey((current) => (current === key ? null : current));
