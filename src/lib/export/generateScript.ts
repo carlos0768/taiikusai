@@ -65,9 +65,7 @@ export function generateScriptHtml(
   cellX: number,
   cellY: number,
   scenes: SceneData[],
-  projectName: string,
-  gridWidth: number,
-  gridHeight: number
+  projectName: string
 ): string {
   const position = `${cellY + 1}列${cellX + 1}番`;
   const COLS_PER_GROUP = 3; // 番号, 色, 動き

@@ -5,7 +5,6 @@ import {
   type ColorIndex,
   type GridData,
   cloneGrid,
-  createEmptyGrid,
   getCell,
   setCell,
 } from "@/lib/grid/types";
@@ -20,6 +19,13 @@ export function useGridState(initialGrid: GridData) {
   const redoStackRef = useRef<GridData[]>([]);
   const [revision, setRevision] = useState(0);
   const [dirty, setDirty] = useState(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
+  const syncHistoryState = useCallback(() => {
+    setCanUndo(undoStackRef.current.length > 0);
+    setCanRedo(redoStackRef.current.length > 0);
+  }, []);
 
   const bump = useCallback(() => {
     setRevision((r) => r + 1);
@@ -32,7 +38,8 @@ export function useGridState(initialGrid: GridData) {
       undoStackRef.current.shift();
     }
     redoStackRef.current = [];
-  }, []);
+    syncHistoryState();
+  }, [syncHistoryState]);
 
   const paintCell = useCallback(
     (x: number, y: number, color: ColorIndex) => {
@@ -123,24 +130,27 @@ export function useGridState(initialGrid: GridData) {
     if (!prev) return;
     redoStackRef.current.push(cloneGrid(gridRef.current));
     gridRef.current = prev;
+    syncHistoryState();
     bump();
-  }, [bump]);
+  }, [bump, syncHistoryState]);
 
   const redo = useCallback(() => {
     const next = redoStackRef.current.pop();
     if (!next) return;
     undoStackRef.current.push(cloneGrid(gridRef.current));
     gridRef.current = next;
+    syncHistoryState();
     bump();
-  }, [bump]);
+  }, [bump, syncHistoryState]);
 
   const loadGrid = useCallback((grid: GridData) => {
     gridRef.current = grid;
     undoStackRef.current = [];
     redoStackRef.current = [];
+    syncHistoryState();
     setRevision(0);
     setDirty(false);
-  }, []);
+  }, [syncHistoryState]);
 
   const clearDirty = useCallback(() => {
     setDirty(false);
@@ -159,7 +169,7 @@ export function useGridState(initialGrid: GridData) {
     redo,
     loadGrid,
     clearDirty,
-    canUndo: undoStackRef.current.length > 0,
-    canRedo: redoStackRef.current.length > 0,
+    canUndo,
+    canRedo,
   };
 }

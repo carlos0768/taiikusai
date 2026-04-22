@@ -56,10 +56,15 @@ export default function CameraCapture({
     onClose();
   }, [stopCamera, onClose]);
 
-  // Auto-start camera
-  useState(() => {
-    startCamera();
-  });
+  const handleVideoRef = useCallback(
+    (node: HTMLVideoElement | null) => {
+      videoRef.current = node;
+      if (node && !streamRef.current) {
+        void startCamera();
+      }
+    },
+    [startCamera]
+  );
 
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col">
@@ -78,7 +83,7 @@ export default function CameraCapture({
       ) : (
         <>
           <video
-            ref={videoRef}
+            ref={handleVideoRef}
             autoPlay
             playsInline
             muted

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
 import { usePlayback } from "@/components/playback/usePlayback";
 

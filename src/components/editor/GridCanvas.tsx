@@ -13,7 +13,6 @@ interface GridCanvasProps {
   activeTool: Tool;
   activeColor: ColorIndex;
   selection: { x1: number; y1: number; x2: number; y2: number } | null;
-  onPaintCell: (x: number, y: number, color: ColorIndex) => void;
   onStartBatchPaint: () => void;
   onBatchPaintCell: (x: number, y: number, color: ColorIndex) => void;
   onFloodFill: (x: number, y: number, color: ColorIndex) => void;
@@ -31,7 +30,6 @@ export default function GridCanvas({
   activeTool,
   activeColor,
   selection,
-  onPaintCell,
   onStartBatchPaint,
   onBatchPaintCell,
   onFloodFill,
@@ -50,6 +48,27 @@ export default function GridCanvas({
   const lastPanRef = useRef<{ x: number; y: number } | null>(null);
   const rafRef = useRef<number | null>(null);
   const sizeRef = useRef({ width: 0, height: 0 });
+
+  const scheduleRender = useCallback(() => {
+    if (rafRef.current !== null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const grid = gridRef.current;
+      if (!grid) return;
+      renderGrid(
+        ctx,
+        grid,
+        sizeRef.current.width,
+        sizeRef.current.height,
+        viewport,
+        selection
+      );
+    });
+  }, [gridRef, selection, viewport]);
 
   // Resize handler
   useEffect(() => {
@@ -71,28 +90,7 @@ export default function GridCanvas({
 
     observer.observe(container);
     return () => observer.disconnect();
-  }, []);
-
-  const scheduleRender = useCallback(() => {
-    if (rafRef.current !== null) return;
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null;
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      const grid = gridRef.current;
-      if (!grid) return;
-      renderGrid(
-        ctx,
-        grid,
-        sizeRef.current.width,
-        sizeRef.current.height,
-        viewport,
-        selection
-      );
-    });
-  }, [viewport, selection, gridRef]);
+  }, [scheduleRender]);
 
   // Re-render on revision/viewport/selection changes
   useEffect(() => {
@@ -155,6 +153,7 @@ export default function GridCanvas({
       activeTool,
       activeColor,
       getGridCoords,
+      isEditing,
       onStartBatchPaint,
       onBatchPaintCell,
       onFloodFill,
@@ -191,7 +190,13 @@ export default function GridCanvas({
         }
       }
     },
-    [activeTool, activeColor, getGridCoords, onBatchPaintCell, onSelectionChange]
+    [
+      activeTool,
+      activeColor,
+      getGridCoords,
+      onBatchPaintCell,
+      onSelectionChange,
+    ]
   );
 
   const handlePointerUp = useCallback(

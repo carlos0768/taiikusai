@@ -23,6 +23,7 @@ interface EditorToolbarProps {
   onExport: () => void;
   onToggleMemo: () => void;
   showMemo: boolean;
+  canEdit: boolean;
 }
 
 const tools: { id: Tool; label: string; icon: string }[] = [
@@ -53,6 +54,7 @@ export default function EditorToolbar({
   onExport,
   onToggleMemo,
   showMemo,
+  canEdit,
 }: EditorToolbarProps) {
   return (
     <div className="flex flex-col bg-card border-b border-card-border">
@@ -82,6 +84,7 @@ export default function EditorToolbar({
 
         <button
           onClick={onToggleMemo}
+          disabled={!canEdit}
           className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
             showMemo
               ? "bg-accent/20 text-accent"
@@ -93,6 +96,7 @@ export default function EditorToolbar({
 
         <button
           onClick={onToggleEdit}
+          disabled={!canEdit}
           className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
             isEditing
               ? "bg-accent/20 text-accent"
@@ -120,7 +124,7 @@ export default function EditorToolbar({
       </div>
 
       {/* Bottom row: tools, undo/redo — only visible when editing */}
-      {isEditing && (
+      {isEditing && canEdit && (
         <div className="flex items-center gap-1 px-3 py-1.5 overflow-x-auto">
           {tools.map((tool) => (
             <button

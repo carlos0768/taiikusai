@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { decodeGrid } from "@/lib/grid/codec";
 import { COLOR_MAP, type ColorIndex } from "@/lib/grid/types";
@@ -88,30 +88,36 @@ export default function TemplateGrid({
   onSelect,
   showDelete = true,
 }: TemplateGridProps) {
+  const [supabase] = useState(() => createClient());
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const supabase = createClient();
-
-  const loadTemplates = useCallback(async () => {
-    setLoading(true);
-    let query = supabase
-      .from("templates")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (search.trim()) {
-      query = query.ilike("name", `%${search.trim()}%`);
-    }
-
-    const { data } = await query;
-    setTemplates(data ?? []);
-    setLoading(false);
-  }, [search, supabase]);
 
   useEffect(() => {
-    loadTemplates();
-  }, [loadTemplates]);
+    let cancelled = false;
+
+    async function loadTemplates() {
+      setLoading(true);
+      let query = supabase
+        .from("templates")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (search.trim()) {
+        query = query.ilike("name", `%${search.trim()}%`);
+      }
+
+      const { data } = await query;
+      if (cancelled) return;
+      setTemplates((data ?? []) as Template[]);
+      setLoading(false);
+    }
+
+    void loadTemplates();
+    return () => {
+      cancelled = true;
+    };
+  }, [search, supabase]);
 
   async function handleDelete(id: string) {
     await supabase.from("templates").delete().eq("id", id);

@@ -8,6 +8,9 @@ interface SidebarProps {
   onClose: () => void;
   projectId: string;
   projectName: string;
+  branchName: string;
+  showGitBadge: boolean;
+  showGit: boolean;
 }
 
 export default function Sidebar({
@@ -15,8 +18,12 @@ export default function Sidebar({
   onClose,
   projectId,
   projectName,
+  branchName,
+  showGitBadge,
+  showGit,
 }: SidebarProps) {
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const query = branchName === "main" ? "" : `?branch=${branchName}`;
 
   useEffect(() => {
     function handleClickOutside(e: PointerEvent) {
@@ -33,9 +40,18 @@ export default function Sidebar({
   }, [isOpen, onClose]);
 
   const navItems = [
-    { label: "ダッシュボード", href: `/project/${projectId}` },
+    { label: "ダッシュボード", href: `/project/${projectId}${query}` },
     { label: "テンプレ", href: `/project/${projectId}/templates` },
-    { label: "設定", href: `/project/${projectId}/settings` },
+    ...(showGit
+      ? [
+          {
+            label: "Git",
+            href: `/project/${projectId}/git/requests${query}`,
+            showBadge: showGitBadge,
+          },
+        ]
+      : []),
+    { label: "設定", href: `/project/${projectId}/settings${query}` },
   ];
 
   return (
@@ -66,9 +82,12 @@ export default function Sidebar({
               key={item.label}
               href={item.href}
               onClick={onClose}
-              className="block px-4 py-3 text-sm text-foreground hover:bg-accent/10 transition-colors"
+              className="relative block px-4 py-3 text-sm text-foreground hover:bg-accent/10 transition-colors"
             >
               {item.label}
+              {item.showBadge && (
+                <span className="absolute right-4 top-3.5 h-2.5 w-2.5 rounded-full bg-sky-500" />
+              )}
             </Link>
           ))}
         </nav>
