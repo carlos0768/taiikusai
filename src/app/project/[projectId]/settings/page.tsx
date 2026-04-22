@@ -1,8 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import ProjectBranchGraph from "@/components/settings/ProjectBranchGraph";
 import { createClient } from "@/lib/supabase/client";
+import { updateProjectBranchSettings } from "@/lib/api/projects";
+import {
+  fetchProjectBranchContext,
+  buildBranchPath,
+} from "@/lib/projectBranches";
 import {
   getResizeHistoryPanelCount,
   isResizeHistoryRestorable,
@@ -14,20 +20,22 @@ import {
   TIMING_STEP_MS,
 } from "@/lib/playback/timing";
 import type {
-  Project,
+  BranchScopedProject,
+  ProjectBranch,
+  ProjectBranchMerge,
   ProjectGridResizeHistory,
   ZentaiGamen,
 } from "@/types";
 
 interface ResizeResponse {
-  project: Project;
+  project: BranchScopedProject;
   resizedPanelCount: number;
   resizedWavePanelCount: number;
   warning?: string | null;
 }
 
 interface RestoreResponse {
-  project: Project;
+  project: BranchScopedProject;
   restoredHistoryId: string;
   createdRollbackHistoryId: string;
 }
@@ -84,14 +92,38 @@ function getHistoryLoadErrorMessage(error: unknown): string {
   return "履歴一覧の読み込みに失敗しました。";
 }
 
+function getBranchGraphErrorMessage(error: unknown): string {
+  const message = getErrorMessage(error);
+  const refersBranchTable =
+    message.includes("project_branch_merges") ||
+    message.includes("project_branches");
+  const isBranchConfigError =
+    refersBranchTable &&
+    (message.includes("schema cache") ||
+      message.includes("does not exist") ||
+      message.includes("relation") ||
+      message.includes("row-level security policy"));
+
+  if (isBranchConfigError) {
+    return "ブランチ用のDB設定が未適用のため、擬似Git状態を表示できません。branch 用 migration を適用してください。";
+  }
+
+  return "擬似Git状態の読み込みに失敗しました。";
+}
+
 export default function ProjectSettingsPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const projectId = params.projectId as string;
+  const requestedBranchId = searchParams.get("branch");
   const router = useRouter();
-  const [supabase] = useState(() => createClient());
+  const supabase = useMemo(() => createClient(), []);
 
   const [loading, setLoading] = useState(true);
-  const [project, setProject] = useState<Project | null>(null);
+  const [project, setProject] = useState<BranchScopedProject | null>(null);
+  const [branches, setBranches] = useState<ProjectBranch[]>([]);
+  const [currentBranch, setCurrentBranch] = useState<ProjectBranch | null>(null);
+  const [branchMerges, setBranchMerges] = useState<ProjectBranchMerge[]>([]);
   const [panelCount, setPanelCount] = useState(0);
   const [wavePanelCount, setWavePanelCount] = useState(0);
   const [histories, setHistories] = useState<ProjectGridResizeHistory[]>([]);
@@ -112,65 +144,95 @@ export default function ProjectSettingsPage() {
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
+  const [branchGraphError, setBranchGraphError] = useState<string | null>(null);
   const [restoreSavingId, setRestoreSavingId] = useState<string | null>(null);
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     setHistoryLoadError(null);
+    setBranchGraphError(null);
 
-    const [
-      { data: projectData, error: projectError },
-      { data: panelData, error: panelError },
-      { data: historyData, error: historyError },
-    ] = await Promise.all([
-      supabase.from("projects").select("*").eq("id", projectId).single(),
-      supabase
-        .from("zentai_gamen")
-        .select("id,panel_type,motion_type")
-        .eq("project_id", projectId),
-      supabase
-        .from("project_grid_resize_history")
-        .select("*")
-        .eq("project_id", projectId)
-        .order("created_at", { ascending: false }),
-    ]);
+    try {
+      const contextResult = await fetchProjectBranchContext(
+        supabase,
+        projectId,
+        requestedBranchId
+      );
+      const [
+        { data: panelData, error: panelError },
+        { data: historyData, error: historyError },
+        { data: mergeData, error: mergeError },
+      ] = await Promise.all([
+        supabase
+          .from("zentai_gamen")
+          .select("id,panel_type,motion_type")
+          .eq("project_id", projectId)
+          .eq("branch_id", contextResult.currentBranch.id),
+        supabase
+          .from("project_grid_resize_history")
+          .select("*")
+          .eq("project_id", projectId)
+          .eq("branch_id", contextResult.currentBranch.id)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("project_branch_merges")
+          .select("*")
+          .eq("project_id", projectId)
+          .order("created_at", { ascending: true }),
+      ]);
 
-    if (projectError || !projectData || panelError) {
-      setLoadError("設定情報の読み込みに失敗しました");
+      if (panelError) {
+        setLoadError("設定情報の読み込みに失敗しました");
+        setLoading(false);
+        return;
+      }
+
+      const zentaiGamen = (panelData ?? []) as Pick<
+        ZentaiGamen,
+        "id" | "panel_type" | "motion_type"
+      >[];
+
+      setProject(contextResult.projectView);
+      setBranches(contextResult.branches);
+      setCurrentBranch(contextResult.currentBranch);
+      setGridWidth(contextResult.projectView.grid_width);
+      setGridHeight(contextResult.projectView.grid_height);
+      setSavedPanelMs(contextResult.projectView.default_panel_duration_ms);
+      setSavedIntervalMs(contextResult.projectView.default_interval_ms);
+      setPanelInput(
+        msToSecondsString(contextResult.projectView.default_panel_duration_ms)
+      );
+      setIntervalInput(
+        msToSecondsString(contextResult.projectView.default_interval_ms)
+      );
+      setPanelCount(zentaiGamen.length);
+      setWavePanelCount(
+        zentaiGamen.filter(
+          (panel) =>
+            panel.panel_type === "motion" && panel.motion_type === "wave"
+        ).length
+      );
+
+      if (historyError) {
+        setHistories([]);
+        setHistoryLoadError(getHistoryLoadErrorMessage(historyError));
+      } else {
+        setHistories((historyData ?? []) as ProjectGridResizeHistory[]);
+      }
+
+      if (mergeError) {
+        setBranchMerges([]);
+        setBranchGraphError(getBranchGraphErrorMessage(mergeError));
+      } else {
+        setBranchMerges((mergeData ?? []) as ProjectBranchMerge[]);
+      }
+    } catch (error) {
+      setLoadError(getErrorMessage(error));
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const zentaiGamen = (panelData ?? []) as Pick<
-      ZentaiGamen,
-      "id" | "panel_type" | "motion_type"
-    >[];
-
-    setProject(projectData);
-    setGridWidth(projectData.grid_width);
-    setGridHeight(projectData.grid_height);
-    setSavedPanelMs(projectData.default_panel_duration_ms);
-    setSavedIntervalMs(projectData.default_interval_ms);
-    setPanelInput(msToSecondsString(projectData.default_panel_duration_ms));
-    setIntervalInput(msToSecondsString(projectData.default_interval_ms));
-    setPanelCount(zentaiGamen.length);
-    setWavePanelCount(
-      zentaiGamen.filter(
-        (panel) =>
-          panel.panel_type === "motion" && panel.motion_type === "wave"
-      ).length
-    );
-
-    if (historyError) {
-      setHistories([]);
-      setHistoryLoadError(getHistoryLoadErrorMessage(historyError));
-    } else {
-      setHistories((historyData ?? []) as ProjectGridResizeHistory[]);
-    }
-
-    setLoading(false);
-  }, [projectId, supabase]);
+  }, [projectId, requestedBranchId, supabase]);
 
   useEffect(() => {
     void loadSettings();
@@ -187,33 +249,33 @@ export default function ProjectSettingsPage() {
 
   async function handleResizeSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isResizeDisabled) return;
+    if (isResizeDisabled || !project) return;
 
     setResizeSaving(true);
     setResizeError(null);
 
     try {
-      const response = await fetch(`/api/projects/${projectId}/resize`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          gridWidth,
-          gridHeight,
-          autoAdjustIllustration,
-        }),
-      });
+      const response = await fetch(
+        buildBranchPath(`/api/projects/${projectId}/resize`, project.active_branch_id),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            gridWidth,
+            gridHeight,
+            autoAdjustIllustration,
+          }),
+        }
+      );
 
       const result = (await response.json()) as
         | ResizeResponse
         | { error?: string };
 
-      if (!response.ok) {
-        const error = "error" in result ? result.error : undefined;
-        throw new Error(error ?? "プロジェクトの更新に失敗しました");
-      }
-
-      if (!("project" in result)) {
-        throw new Error("プロジェクトの更新に失敗しました");
+      if (!response.ok || !("project" in result)) {
+        throw new Error(
+          "error" in result ? result.error : "プロジェクトの更新に失敗しました"
+        );
       }
 
       const successMessage =
@@ -237,7 +299,7 @@ export default function ProjectSettingsPage() {
   }
 
   async function handleRestore(history: ProjectGridResizeHistory) {
-    if (!isResizeHistoryRestorable(history)) return;
+    if (!isResizeHistoryRestorable(history) || !project) return;
 
     const confirmed = confirm(
       `${history.from_grid_width} × ${history.from_grid_height} → ${history.to_grid_width} × ${history.to_grid_height} の版へ復元しますか？\n\n復元前の現在状態も新しい履歴として保存されます。`
@@ -249,29 +311,27 @@ export default function ProjectSettingsPage() {
 
     try {
       const response = await fetch(
-        `/api/projects/${projectId}/resize-history/${history.id}/restore`,
+        buildBranchPath(
+          `/api/projects/${projectId}/resize-history/${history.id}/restore`,
+          project.active_branch_id
+        ),
         { method: "POST" }
       );
       const result = (await response.json()) as
         | RestoreResponse
         | { error?: string };
 
-      if (!response.ok) {
-        const error = "error" in result ? result.error : undefined;
-        throw new Error(error ?? "履歴の復元に失敗しました");
-      }
-
-      if (!("project" in result)) {
-        throw new Error("履歴の復元に失敗しました");
+      if (!response.ok || !("project" in result)) {
+        throw new Error(
+          "error" in result ? result.error : "履歴の復元に失敗しました"
+        );
       }
 
       alert("選択した版へ復元しました。復元前の現在状態も履歴に保存しました。");
       await loadSettings();
     } catch (error) {
       setHistoryLoadError(
-        error instanceof Error
-          ? error.message
-          : "履歴の復元に失敗しました"
+        error instanceof Error ? error.message : "履歴の復元に失敗しました"
       );
     } finally {
       setRestoreSavingId(null);
@@ -280,6 +340,8 @@ export default function ProjectSettingsPage() {
 
   async function handleTimingSave(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!project) return;
+
     setTimingError(null);
     setTimingSuccess(null);
 
@@ -292,30 +354,35 @@ export default function ProjectSettingsPage() {
     }
 
     setTimingSaving(true);
-    const { error } = await supabase
-      .from("projects")
-      .update({
-        default_panel_duration_ms: panelMs,
-        default_interval_ms: intervalMs,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", projectId);
+    try {
+      await updateProjectBranchSettings(
+        projectId,
+        project.active_branch_id,
+        {
+          default_panel_duration_ms: panelMs,
+          default_interval_ms: intervalMs,
+        },
+        project.active_branch_is_main
+      );
 
-    if (error) {
+      setSavedPanelMs(panelMs);
+      setSavedIntervalMs(intervalMs);
+      setPanelInput(msToSecondsString(panelMs));
+      setIntervalInput(msToSecondsString(intervalMs));
+      setTimingSuccess("基本時間を更新しました。");
+      await loadSettings();
+    } catch {
       setPanelInput(msToSecondsString(savedPanelMs));
       setIntervalInput(msToSecondsString(savedIntervalMs));
       setTimingError("設定の保存に失敗しました。表示を保存済みの値に戻しました。");
+    } finally {
       setTimingSaving(false);
-      return;
     }
-
-    setSavedPanelMs(panelMs);
-    setSavedIntervalMs(intervalMs);
-    setPanelInput(msToSecondsString(panelMs));
-    setIntervalInput(msToSecondsString(intervalMs));
-    setTimingSuccess("基本時間を更新しました。");
-    setTimingSaving(false);
   }
+
+  const backHref = project
+    ? buildBranchPath(`/project/${projectId}`, project.active_branch_id)
+    : `/project/${projectId}`;
 
   if (loading) {
     return (
@@ -329,7 +396,7 @@ export default function ProjectSettingsPage() {
     <main className="h-full flex flex-col">
       <header className="flex items-center gap-2 px-4 py-3 border-b border-card-border">
         <button
-          onClick={() => router.push(`/project/${projectId}`)}
+          onClick={() => router.push(backHref)}
           className="text-muted hover:text-foreground transition-colors text-lg px-2"
           disabled={isBusy}
         >
@@ -337,21 +404,28 @@ export default function ProjectSettingsPage() {
         </button>
         <div>
           <h1 className="font-semibold">設定</h1>
-          <p className="text-xs text-muted">{project?.name ?? ""}</p>
+          <p className="text-xs text-muted">
+            {project?.name ?? ""}
+            {currentBranch ? ` / ${currentBranch.name}` : ""}
+          </p>
         </div>
       </header>
 
       <div className="flex-1 overflow-y-auto p-4">
-        <div className="max-w-2xl mx-auto space-y-4">
+        <div className="max-w-3xl mx-auto space-y-4">
           {loadError && (
             <div className="p-4 bg-danger/10 border border-danger/30 rounded-lg text-sm text-danger">
               {loadError}
             </div>
           )}
 
-          {project && (
+          {project && currentBranch && (
             <>
-              <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <section className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <div className="p-4 bg-card border border-card-border rounded-lg">
+                  <p className="text-xs text-muted mb-1">現在のブランチ</p>
+                  <p className="text-lg font-semibold">{currentBranch.name}</p>
+                </div>
                 <div className="p-4 bg-card border border-card-border rounded-lg">
                   <p className="text-xs text-muted mb-1">現在のマス数</p>
                   <p className="text-lg font-semibold">
@@ -368,6 +442,29 @@ export default function ProjectSettingsPage() {
                 </div>
               </section>
 
+              <section className="p-5 bg-card border border-card-border rounded-xl space-y-4">
+                <div>
+                  <h2 className="font-medium">擬似Git状態</h2>
+                  <p className="text-sm text-muted mt-1">
+                    branch 作成時の分岐と、main への merge を図で表示します。
+                  </p>
+                </div>
+
+                {branchGraphError && (
+                  <div className="px-3 py-2 rounded-lg bg-danger/10 text-sm text-danger">
+                    {branchGraphError}
+                  </div>
+                )}
+
+                {!branchGraphError && (
+                  <ProjectBranchGraph
+                    branches={branches}
+                    merges={branchMerges}
+                    currentBranchId={currentBranch.id}
+                  />
+                )}
+              </section>
+
               <form
                 onSubmit={handleResizeSubmit}
                 className="p-5 bg-card border border-card-border rounded-xl space-y-4"
@@ -375,10 +472,10 @@ export default function ProjectSettingsPage() {
                 <div>
                   <h2 className="font-medium">マス数変更</h2>
                   <p className="text-sm text-muted mt-1">
-                    既存パネルを一括補正してからプロジェクトのマス数を更新します。
+                    現在の branch のパネルだけを一括補正してからマス数を更新します。
                   </p>
                   <p className="text-xs text-muted mt-2">
-                    更新前の編集状態は、リサイズ実行ごとに履歴として自動保存されます。
+                    更新前の編集状態は、この branch の履歴として自動保存されます。
                   </p>
                 </div>
 
@@ -392,9 +489,7 @@ export default function ProjectSettingsPage() {
                       min={5}
                       max={200}
                       value={gridWidth}
-                      onChange={(event) =>
-                        setGridWidth(Number(event.target.value))
-                      }
+                      onChange={(event) => setGridWidth(Number(event.target.value))}
                       disabled={resizeSaving}
                       className="w-full px-3 py-2 bg-background border border-card-border rounded-lg text-foreground focus:outline-none focus:border-accent disabled:opacity-60"
                     />
@@ -408,9 +503,7 @@ export default function ProjectSettingsPage() {
                       min={5}
                       max={200}
                       value={gridHeight}
-                      onChange={(event) =>
-                        setGridHeight(Number(event.target.value))
-                      }
+                      onChange={(event) => setGridHeight(Number(event.target.value))}
                       disabled={resizeSaving}
                       className="w-full px-3 py-2 bg-background border border-card-border rounded-lg text-foreground focus:outline-none focus:border-accent disabled:opacity-60"
                     />
@@ -457,7 +550,7 @@ export default function ProjectSettingsPage() {
                 <div className="flex justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => router.push(`/project/${projectId}`)}
+                    onClick={() => router.push(backHref)}
                     disabled={resizeSaving}
                     className="px-4 py-2 text-sm text-muted hover:text-foreground transition-colors disabled:opacity-60"
                   >
@@ -476,7 +569,7 @@ export default function ProjectSettingsPage() {
               <section className="p-4 bg-card border border-card-border rounded-xl">
                 <h2 className="font-medium mb-2">基本時間</h2>
                 <p className="text-sm text-muted leading-6">
-                  ここで変更した基本時間は、個別設定していない通常パネルと折り時間に反映されます。
+                  ここで変更した基本時間は、この branch の通常パネルと折り時間に反映されます。
                   ダッシュボード再生で個別に変更した項目は、そのまま維持されます。
                 </p>
               </section>
@@ -558,7 +651,7 @@ export default function ProjectSettingsPage() {
                 <div>
                   <h2 className="font-medium">リサイズ履歴</h2>
                   <p className="text-sm text-muted mt-1">
-                    保存済みのリサイズ履歴を一覧表示します。新形式の履歴は、その版へ復元できます。
+                    現在の branch に保存されたリサイズ履歴です。新形式の履歴は、その branch の中で復元できます。
                   </p>
                 </div>
 

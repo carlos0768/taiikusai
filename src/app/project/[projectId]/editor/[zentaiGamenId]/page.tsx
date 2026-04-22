@@ -1,66 +1,78 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { decodeGrid } from "@/lib/grid/codec";
+import { fetchProjectBranchContext } from "@/lib/projectBranches";
 import type { GridData } from "@/lib/grid/types";
 import type { ColorIndex } from "@/lib/grid/types";
 import GridEditor, { type GridEditorSavePayload } from "@/components/editor/GridEditor";
 import { findPlaybackRoutes } from "@/lib/api/connections";
 import { generateScriptHtml } from "@/lib/export/generateScript";
-import type { Project, ZentaiGamen } from "@/types";
+import type { BranchScopedProject, ZentaiGamen } from "@/types";
 import JSZip from "jszip";
 
 export default function EditorPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const projectId = params.projectId as string;
   const zentaiGamenId = params.zentaiGamenId as string;
+  const requestedBranchId = searchParams.get("branch");
   const [grid, setGrid] = useState<GridData | null>(null);
   const [afterGrid, setAfterGrid] = useState<GridData | null>(null);
   const [zentaiGamen, setZentaiGamen] = useState<ZentaiGamen | null>(null);
-  const [project, setProject] = useState<Project | null>(null);
+  const [project, setProject] = useState<BranchScopedProject | null>(null);
   const [loading, setLoading] = useState(true);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
     async function load() {
-      const [{ data: zg }, { data: proj }] = await Promise.all([
-        supabase
+      setLoading(true);
+      try {
+        const contextResult = await fetchProjectBranchContext(
+          supabase,
+          projectId,
+          requestedBranchId
+        );
+
+        const { data: zg } = await supabase
           .from("zentai_gamen")
           .select("*")
           .eq("id", zentaiGamenId)
-          .single(),
-        supabase.from("projects").select("*").eq("id", projectId).single(),
-      ]);
+          .eq("project_id", projectId)
+          .eq("branch_id", contextResult.currentBranch.id)
+          .single();
 
-      if (zg && proj) {
-        setZentaiGamen(zg);
-        setProject(proj);
-        const gridData = decodeGrid(
-          zg.grid_data,
-          proj.grid_width,
-          proj.grid_height
-        );
-        setGrid(gridData);
-        if (
-          zg.panel_type === "motion" &&
-          zg.motion_type === "wave" &&
-          zg.motion_data
-        ) {
-          setAfterGrid(
-            decodeGrid(
-              zg.motion_data.after_grid_data,
-              proj.grid_width,
-              proj.grid_height
-            )
+        if (zg) {
+          setZentaiGamen(zg);
+          setProject(contextResult.projectView);
+          const gridData = decodeGrid(
+            zg.grid_data,
+            contextResult.projectView.grid_width,
+            contextResult.projectView.grid_height
           );
+          setGrid(gridData);
+          if (
+            zg.panel_type === "motion" &&
+            zg.motion_type === "wave" &&
+            zg.motion_data
+          ) {
+            setAfterGrid(
+              decodeGrid(
+                zg.motion_data.after_grid_data,
+                contextResult.projectView.grid_width,
+                contextResult.projectView.grid_height
+              )
+            );
+          }
         }
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     }
-    load();
-  }, [projectId, zentaiGamenId]);
+    void load();
+  }, [projectId, requestedBranchId, supabase, zentaiGamenId]);
 
   const handleSave = useCallback(
     async (payload: GridEditorSavePayload) => {
@@ -76,9 +88,11 @@ export default function EditorPage() {
       await supabase
         .from("zentai_gamen")
         .update(update)
-        .eq("id", zentaiGamenId);
+        .eq("id", zentaiGamenId)
+        .eq("project_id", projectId)
+        .eq("branch_id", project?.active_branch_id ?? "");
     },
-    [zentaiGamenId, supabase]
+    [zentaiGamenId, projectId, project?.active_branch_id, supabase]
   );
 
   const handleExport = useCallback(async () => {
@@ -89,11 +103,13 @@ export default function EditorPage() {
       supabase
         .from("zentai_gamen")
         .select("*")
-        .eq("project_id", projectId),
+        .eq("project_id", projectId)
+        .eq("branch_id", project.active_branch_id),
       supabase
         .from("connections")
         .select("*")
-        .eq("project_id", projectId),
+        .eq("project_id", projectId)
+        .eq("branch_id", project.active_branch_id),
     ]);
 
     if (!allZg || !allConns) {
@@ -192,6 +208,7 @@ export default function EditorPage() {
       initialMotionData={zentaiGamen.motion_data ?? null}
       zentaiGamenId={zentaiGamenId}
       projectId={projectId}
+      branchId={project.active_branch_id}
       initialName={zentaiGamen.name}
       initialMemo={zentaiGamen.memo || ""}
       onSave={handleSave}

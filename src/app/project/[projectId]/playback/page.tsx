@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { buildBranchPath, fetchProjectBranchContext } from "@/lib/projectBranches";
 import { findPlaybackRoutes } from "@/lib/api/connections";
-import type { Project, ZentaiGamen, Connection } from "@/types";
+import type { BranchScopedProject, ZentaiGamen, Connection } from "@/types";
 import { buildPlaybackTimeline } from "@/lib/playback/frameBuilder";
 import PlaybackView from "@/components/playback/PlaybackView";
 import RouteSelector from "@/components/playback/RouteSelector";
@@ -15,9 +16,10 @@ export default function PlaybackPage() {
   const router = useRouter();
   const projectId = params.projectId as string;
   const startId = searchParams.get("start");
+  const requestedBranchId = searchParams.get("branch");
 
   const [loading, setLoading] = useState(true);
-  const [project, setProject] = useState<Project | null>(null);
+  const [project, setProject] = useState<BranchScopedProject | null>(null);
   const [zentaiGamen, setZentaiGamen] = useState<ZentaiGamen[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [routes, setRoutes] = useState<string[][]>([]);
@@ -27,47 +29,55 @@ export default function PlaybackPage() {
 
   useEffect(() => {
     async function load() {
-      const [{ data: proj }, { data: zg }, { data: conns }] =
-        await Promise.all([
-          supabase.from("projects").select("*").eq("id", projectId).single(),
+      setLoading(true);
+      setSelectedRoute(null);
+      setRoutes([]);
+      try {
+        const contextResult = await fetchProjectBranchContext(
+          supabase,
+          projectId,
+          requestedBranchId
+        );
+        const [{ data: zg }, { data: conns }] = await Promise.all([
           supabase
             .from("zentai_gamen")
             .select("*")
-            .eq("project_id", projectId),
+            .eq("project_id", projectId)
+            .eq("branch_id", contextResult.currentBranch.id),
           supabase
             .from("connections")
             .select("*")
-            .eq("project_id", projectId),
+            .eq("project_id", projectId)
+            .eq("branch_id", contextResult.currentBranch.id),
         ]);
 
-      if (proj) {
-        setProject(proj);
-      }
-      setZentaiGamen(zg ?? []);
-      setConnections(conns ?? []);
+        setProject(contextResult.projectView);
+        setZentaiGamen(zg ?? []);
+        setConnections(conns ?? []);
 
-      if (startId && conns) {
-        const foundRoutes = findPlaybackRoutes(conns, startId);
-        setRoutes(foundRoutes);
+        if (startId && conns) {
+          const foundRoutes = findPlaybackRoutes(conns, startId);
+          setRoutes(foundRoutes);
 
-        // If only one route, auto-select
-        if (foundRoutes.length === 1) {
-          setSelectedRoute(0);
-        } else if (foundRoutes.length === 0) {
-          // No connections, just show this single frame
-          setRoutes([[startId]]);
-          setSelectedRoute(0);
+          if (foundRoutes.length === 1) {
+            setSelectedRoute(0);
+          } else if (foundRoutes.length === 0) {
+            setRoutes([[startId]]);
+            setSelectedRoute(0);
+          }
         }
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     }
-    load();
-  }, [projectId, startId, supabase]);
+    void load();
+  }, [projectId, requestedBranchId, startId, supabase]);
 
   const handleBack = useCallback(() => {
-    router.push(`/project/${projectId}`);
-  }, [projectId, router]);
+    router.push(
+      buildBranchPath(`/project/${projectId}`, requestedBranchId ?? project?.active_branch_id ?? "")
+    );
+  }, [project?.active_branch_id, projectId, requestedBranchId, router]);
 
   if (loading) {
     return (

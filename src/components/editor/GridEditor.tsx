@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { buildBranchPath } from "@/lib/projectBranches";
 import {
   type ColorIndex,
   type GridData,
@@ -35,6 +36,7 @@ interface GridEditorProps {
   initialMotionData: WaveMotionData | null;
   zentaiGamenId: string;
   projectId: string;
+  branchId: string;
   initialName: string;
   initialMemo: string;
   onSave: (payload: GridEditorSavePayload) => Promise<void>;
@@ -48,6 +50,7 @@ export default function GridEditor({
   motionType,
   initialMotionData,
   projectId,
+  branchId,
   initialName,
   initialMemo,
   onSave,
@@ -196,8 +199,8 @@ export default function GridEditor({
     if (dirty) {
       onSave(buildPayload());
     }
-    router.push(`/project/${projectId}`);
-  }, [dirty, buildPayload, onSave, projectId, router]);
+    router.push(buildBranchPath(`/project/${projectId}`, branchId));
+  }, [dirty, buildPayload, onSave, projectId, branchId, router]);
 
   // Play: モーションパネルなら preview を出す。一般パネルでは何もしない (ボタン非表示)
   const handlePlay = useCallback(() => {

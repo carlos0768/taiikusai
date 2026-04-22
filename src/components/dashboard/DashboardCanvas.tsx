@@ -19,9 +19,11 @@ import "@xyflow/react/dist/style.css";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { decodeGrid, encodeGrid } from "@/lib/grid/codec";
+import { buildBranchPath } from "@/lib/projectBranches";
 import type {
+  BranchScopedProject,
   MusicData,
-  Project,
+  ProjectBranch,
   ZentaiGamen,
   Connection as DBConnection,
   Template,
@@ -40,18 +42,23 @@ import { buildPlaybackTimeline, type PlaybackTimeline } from "@/lib/playback/fra
 import { createEmptyGrid } from "@/lib/grid/types";
 import { resizeGrid } from "@/lib/grid/resize";
 import { DEFAULT_WAVE_MOTION_DATA } from "@/types";
+import ProjectBranchSwitcher from "./ProjectBranchSwitcher";
 
 const nodeTypes = { zentaiGamen: ZentaiGamenNode };
 const edgeTypes = { connection: ConnectionEdge };
 
 interface DashboardCanvasProps {
-  project: Project;
+  project: BranchScopedProject;
+  branches: ProjectBranch[];
+  currentBranch: ProjectBranch;
   initialZentaiGamen: ZentaiGamen[];
   initialConnections: DBConnection[];
 }
 
 function DashboardCanvasInner({
   project,
+  branches,
+  currentBranch,
   initialZentaiGamen,
   initialConnections,
 }: DashboardCanvasProps) {
@@ -74,12 +81,21 @@ function DashboardCanvasInner({
     project.music_data ?? null
   );
 
+  useEffect(() => {
+    setCurrentMusic(project.music_data ?? null);
+  }, [project.music_data, project.active_branch_id]);
+
   const handleMusicChange = useCallback(
     async (data: MusicData | null) => {
       setCurrentMusic(data);
-      await updateProjectMusic(project.id, data);
+      await updateProjectMusic(
+        project.id,
+        project.active_branch_id,
+        project.active_branch_is_main,
+        data
+      );
     },
-    [project.id]
+    [project.id, project.active_branch_id, project.active_branch_is_main]
   );
 
   // Context menu state — store both screen pos and flow pos
@@ -113,9 +129,11 @@ function DashboardCanvasInner({
 
   const handleNodeDoubleClick = useCallback(
     (nodeId: string) => {
-      router.push(`/project/${project.id}/editor/${nodeId}`);
+      router.push(
+        buildBranchPath(`/project/${project.id}/editor/${nodeId}`, project.active_branch_id)
+      );
     },
-    [project.id, router]
+    [project.id, project.active_branch_id, router]
   );
 
   // Node long-press callback (called from ZentaiGamenNode)
@@ -166,6 +184,18 @@ function DashboardCanvasInner({
     buildEdges(initialConnections)
   );
 
+  useEffect(() => {
+    setNodes(buildNodes(initialZentaiGamen, initialConnections));
+    setEdges(buildEdges(initialConnections));
+  }, [
+    buildEdges,
+    buildNodes,
+    initialConnections,
+    initialZentaiGamen,
+    setEdges,
+    setNodes,
+  ]);
+
   // Connect nodes
   const onConnect = useCallback(
     async (connection: Connection) => {
@@ -175,6 +205,7 @@ function DashboardCanvasInner({
         .from("connections")
         .insert({
           project_id: project.id,
+          branch_id: project.active_branch_id,
           source_id: connection.source,
           target_id: connection.target,
           sort_order: 0,
@@ -201,16 +232,20 @@ function DashboardCanvasInner({
         )
       );
     },
-    [project.id, supabase, setEdges, setNodes]
+    [project.id, project.active_branch_id, supabase, setEdges, setNodes]
   );
 
   // Delete edge on click (tap)
   const onEdgeClick: EdgeMouseHandler = useCallback(
     async (_, edge) => {
-      await supabase.from("connections").delete().eq("id", edge.id);
+      await supabase
+        .from("connections")
+        .delete()
+        .eq("id", edge.id)
+        .eq("branch_id", project.active_branch_id);
       setEdges((eds) => eds.filter((e) => e.id !== edge.id));
     },
-    [supabase, setEdges]
+    [project.active_branch_id, supabase, setEdges]
   );
 
   // Save node position on drag end
@@ -219,9 +254,10 @@ function DashboardCanvasInner({
       await supabase
         .from("zentai_gamen")
         .update({ position_x: node.position.x, position_y: node.position.y })
-        .eq("id", node.id);
+        .eq("id", node.id)
+        .eq("branch_id", project.active_branch_id);
     },
-    [supabase]
+    [project.active_branch_id, supabase]
   );
 
   // Long press on pane — convert screen coords to flow coords for accurate placement
@@ -292,6 +328,7 @@ function DashboardCanvasInner({
         .from("zentai_gamen")
         .insert({
           project_id: project.id,
+          branch_id: project.active_branch_id,
           name,
           grid_data: gridData,
           position_x: posX,
@@ -301,9 +338,11 @@ function DashboardCanvasInner({
         .single();
       setContextMenu(null);
       if (error || !data) return;
-      router.push(`/project/${project.id}/editor/${data.id}`);
+      router.push(
+        buildBranchPath(`/project/${project.id}/editor/${data.id}`, project.active_branch_id)
+      );
     },
-    [project.id, supabase, contextMenu, router]
+    [project.id, project.active_branch_id, supabase, contextMenu, router]
   );
 
   // Manual
@@ -325,6 +364,7 @@ function DashboardCanvasInner({
       .from("zentai_gamen")
       .insert({
         project_id: project.id,
+        branch_id: project.active_branch_id,
         name: "ウェーブ",
         grid_data: beforeEncoded,
         position_x: posX,
@@ -337,7 +377,9 @@ function DashboardCanvasInner({
       .single();
     setContextMenu(null);
     if (error || !data) return;
-    router.push(`/project/${project.id}/editor/${data.id}`);
+    router.push(
+      buildBranchPath(`/project/${project.id}/editor/${data.id}`, project.active_branch_id)
+    );
   }, [project, supabase, contextMenu, router]);
 
   // Template
@@ -455,7 +497,11 @@ function DashboardCanvasInner({
   // Delete node
   const handleDeleteNode = useCallback(async () => {
     if (!nodeMenu) return;
-    await supabase.from("zentai_gamen").delete().eq("id", nodeMenu.nodeId);
+    await supabase
+      .from("zentai_gamen")
+      .delete()
+      .eq("id", nodeMenu.nodeId)
+      .eq("branch_id", project.active_branch_id);
     setNodes((nds) => nds.filter((n) => n.id !== nodeMenu.nodeId));
     setEdges((eds) =>
       eds.filter(
@@ -463,7 +509,7 @@ function DashboardCanvasInner({
       )
     );
     setNodeMenu(null);
-  }, [nodeMenu, supabase, setNodes, setEdges]);
+  }, [nodeMenu, project.active_branch_id, supabase, setNodes, setEdges]);
 
   // Rename node
   const handleRenameNode = useCallback(
@@ -472,7 +518,8 @@ function DashboardCanvasInner({
       await supabase
         .from("zentai_gamen")
         .update({ name: newName })
-        .eq("id", nodeMenu.nodeId);
+        .eq("id", nodeMenu.nodeId)
+        .eq("branch_id", project.active_branch_id);
       setNodes((nds) =>
         nds.map((n) =>
           n.id === nodeMenu.nodeId
@@ -481,7 +528,7 @@ function DashboardCanvasInner({
         )
       );
     },
-    [nodeMenu, supabase, setNodes]
+    [nodeMenu, project.active_branch_id, supabase, setNodes]
   );
 
   // Play from node
@@ -494,11 +541,13 @@ function DashboardCanvasInner({
         .from("zentai_gamen")
         .select("*")
         .eq("project_id", project.id)
+        .eq("branch_id", project.active_branch_id)
         .order("created_at", { ascending: true }),
       supabase
         .from("connections")
         .select("*")
         .eq("project_id", project.id)
+        .eq("branch_id", project.active_branch_id)
         .order("sort_order", { ascending: true }),
     ]);
 
@@ -509,6 +558,7 @@ function DashboardCanvasInner({
     const liveConnections: DBConnection[] = edges.map((e) => ({
       id: e.id,
       project_id: project.id,
+      branch_id: project.active_branch_id,
       source_id: e.source,
       target_id: e.target,
       sort_order: 0,
@@ -574,6 +624,12 @@ function DashboardCanvasInner({
         <span className="w-4 h-0.5 bg-foreground" />
         <span className="w-4 h-0.5 bg-foreground" />
       </button>
+
+      <ProjectBranchSwitcher
+        projectId={project.id}
+        branches={branches}
+        currentBranch={currentBranch}
+      />
 
       {/* Scan processing overlay */}
       {scanProcessing && (
@@ -665,6 +721,7 @@ function DashboardCanvasInner({
         onClose={() => setSidebarOpen(false)}
         projectId={project.id}
         projectName={project.name}
+        branchId={project.active_branch_id}
       />
     </div>
 
@@ -672,6 +729,7 @@ function DashboardCanvasInner({
     {playbackData && (
       <PlaybackPanel
         projectId={project.id}
+        branchId={project.active_branch_id}
         timeline={playbackData}
         onClose={() => setPlaybackData(null)}
         initialMusic={currentMusic}

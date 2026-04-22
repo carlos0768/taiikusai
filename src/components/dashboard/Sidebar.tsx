@@ -2,12 +2,14 @@
 
 import { useEffect, useRef } from "react";
 import Link from "next/link";
+import { buildBranchPath } from "@/lib/projectBranches";
 
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
   projectName: string;
+  branchId: string;
 }
 
 export default function Sidebar({
@@ -15,6 +17,7 @@ export default function Sidebar({
   onClose,
   projectId,
   projectName,
+  branchId,
 }: SidebarProps) {
   const sidebarRef = useRef<HTMLDivElement>(null);
 
@@ -33,9 +36,15 @@ export default function Sidebar({
   }, [isOpen, onClose]);
 
   const navItems = [
-    { label: "ダッシュボード", href: `/project/${projectId}` },
-    { label: "テンプレ", href: `/project/${projectId}/templates` },
-    { label: "設定", href: `/project/${projectId}/settings` },
+    { label: "ダッシュボード", href: buildBranchPath(`/project/${projectId}`, branchId) },
+    {
+      label: "テンプレ",
+      href: buildBranchPath(`/project/${projectId}/templates`, branchId),
+    },
+    {
+      label: "設定",
+      href: buildBranchPath(`/project/${projectId}/settings`, branchId),
+    },
   ];
 
   return (

@@ -1,13 +1,29 @@
 import { NextResponse } from "next/server";
 import { decodeGrid, encodeGrid } from "@/lib/grid/codec";
 import {
+  fetchBranchConnections,
+  fetchBranchPanels,
+  getProjectBranchSettings,
+} from "@/lib/projectBranchState";
+import {
+  fetchProjectBranchContext,
+  syncMainProjectCache,
+  toBranchScopedProject,
+} from "@/lib/projectBranches";
+import {
   resizeGrid,
   resizeWaveGrids,
   type GridResizeOptions,
 } from "@/lib/grid/resize";
 import { buildResizeHistorySnapshot } from "@/lib/resizeHistory";
 import { createClient } from "@/lib/supabase/server";
-import type { Connection, WaveMotionData, ZentaiGamen } from "@/types";
+import type {
+  BranchScopedProject,
+  Connection,
+  ProjectBranch,
+  WaveMotionData,
+  ZentaiGamen,
+} from "@/types";
 
 interface ResizeRequestBody {
   gridWidth: number;
@@ -57,7 +73,9 @@ function isValidGridSize(value: number): boolean {
   return Number.isInteger(value) && value >= 5 && value <= 200;
 }
 
-function isWavePanel(zentaiGamen: ZentaiGamen): boolean {
+function isWavePanel(
+  zentaiGamen: ZentaiGamen
+): zentaiGamen is ZentaiGamen & { motion_data: WaveMotionData } {
   return (
     zentaiGamen.panel_type === "motion" &&
     zentaiGamen.motion_type === "wave" &&
@@ -70,6 +88,7 @@ export async function POST(
   context: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await context.params;
+  const requestedBranchId = new URL(request.url).searchParams.get("branch");
 
   let body: ResizeRequestBody;
   try {
@@ -90,52 +109,36 @@ export async function POST(
   }
 
   const supabase = await createClient();
-  const [
-    { data: project, error: projectError },
-    { data: panels, error: panelsError },
-    { data: connections, error: connectionsError },
-  ] =
-    await Promise.all([
-      supabase.from("projects").select("*").eq("id", projectId).single(),
-      supabase
-        .from("zentai_gamen")
-        .select("*")
-        .eq("project_id", projectId)
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("connections")
-        .select("*")
-        .eq("project_id", projectId)
-        .order("sort_order", { ascending: true }),
-    ]);
+  let projectView!: BranchScopedProject;
+  let currentBranch!: ProjectBranch;
+  let panels: ZentaiGamen[] = [];
+  let connections: Connection[] = [];
 
-  if (projectError || !project) {
+  try {
+    const contextResult = await fetchProjectBranchContext(
+      supabase,
+      projectId,
+      requestedBranchId
+    );
+    projectView = contextResult.projectView;
+    currentBranch = contextResult.currentBranch;
+    [panels, connections] = await Promise.all([
+      fetchBranchPanels(supabase, projectId, currentBranch.id),
+      fetchBranchConnections(supabase, projectId, currentBranch.id),
+    ]);
+  } catch {
     return NextResponse.json(
-      { error: "プロジェクトが見つかりません" },
+      { error: "プロジェクトまたはブランチの取得に失敗しました" },
       { status: 404 }
     );
   }
 
-  if (panelsError) {
-    return NextResponse.json(
-      { error: "パネル情報の取得に失敗しました" },
-      { status: 500 }
-    );
-  }
-
-  if (connectionsError) {
-    return NextResponse.json(
-      { error: "接続情報の取得に失敗しました" },
-      { status: 500 }
-    );
-  }
-
   if (
-    project.grid_width === gridWidth &&
-    project.grid_height === gridHeight
+    projectView.grid_width === gridWidth &&
+    projectView.grid_height === gridHeight
   ) {
     return NextResponse.json({
-      project,
+      project: projectView,
       resizedPanelCount: panels?.length ?? 0,
       resizedWavePanelCount: (panels ?? []).filter(isWavePanel).length,
     });
@@ -155,15 +158,15 @@ export async function POST(
   for (const panel of allPanels) {
     const beforeGrid = decodeGrid(
       panel.grid_data,
-      project.grid_width,
-      project.grid_height
+      projectView.grid_width,
+      projectView.grid_height
     );
 
     if (isWavePanel(panel)) {
       const afterGrid = decodeGrid(
         panel.motion_data.after_grid_data,
-        project.grid_width,
-        project.grid_height
+        projectView.grid_width,
+        projectView.grid_height
       );
       const resized = resizeWaveGrids(beforeGrid, afterGrid, resizeOptions);
 
@@ -197,20 +200,22 @@ export async function POST(
   );
   const appliedPanelIds: string[] = [];
   const resizeHistorySnapshot = buildResizeHistorySnapshot(
-    project,
+    projectView,
     allPanels,
     allConnections
   );
   let resizeHistoryId: string | null = null;
   let warning: string | null = null;
+  let branchUpdated = false;
 
   try {
     const { data: historyRow, error: historyError } = await supabase
       .from("project_grid_resize_history")
       .insert({
         project_id: projectId,
-        from_grid_width: project.grid_width,
-        from_grid_height: project.grid_height,
+        branch_id: currentBranch.id,
+        from_grid_width: projectView.grid_width,
+        from_grid_height: projectView.grid_height,
         to_grid_width: gridWidth,
         to_grid_height: gridHeight,
         auto_adjust_illustration: autoAdjustIllustration,
@@ -240,29 +245,45 @@ export async function POST(
           motion_data: update.motionData,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", update.id);
+        .eq("id", update.id)
+        .eq("branch_id", currentBranch.id);
 
       if (error) throw error;
       appliedPanelIds.push(update.id);
     }
 
-    const { data: updatedProject, error: updateProjectError } = await supabase
-      .from("projects")
+    const { data: updatedBranch, error: updateBranchError } = await supabase
+      .from("project_branches")
       .update({
         grid_width: gridWidth,
         grid_height: gridHeight,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", projectId)
+      .eq("id", currentBranch.id)
       .select("*")
       .single();
 
-    if (updateProjectError || !updatedProject) {
-      throw updateProjectError ?? new Error("Project update failed");
+    if (updateBranchError || !updatedBranch) {
+      throw updateBranchError ?? new Error("Project branch update failed");
+    }
+    branchUpdated = true;
+
+    if (currentBranch.is_main) {
+      await syncMainProjectCache(supabase, projectId, {
+        ...getProjectBranchSettings(projectView),
+        grid_width: gridWidth,
+        grid_height: gridHeight,
+      });
     }
 
     return NextResponse.json({
-      project: updatedProject,
+      project: toBranchScopedProject(
+        {
+          ...projectView,
+          updated_at: updatedBranch.updated_at,
+        },
+        updatedBranch
+      ),
       resizedPanelCount: preparedUpdates.length,
       resizedWavePanelCount,
       warning,
@@ -280,14 +301,34 @@ export async function POST(
           motion_data: original.motionData,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", panelId);
+        .eq("id", panelId)
+        .eq("branch_id", currentBranch.id);
+    }
+
+    if (branchUpdated) {
+      await supabase
+        .from("project_branches")
+        .update({
+          ...getProjectBranchSettings(projectView),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", currentBranch.id);
+
+      if (currentBranch.is_main) {
+        await syncMainProjectCache(
+          supabase,
+          projectId,
+          getProjectBranchSettings(projectView)
+        );
+      }
     }
 
     if (resizeHistoryId) {
       await supabase
         .from("project_grid_resize_history")
         .delete()
-        .eq("id", resizeHistoryId);
+        .eq("id", resizeHistoryId)
+        .eq("branch_id", currentBranch.id);
     }
 
     return NextResponse.json(

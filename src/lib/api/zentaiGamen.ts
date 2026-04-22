@@ -9,13 +9,15 @@ import type {
 } from "@/types";
 
 export async function getZentaiGamenByProject(
-  projectId: string
+  projectId: string,
+  branchId: string
 ): Promise<ZentaiGamen[]> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from("zentai_gamen")
     .select("*")
     .eq("project_id", projectId)
+    .eq("branch_id", branchId)
     .order("created_at", { ascending: true });
 
   if (error) throw error;
@@ -36,6 +38,7 @@ export async function getZentaiGamen(id: string): Promise<ZentaiGamen> {
 
 export async function createZentaiGamen(
   projectId: string,
+  branchId: string,
   gridWidth: number,
   gridHeight: number,
   positionX: number = 0,
@@ -53,6 +56,7 @@ export async function createZentaiGamen(
     .from("zentai_gamen")
     .insert({
       project_id: projectId,
+      branch_id: branchId,
       name,
       grid_data: data,
       position_x: positionX,
@@ -70,6 +74,7 @@ export async function createZentaiGamen(
 
 export async function updateZentaiGamen(
   id: string,
+  branchId: string,
   updates: Partial<
     Pick<
       ZentaiGamen,
@@ -91,6 +96,7 @@ export async function updateZentaiGamen(
     .from("zentai_gamen")
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq("id", id)
+    .eq("branch_id", branchId)
     .select()
     .single();
 
@@ -98,11 +104,15 @@ export async function updateZentaiGamen(
   return data;
 }
 
-export async function deleteZentaiGamen(id: string): Promise<void> {
+export async function deleteZentaiGamen(
+  id: string,
+  branchId: string
+): Promise<void> {
   const supabase = createClient();
   const { error } = await supabase
     .from("zentai_gamen")
     .delete()
-    .eq("id", id);
+    .eq("id", id)
+    .eq("branch_id", branchId);
   if (error) throw error;
 }
