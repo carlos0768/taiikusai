@@ -98,6 +98,8 @@ export interface ProjectGridResizeHistorySnapshotProject {
   grid_height: number;
   default_panel_duration_ms: number;
   default_interval_ms: number;
+  colors?: string[];
+  music_data?: MusicData | null;
 }
 
 export interface ProjectGridResizeHistorySnapshotPanel {
@@ -114,9 +116,27 @@ export interface ProjectGridResizeHistorySnapshotPanel {
   updated_at: string;
 }
 
+export interface ProjectGridResizeHistorySnapshotConnection {
+  id: string;
+  source_id: string;
+  target_id: string;
+  sort_order: number;
+  interval_override_ms: number | null;
+}
+
 export interface ProjectGridResizeHistorySnapshot {
   project: ProjectGridResizeHistorySnapshotProject;
   panels: ProjectGridResizeHistorySnapshotPanel[];
+  connections?: ProjectGridResizeHistorySnapshotConnection[];
+}
+
+export interface RestorableProjectGridResizeHistorySnapshot
+  extends ProjectGridResizeHistorySnapshot {
+  project: ProjectGridResizeHistorySnapshotProject & {
+    colors: string[];
+    music_data: MusicData | null;
+  };
+  connections: ProjectGridResizeHistorySnapshotConnection[];
 }
 
 export interface ProjectGridResizeHistory {

@@ -5,14 +5,9 @@ import {
   resizeWaveGrids,
   type GridResizeOptions,
 } from "@/lib/grid/resize";
+import { buildResizeHistorySnapshot } from "@/lib/resizeHistory";
 import { createClient } from "@/lib/supabase/server";
-import type {
-  Project,
-  ProjectGridResizeHistorySnapshot,
-  ProjectGridResizeHistorySnapshotPanel,
-  WaveMotionData,
-  ZentaiGamen,
-} from "@/types";
+import type { Connection, WaveMotionData, ZentaiGamen } from "@/types";
 
 interface ResizeRequestBody {
   gridWidth: number;
@@ -50,11 +45,12 @@ function getResizeHistoryWarning(error: unknown): string | null {
     refersHistoryTable &&
     (message.includes("schema cache") ||
       message.includes("does not exist") ||
-      message.includes("relation"));
+      message.includes("relation") ||
+      message.includes("row-level security policy"));
 
   if (!isHistorySchemaError) return null;
 
-  return "リサイズ履歴用のDBテーブルが未適用のため、今回は変更前状態を保存せずにリサイズしました。`supabase/migrations/20260422000000_add_project_grid_resize_history.sql` を適用してください。";
+  return "リサイズ履歴用のDB設定が未適用のため、今回は変更前状態を保存せずにリサイズしました。`supabase/migrations/20260422000000_add_project_grid_resize_history.sql` と `supabase/migrations/20260422001000_add_project_grid_resize_history_policies.sql` を適用してください。";
 }
 
 function isValidGridSize(value: number): boolean {
@@ -67,41 +63,6 @@ function isWavePanel(zentaiGamen: ZentaiGamen): boolean {
     zentaiGamen.motion_type === "wave" &&
     zentaiGamen.motion_data !== null
   );
-}
-
-function buildSnapshotPanels(
-  panels: ZentaiGamen[]
-): ProjectGridResizeHistorySnapshotPanel[] {
-  return panels.map((panel) => ({
-    id: panel.id,
-    name: panel.name,
-    grid_data: panel.grid_data,
-    position_x: panel.position_x,
-    position_y: panel.position_y,
-    memo: panel.memo,
-    panel_type: panel.panel_type,
-    motion_type: panel.motion_type,
-    motion_data: panel.motion_data,
-    panel_duration_override_ms: panel.panel_duration_override_ms,
-    updated_at: panel.updated_at,
-  }));
-}
-
-function buildResizeHistorySnapshot(
-  project: Project,
-  panels: ZentaiGamen[]
-): ProjectGridResizeHistorySnapshot {
-  return {
-    project: {
-      id: project.id,
-      name: project.name,
-      grid_width: project.grid_width,
-      grid_height: project.grid_height,
-      default_panel_duration_ms: project.default_panel_duration_ms,
-      default_interval_ms: project.default_interval_ms,
-    },
-    panels: buildSnapshotPanels(panels),
-  };
 }
 
 export async function POST(
@@ -129,7 +90,11 @@ export async function POST(
   }
 
   const supabase = await createClient();
-  const [{ data: project, error: projectError }, { data: panels, error: panelsError }] =
+  const [
+    { data: project, error: projectError },
+    { data: panels, error: panelsError },
+    { data: connections, error: connectionsError },
+  ] =
     await Promise.all([
       supabase.from("projects").select("*").eq("id", projectId).single(),
       supabase
@@ -137,6 +102,11 @@ export async function POST(
         .select("*")
         .eq("project_id", projectId)
         .order("created_at", { ascending: true }),
+      supabase
+        .from("connections")
+        .select("*")
+        .eq("project_id", projectId)
+        .order("sort_order", { ascending: true }),
     ]);
 
   if (projectError || !project) {
@@ -149,6 +119,13 @@ export async function POST(
   if (panelsError) {
     return NextResponse.json(
       { error: "パネル情報の取得に失敗しました" },
+      { status: 500 }
+    );
+  }
+
+  if (connectionsError) {
+    return NextResponse.json(
+      { error: "接続情報の取得に失敗しました" },
       { status: 500 }
     );
   }
@@ -171,6 +148,7 @@ export async function POST(
   };
 
   const allPanels = panels ?? [];
+  const allConnections = (connections ?? []) as Connection[];
   const preparedUpdates: PreparedPanelUpdate[] = [];
   let resizedWavePanelCount = 0;
 
@@ -218,7 +196,11 @@ export async function POST(
     ])
   );
   const appliedPanelIds: string[] = [];
-  const resizeHistorySnapshot = buildResizeHistorySnapshot(project, allPanels);
+  const resizeHistorySnapshot = buildResizeHistorySnapshot(
+    project,
+    allPanels,
+    allConnections
+  );
   let resizeHistoryId: string | null = null;
   let warning: string | null = null;
 
