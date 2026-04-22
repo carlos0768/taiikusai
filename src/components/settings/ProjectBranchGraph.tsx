@@ -30,6 +30,14 @@ export default function ProjectBranchGraph({
   const rowIndexByBranchId = new Map(
     sortedBranches.map((branch, index) => [branch.id, index])
   );
+  const latestMergeBySourceBranchId = new Map<string, ProjectBranchMerge>();
+
+  for (const merge of merges) {
+    const existing = latestMergeBySourceBranchId.get(merge.source_branch_id);
+    if (!existing || existing.created_at.localeCompare(merge.created_at) < 0) {
+      latestMergeBySourceBranchId.set(merge.source_branch_id, merge);
+    }
+  }
 
   const eventKeys = Array.from(
     new Set([
@@ -57,6 +65,11 @@ export default function ProjectBranchGraph({
           const row = rowIndexByBranchId.get(branch.id) ?? 0;
           const y = yForRow(row);
           const startX = xForEvent(branch.is_main ? mainBranch.created_at : branch.created_at);
+          const latestMerge = latestMergeBySourceBranchId.get(branch.id);
+          const branchEndX =
+            !branch.is_main && latestMerge
+              ? xForEvent(latestMerge.created_at)
+              : endX;
           const isCurrent = branch.id === currentBranchId;
 
           return (
@@ -64,7 +77,7 @@ export default function ProjectBranchGraph({
               <line
                 x1={startX}
                 y1={y}
-                x2={endX}
+                x2={branchEndX}
                 y2={y}
                 stroke={isCurrent ? "#FFD700" : "#8A8A8A"}
                 strokeWidth={isCurrent ? 3 : 2}
@@ -79,7 +92,7 @@ export default function ProjectBranchGraph({
                 strokeWidth="2"
               />
               <text
-                x={endX + 12}
+                x={branchEndX + 12}
                 y={y + 4}
                 fill={isCurrent ? "#FFD700" : "#E5E5E5"}
                 fontSize="12"

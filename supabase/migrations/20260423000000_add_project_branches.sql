@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS project_branches (
   source_branch_id uuid REFERENCES project_branches(id) ON DELETE SET NULL,
   grid_width integer NOT NULL,
   grid_height integer NOT NULL,
-  colors text[] NOT NULL,
+  colors jsonb NOT NULL,
   default_panel_duration_ms integer NOT NULL,
   default_interval_ms integer NOT NULL,
   music_data jsonb,
