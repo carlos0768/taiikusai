@@ -10,6 +10,7 @@ interface NodeDeleteMenuProps {
   onRename: (newName: string) => void;
   onPlay: () => void;
   onClose: () => void;
+  canEdit: boolean;
 }
 
 export default function NodeDeleteMenu({
@@ -20,6 +21,7 @@ export default function NodeDeleteMenu({
   onRename,
   onPlay,
   onClose,
+  canEdit,
 }: NodeDeleteMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [renaming, setRenaming] = useState(false);
@@ -35,7 +37,7 @@ export default function NodeDeleteMenu({
     return () => document.removeEventListener("pointerdown", handleClickOutside);
   }, [onClose]);
 
-  if (renaming) {
+  if (renaming && canEdit) {
     return (
       <div
         ref={menuRef}
@@ -93,18 +95,22 @@ export default function NodeDeleteMenu({
       >
         ▶ 再生
       </button>
-      <button
-        onClick={() => setRenaming(true)}
-        className="w-full px-4 py-2.5 text-sm text-foreground hover:bg-accent/10 transition-colors text-left"
-      >
-        名前変更
-      </button>
-      <button
-        onClick={onDelete}
-        className="w-full px-4 py-2.5 text-sm text-danger hover:bg-danger/10 transition-colors text-left"
-      >
-        削除
-      </button>
+      {canEdit && (
+        <button
+          onClick={() => setRenaming(true)}
+          className="w-full px-4 py-2.5 text-sm text-foreground hover:bg-accent/10 transition-colors text-left"
+        >
+          名前変更
+        </button>
+      )}
+      {canEdit && (
+        <button
+          onClick={onDelete}
+          className="w-full px-4 py-2.5 text-sm text-danger hover:bg-danger/10 transition-colors text-left"
+        >
+          削除
+        </button>
+      )}
     </div>
   );
 }

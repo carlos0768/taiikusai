@@ -23,13 +23,18 @@ import type { Viewport } from "./gridRenderer";
 import TemplateSaveDialog from "@/components/templates/TemplateSaveDialog";
 import { createTemplate } from "@/lib/api/templates";
 import { generateThumbnailDataUrl } from "@/lib/grid/thumbnail";
-import type { MotionType, PanelType, WaveMotionData } from "@/types";
+import type {
+  AuthProfile,
+  MotionType,
+  PanelType,
+  ProjectBranch,
+  WaveMotionData,
+} from "@/types";
 
 export interface GridEditorSavePayload {
   gridData: string;
   name: string;
   memo: string;
-  /** undefined: 変更なし。null: クリア。WaveMotionData: 上書き */
   motionData?: WaveMotionData | null;
 }
 
@@ -46,6 +51,13 @@ interface GridEditorProps {
   initialMemo: string;
   onSave: (payload: GridEditorSavePayload) => Promise<void>;
   onExport: () => void;
+  auth: AuthProfile;
+  currentBranch: ProjectBranch;
+  branches: ProjectBranch[];
+  unreadGitNotifications: number;
+  canEditCurrentBranch: boolean;
+  canCreateBranches: boolean;
+  canRequestMerge: boolean;
 }
 
 export default function GridEditor({
@@ -54,22 +66,35 @@ export default function GridEditor({
   panelType,
   motionType,
   initialMotionData,
+  zentaiGamenId,
   projectId,
   branchId,
   initialName,
   initialMemo,
   onSave,
   onExport,
+  auth,
+  currentBranch,
+  branches,
+  unreadGitNotifications,
+  canEditCurrentBranch,
+  canCreateBranches,
+  canRequestMerge,
 }: GridEditorProps) {
   const isMotion = panelType === "motion";
   const isWave = isMotion && motionType === "wave";
   const isKeep = panelType === "keep";
+  const canViewGit =
+    auth.is_admin ||
+    auth.permissions.can_view_git_requests ||
+    auth.permissions.can_request_main_merge ||
+    auth.permissions.can_create_branches;
+
   const keepCanvasGrid = useMemo(
     () => createFilledGrid(initialGrid.width, initialGrid.height, 0),
     [initialGrid.height, initialGrid.width]
   );
 
-  // before / after の編集状態を独立に持つ
   const beforeState = useGridState(isKeep ? keepCanvasGrid : initialGrid);
   const afterState = useGridState(
     initialAfterGrid ??
@@ -79,7 +104,6 @@ export default function GridEditor({
   const [activeTab, setActiveTab] = useState<"before" | "after">("before");
   const activeState = isWave && activeTab === "after" ? afterState : beforeState;
 
-  // ウェーブ設定 (motion_data 用)
   const [motionData, setMotionData] = useState<WaveMotionData | null>(
     initialMotionData
   );
@@ -116,16 +140,15 @@ export default function GridEditor({
   const [showTemplateSave, setShowTemplateSave] = useState(false);
   const [showMemo, setShowMemo] = useState(false);
   const [showWavePreview, setShowWavePreview] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
 
-  // タブ切り替えで選択範囲・移動選択をクリア
   useEffect(() => {
     setSelection(null);
     setMoveSelectedCells(new Set());
   }, [activeTab]);
 
-  // 編集時の dirty 検知 (before / after / motionData)
   const dirty =
     beforeState.dirty ||
     (isWave && afterState.dirty) ||
@@ -151,12 +174,14 @@ export default function GridEditor({
       name,
       memo,
     };
+
     if (isWave && motionData) {
       payload.motionData = {
         ...motionData,
         after_grid_data: encodeGrid(afterState.gridRef.current!),
       };
     }
+
     return payload;
   }, [
     afterState,
@@ -171,9 +196,8 @@ export default function GridEditor({
     name,
   ]);
 
-  // Auto-save with 2-second debounce
   useEffect(() => {
-    if (!dirty) return;
+    if (!canEditCurrentBranch || !dirty) return;
     setSaveStatus("unsaved");
 
     if (saveTimerRef.current) {
@@ -188,29 +212,47 @@ export default function GridEditor({
         afterState.clearDirty();
         setMotionDataRevision(0);
         setKeepRevision(0);
+        setActionError(null);
         setSaveStatus("saved");
-      } catch {
+      } catch (error) {
         setSaveStatus("unsaved");
+        setActionError(
+          error instanceof Error ? error.message : "保存に失敗しました"
+        );
       }
     }, 2000);
 
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [combinedRevision, dirty, buildPayload, onSave, beforeState, afterState]);
+  }, [
+    afterState,
+    beforeState,
+    buildPayload,
+    canEditCurrentBranch,
+    combinedRevision,
+    dirty,
+    onSave,
+  ]);
 
-  // Save name/memo changes
   useEffect(() => {
+    if (!canEditCurrentBranch) return;
+
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
     }
+
     saveTimerRef.current = setTimeout(async () => {
       setSaveStatus("saving");
       try {
         await onSave(buildPayload());
+        setActionError(null);
         setSaveStatus("saved");
-      } catch {
+      } catch (error) {
         setSaveStatus("unsaved");
+        setActionError(
+          error instanceof Error ? error.message : "保存に失敗しました"
+        );
       }
     }, 2000);
 
@@ -218,7 +260,7 @@ export default function GridEditor({
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, memo]);
+  }, [name, memo, canEditCurrentBranch]);
 
   const handleFillSelection = useCallback(() => {
     if (!selection) return;
@@ -230,20 +272,15 @@ export default function GridEditor({
       activeColor
     );
     setSelection(null);
-  }, [selection, activeColor, activeState]);
-
-  const handleClearSelection = useCallback(() => {
-    setSelection(null);
-  }, []);
+  }, [activeColor, activeState, selection]);
 
   const handleBack = useCallback(() => {
-    if (dirty) {
-      onSave(buildPayload());
+    if (dirty && canEditCurrentBranch) {
+      void onSave(buildPayload());
     }
     router.push(buildBranchPath(`/project/${projectId}`, branchId));
-  }, [dirty, buildPayload, onSave, projectId, branchId, router]);
+  }, [branchId, buildPayload, canEditCurrentBranch, dirty, onSave, projectId, router]);
 
-  // Play: モーションパネルなら preview を出す。一般パネルでは何もしない (ボタン非表示)
   const handlePlay = useCallback(() => {
     if (!isWave) return;
     setShowWavePreview(true);
@@ -266,14 +303,94 @@ export default function GridEditor({
     [activeState, isKeep]
   );
 
-  // ウェーブ設定の更新
+  const handleSwitchBranch = useCallback(
+    (nextBranchId: string) => {
+      router.push(
+        buildBranchPath(
+          `/project/${projectId}/editor/${zentaiGamenId}`,
+          nextBranchId
+        )
+      );
+    },
+    [projectId, router, zentaiGamenId]
+  );
+
+  const handleCreateBranch = useCallback(async () => {
+    const nameInput = prompt("新しいブランチ名を入力してください");
+    if (!nameInput) return;
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/branches`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: nameInput,
+          sourceBranchId: currentBranch.id,
+        }),
+      });
+      const result = (await response.json()) as
+        | { branch: ProjectBranch }
+        | { error?: string };
+
+      if (!response.ok || !("branch" in result)) {
+        throw new Error(
+          "error" in result ? result.error : "ブランチを作成できませんでした"
+        );
+      }
+
+      setActionError(null);
+      router.push(
+        buildBranchPath(
+          `/project/${projectId}/editor/${zentaiGamenId}`,
+          result.branch.id
+        )
+      );
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "ブランチを作成できませんでした"
+      );
+    }
+  }, [currentBranch.id, projectId, router, zentaiGamenId]);
+
+  const handleRequestMerge = useCallback(async () => {
+    const summary = prompt("main への反映内容を簡単に入力してください", "");
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          branchId: currentBranch.id,
+          summary: summary ?? "",
+        }),
+      });
+      const result = (await response.json()) as
+        | { request: { id: string } }
+        | { error?: string };
+
+      if (!response.ok || !("request" in result)) {
+        throw new Error(
+          "error" in result ? result.error : "申請を作成できませんでした"
+        );
+      }
+
+      setActionError(null);
+      alert("main への申請を作成しました");
+      router.push(buildBranchPath(`/project/${projectId}/git/requests`, currentBranch.id));
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "申請を作成できませんでした"
+      );
+    }
+  }, [currentBranch.id, projectId, router]);
+
   const updateWaveSetting = useCallback(
     (patch: Partial<Omit<WaveMotionData, "after_grid_data">>) => {
       setMotionData((prev) => {
         if (!prev) return prev;
         return { ...prev, ...patch };
       });
-      setMotionDataRevision((r) => r + 1);
+      setMotionDataRevision((revision) => revision + 1);
     },
     []
   );
@@ -287,7 +404,7 @@ export default function GridEditor({
       afterMs: motionData.after_duration_ms,
       speedColPerSec: motionData.speed_columns_per_sec,
     };
-  }, [isWave, motionData, beforeState, afterState, showWavePreview]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [afterState, beforeState, isWave, motionData]);
 
   const handleKeepSelectionChange = useCallback((cells: Set<string>) => {
     setKeepSelectedCells(cells);
@@ -296,6 +413,68 @@ export default function GridEditor({
 
   return (
     <div className="h-full flex flex-col">
+      <div className="border-b border-card-border bg-card px-3 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs uppercase tracking-[0.2em] text-muted">
+            Branch
+          </span>
+          <select
+            value={currentBranch.id}
+            onChange={(event) => handleSwitchBranch(event.target.value)}
+            className="min-w-[160px] rounded-lg border border-card-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:border-accent"
+          >
+            {branches.map((branch) => (
+              <option key={branch.id} value={branch.id}>
+                {branch.name}
+              </option>
+            ))}
+          </select>
+          {canCreateBranches && (
+            <button
+              onClick={() => void handleCreateBranch()}
+              className="rounded-lg border border-card-border px-3 py-2 text-sm text-foreground hover:border-accent/50 transition-colors"
+            >
+              ブランチ作成
+            </button>
+          )}
+          {!auth.is_admin && canRequestMerge && (
+            <button
+              onClick={() => void handleRequestMerge()}
+              className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-black hover:opacity-90 transition-opacity"
+            >
+              main へ申請
+            </button>
+          )}
+          {canViewGit && (
+            <button
+              onClick={() =>
+                router.push(
+                  buildBranchPath(`/project/${projectId}/git/requests`, currentBranch.id)
+                )
+              }
+              className="relative rounded-lg border border-card-border px-3 py-2 text-sm text-muted hover:text-foreground transition-colors"
+            >
+              Git / リクエスト
+              {unreadGitNotifications > 0 && (
+                <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-sky-500" />
+              )}
+            </button>
+          )}
+        </div>
+        <div className="mt-2 text-xs text-muted">
+          {canEditCurrentBranch
+            ? "このブランチは編集できます"
+            : currentBranch.is_main
+              ? "main は保護中です。編集は作業ブランチで行ってください"
+              : "このアカウントは閲覧専用です"}
+        </div>
+        {actionError && (
+          <div className="mt-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+            {actionError}
+          </div>
+        )}
+      </div>
+
       <EditorToolbar
         activeTool={isKeep || isMoveMode ? "move" : activeTool}
         onToolChange={setActiveTool}
@@ -306,36 +485,49 @@ export default function GridEditor({
         onBack={handleBack}
         onPlay={handlePlay}
         showPlayButton={isMotion}
-        saveStatus={saveStatus}
+        saveStatus={dirty && saveStatus === "saved" ? "unsaved" : saveStatus}
         name={name}
         onNameChange={setName}
         hasSelection={selection !== null}
         onFillSelection={handleFillSelection}
-        onClearSelection={handleClearSelection}
+        onClearSelection={() => setSelection(null)}
         onSaveAsTemplate={() => setShowTemplateSave(true)}
         isEditing={isKeep ? false : isEditing}
-        onToggleEdit={() => { setIsEditing(!isEditing); if (isMoveMode) setIsMoveMode(false); }}
+        onToggleEdit={() => {
+          if (!canEditCurrentBranch) return;
+          setIsEditing((prev) => !prev);
+          if (isMoveMode) setIsMoveMode(false);
+        }}
         onExport={onExport}
-        onToggleMemo={() => setShowMemo(!showMemo)}
+        onToggleMemo={() => setShowMemo((prev) => !prev)}
         showMemo={showMemo}
         isMoveMode={isKeep ? false : isMoveMode}
-        onToggleMove={() => { setIsMoveMode(!isMoveMode); setMoveSelectedCells(new Set()); setIsMoveSelecting(true); if (isEditing) setIsEditing(false); }}
+        onToggleMove={() => {
+          if (!canEditCurrentBranch) return;
+          setIsMoveMode((prev) => !prev);
+          setMoveSelectedCells(new Set());
+          setIsMoveSelecting(true);
+          if (isEditing) setIsEditing(false);
+        }}
         hasMoveSelection={moveSelectedCells.size > 0}
-        onClearMoveSelection={() => { setMoveSelectedCells(new Set()); setIsMoveSelecting(true); }}
+        onClearMoveSelection={() => {
+          setMoveSelectedCells(new Set());
+          setIsMoveSelecting(true);
+        }}
         isMoveSelecting={isMoveSelecting}
-        onToggleMoveSelecting={() => setIsMoveSelecting(!isMoveSelecting)}
+        onToggleMoveSelecting={() => setIsMoveSelecting((prev) => !prev)}
         isKeepMode={isKeep}
         isKeepSelecting={isKeepSelecting}
         hasKeepSelection={keepSelectedCells.size > 0}
-        onToggleKeepSelecting={() => setIsKeepSelecting(!isKeepSelecting)}
+        onToggleKeepSelecting={() => canEditCurrentBranch && setIsKeepSelecting((prev) => !prev)}
         onClearKeepSelection={() => {
           setKeepSelectedCells(new Set());
           setIsKeepSelecting(true);
           setKeepRevision((revision) => revision + 1);
         }}
+        canEdit={canEditCurrentBranch}
       />
 
-      {/* Wave: before/after タブ + 設定 */}
       {isWave && motionData && (
         <div className="flex items-center gap-2 px-3 py-2 bg-card border-b border-card-border overflow-x-auto">
           <div className="flex shrink-0 rounded-lg overflow-hidden border border-card-border">
@@ -370,16 +562,17 @@ export default function GridEditor({
               min={0.5}
               max={60}
               step={0.5}
+              disabled={!canEditCurrentBranch}
               value={motionData.speed_columns_per_sec}
-              onChange={(e) =>
+              onChange={(event) =>
                 updateWaveSetting({
                   speed_columns_per_sec: Math.max(
                     0.5,
-                    Number(e.target.value) || 0.5
+                    Number(event.target.value) || 0.5
                   ),
                 })
               }
-              className="w-14 px-1.5 py-0.5 bg-background border border-card-border rounded text-foreground text-center"
+              className="w-14 px-1.5 py-0.5 bg-background border border-card-border rounded text-foreground text-center disabled:opacity-60"
             />
             列/秒
           </label>
@@ -391,16 +584,17 @@ export default function GridEditor({
               min={0}
               max={20}
               step={0.1}
+              disabled={!canEditCurrentBranch}
               value={(motionData.before_duration_ms / 1000).toFixed(1)}
-              onChange={(e) =>
+              onChange={(event) =>
                 updateWaveSetting({
                   before_duration_ms: Math.max(
                     0,
-                    Math.round(Number(e.target.value) * 1000)
+                    Math.round(Number(event.target.value) * 1000)
                   ),
                 })
               }
-              className="w-14 px-1.5 py-0.5 bg-background border border-card-border rounded text-foreground text-center"
+              className="w-14 px-1.5 py-0.5 bg-background border border-card-border rounded text-foreground text-center disabled:opacity-60"
             />
             秒
           </label>
@@ -412,32 +606,33 @@ export default function GridEditor({
               min={0}
               max={20}
               step={0.1}
+              disabled={!canEditCurrentBranch}
               value={(motionData.after_duration_ms / 1000).toFixed(1)}
-              onChange={(e) =>
+              onChange={(event) =>
                 updateWaveSetting({
                   after_duration_ms: Math.max(
                     0,
-                    Math.round(Number(e.target.value) * 1000)
+                    Math.round(Number(event.target.value) * 1000)
                   ),
                 })
               }
-              className="w-14 px-1.5 py-0.5 bg-background border border-card-border rounded text-foreground text-center"
+              className="w-14 px-1.5 py-0.5 bg-background border border-card-border rounded text-foreground text-center disabled:opacity-60"
             />
             秒
           </label>
         </div>
       )}
 
-      {/* Memo input */}
       {showMemo && (
         <div className="px-3 py-2 bg-card border-b border-card-border">
           <label className="text-xs text-muted mb-1 block">動き指示メモ</label>
           <input
             type="text"
             value={memo}
-            onChange={(e) => setMemo(e.target.value)}
+            onChange={(event) => setMemo(event.target.value)}
+            readOnly={!canEditCurrentBranch}
             placeholder="例: 笛でとじる、ウェーブ、長め..."
-            className="w-full px-2 py-1.5 bg-background border border-card-border rounded text-sm text-foreground focus:outline-none focus:border-accent"
+            className="w-full px-2 py-1.5 bg-background border border-card-border rounded text-sm text-foreground focus:outline-none focus:border-accent read-only:cursor-default read-only:opacity-80"
           />
         </div>
       )}
@@ -449,13 +644,12 @@ export default function GridEditor({
         activeTool={isKeep || isMoveMode ? "move" : activeTool}
         activeColor={activeColor}
         selection={selection}
-        onPaintCell={activeState.paintCell}
         onStartBatchPaint={activeState.startBatchPaint}
         onBatchPaintCell={activeState.batchPaintCell}
         onFloodFill={activeState.floodFill}
         onSelectionChange={setSelection}
         onViewportChange={setViewport}
-        isEditing={isKeep ? false : isEditing}
+        isEditing={canEditCurrentBranch && (isKeep ? false : isEditing)}
         onMoveSelection={isKeep ? () => {} : activeState.moveSelection}
         moveSelectedCells={isKeep ? keepSelectedCells : moveSelectedCells}
         onMoveSelectedCellsChange={
@@ -464,14 +658,14 @@ export default function GridEditor({
         moveDragOffset={isKeep ? null : moveDragOffset}
         onMoveDragOffsetChange={isKeep ? () => {} : setMoveDragOffset}
         isMoveSelecting={isKeep ? isKeepSelecting : isMoveSelecting}
-        disableMoveDrag={isKeep}
+        disableMoveDrag={isKeep || !canEditCurrentBranch}
       />
 
-      {isEditing && !isKeep && (
+      {isEditing && !isKeep && canEditCurrentBranch && (
         <ColorPalette activeColor={activeColor} onColorChange={setActiveColor} />
       )}
 
-      {showTemplateSave && !isKeep && (
+      {showTemplateSave && !isKeep && canEditCurrentBranch && (
         <TemplateSaveDialog
           onSave={handleSaveAsTemplate}
           onClose={() => setShowTemplateSave(false)}

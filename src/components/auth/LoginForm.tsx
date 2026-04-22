@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function LoginForm() {
-  const [username, setUsername] = useState("");
+  const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -19,7 +19,7 @@ export default function LoginForm() {
       const res = await fetch("/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ loginId, password }),
       });
 
       if (!res.ok) {
@@ -47,20 +47,20 @@ export default function LoginForm() {
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label
-            htmlFor="username"
+            htmlFor="loginId"
             className="block text-sm font-medium mb-1"
           >
-            ユーザー名
+            ID
           </label>
           <input
-            id="username"
+            id="loginId"
             type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            value={loginId}
+            onChange={(e) => setLoginId(e.target.value.toLowerCase())}
             required
             autoComplete="username"
             className="w-full px-3 py-2 bg-card border border-card-border rounded-lg text-foreground focus:outline-none focus:border-accent transition-colors"
-            placeholder="ユーザー名を入力"
+            placeholder="ログイン ID を入力"
           />
         </div>
 

@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
-import { AUTH_COOKIE } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
+import { toErrorResponse } from "@/lib/server/errors";
 
 export async function POST() {
-  const response = NextResponse.json({ success: true });
-  response.cookies.delete(AUTH_COOKIE);
-  return response;
+  try {
+    const supabase = await createClient();
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      throw error;
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return toErrorResponse(error);
+  }
 }

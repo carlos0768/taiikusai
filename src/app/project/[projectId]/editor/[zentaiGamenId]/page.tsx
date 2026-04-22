@@ -2,19 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
+import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/client";
+import { fetchJson } from "@/lib/client/api";
 import { decodeGrid } from "@/lib/grid/codec";
-import { getPlaybackFrameFinalGrid } from "@/lib/grid/types";
-import { fetchProjectBranchContext } from "@/lib/projectBranches";
-import type { GridData } from "@/lib/grid/types";
-import type { ColorIndex } from "@/lib/grid/types";
+import { getPlaybackFrameFinalGrid, type GridData, type ColorIndex } from "@/lib/grid/types";
 import GridEditor, { type GridEditorSavePayload } from "@/components/editor/GridEditor";
 import { findPlaybackRoutes } from "@/lib/api/connections";
 import { generateScriptHtml } from "@/lib/export/generateScript";
 import { isKeepMaskSelected } from "@/lib/keep";
 import { zentaiGamenToPlaybackFrame } from "@/lib/playback/frameBuilder";
-import type { BranchScopedProject, ZentaiGamen } from "@/types";
-import JSZip from "jszip";
+import type { BranchContextResponse, Connection, ZentaiGamen } from "@/types";
 
 export default function EditorPage() {
   const params = useParams();
@@ -22,63 +20,78 @@ export default function EditorPage() {
   const projectId = params.projectId as string;
   const zentaiGamenId = params.zentaiGamenId as string;
   const requestedBranchId = searchParams.get("branch");
+  const supabase = useMemo(() => createClient(), []);
+
+  const [context, setContext] = useState<BranchContextResponse | null>(null);
   const [grid, setGrid] = useState<GridData | null>(null);
   const [afterGrid, setAfterGrid] = useState<GridData | null>(null);
   const [zentaiGamen, setZentaiGamen] = useState<ZentaiGamen | null>(null);
-  const [project, setProject] = useState<BranchScopedProject | null>(null);
   const [loading, setLoading] = useState(true);
-  const supabase = useMemo(() => createClient(), []);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
       setLoading(true);
+      setError(null);
+
       try {
-        const contextResult = await fetchProjectBranchContext(
-          supabase,
-          projectId,
-          requestedBranchId
+        const nextContext = await fetchJson<BranchContextResponse>(
+          `/api/projects/${projectId}/branches${
+            requestedBranchId ? `?branch=${requestedBranchId}` : ""
+          }`
         );
 
-        const { data: zg } = await supabase
+        const { data: zg, error: zentaiGamenError } = await supabase
           .from("zentai_gamen")
           .select("*")
           .eq("id", zentaiGamenId)
           .eq("project_id", projectId)
-          .eq("branch_id", contextResult.currentBranch.id)
+          .eq("branch_id", nextContext.currentBranch.id)
           .single();
 
-        if (zg) {
-          setZentaiGamen(zg);
-          setProject(contextResult.projectView);
-          const gridData = decodeGrid(
-            zg.grid_data,
-            contextResult.projectView.grid_width,
-            contextResult.projectView.grid_height
-          );
-          setGrid(gridData);
-          if (
-            zg.panel_type === "motion" &&
-            zg.motion_type === "wave" &&
-            zg.motion_data
-          ) {
-            setAfterGrid(
-              decodeGrid(
-                zg.motion_data.after_grid_data,
-                contextResult.projectView.grid_width,
-                contextResult.projectView.grid_height
-              )
-            );
-          }
+        if (zentaiGamenError || !zg) {
+          throw zentaiGamenError ?? new Error("対象の画面が見つかりません");
         }
+
+        setContext(nextContext);
+        setZentaiGamen(zg as ZentaiGamen);
+        setGrid(
+          decodeGrid(
+            zg.grid_data,
+            nextContext.project.grid_width,
+            nextContext.project.grid_height
+          )
+        );
+
+        if (
+          zg.panel_type === "motion" &&
+          zg.motion_type === "wave" &&
+          zg.motion_data
+        ) {
+          setAfterGrid(
+            decodeGrid(
+              zg.motion_data.after_grid_data,
+              nextContext.project.grid_width,
+              nextContext.project.grid_height
+            )
+          );
+        } else {
+          setAfterGrid(null);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "エディタを読み込めませんでした");
       } finally {
         setLoading(false);
       }
     }
+
     void load();
   }, [projectId, requestedBranchId, supabase, zentaiGamenId]);
 
   const handleSave = useCallback(
     async (payload: GridEditorSavePayload) => {
+      if (!context) return;
+
       const update: Record<string, unknown> = {
         grid_data: payload.gridData,
         name: payload.name,
@@ -88,48 +101,51 @@ export default function EditorPage() {
       if (payload.motionData !== undefined) {
         update.motion_data = payload.motionData;
       }
-      await supabase
+
+      const { error: updateError } = await supabase
         .from("zentai_gamen")
         .update(update)
         .eq("id", zentaiGamenId)
         .eq("project_id", projectId)
-        .eq("branch_id", project?.active_branch_id ?? "");
+        .eq("branch_id", context.currentBranch.id);
+
+      if (updateError) {
+        throw updateError;
+      }
     },
-    [zentaiGamenId, projectId, project?.active_branch_id, supabase]
+    [context, projectId, supabase, zentaiGamenId]
   );
 
   const handleExport = useCallback(async () => {
-    if (!project) return;
+    if (!context) return;
 
-    // Fetch all zentai_gamen and connections for this project
-    const [{ data: allZg }, { data: allConns }] = await Promise.all([
-      supabase
-        .from("zentai_gamen")
-        .select("*")
-        .eq("project_id", projectId)
-        .eq("branch_id", project.active_branch_id),
-      supabase
-        .from("connections")
-        .select("*")
-        .eq("project_id", projectId)
-        .eq("branch_id", project.active_branch_id),
-    ]);
+    const [{ data: allZg, error: zentaiGamenError }, { data: allConns, error: connectionsError }] =
+      await Promise.all([
+        supabase
+          .from("zentai_gamen")
+          .select("*")
+          .eq("project_id", projectId)
+          .eq("branch_id", context.currentBranch.id),
+        supabase
+          .from("connections")
+          .select("*")
+          .eq("project_id", projectId)
+          .eq("branch_id", context.currentBranch.id),
+      ]);
 
-    if (!allZg || !allConns) {
-      alert("データの取得に失敗しました");
-      return;
+    if (zentaiGamenError || connectionsError || !allZg || !allConns) {
+      throw new Error("データの取得に失敗しました");
     }
 
-    // Find the route starting from this zentai_gamen
-    const routes = findPlaybackRoutes(allConns, zentaiGamenId);
-    const route = routes[0]; // Use first route
+    const routes = findPlaybackRoutes(allConns as Connection[], zentaiGamenId);
+    const route = routes[0];
     if (!route || route.length === 0) {
-      alert("連結された全体画面がありません");
-      return;
+      throw new Error("連結された全体画面がありません");
     }
 
-    // Build scene data
-    const zgMap = new Map(allZg.map((z: ZentaiGamen) => [z.id, z]));
+    const zentaiGamenMap = new Map(
+      (allZg as ZentaiGamen[]).map((item) => [item.id, item])
+    );
     const scenes: {
       grid: GridData;
       keepMask: GridData | null;
@@ -139,14 +155,14 @@ export default function EditorPage() {
     let previousVisibleGrid: GridData | null = null;
 
     for (const nodeId of route) {
-      const zg = zgMap.get(nodeId);
-      if (!zg) continue;
+      const item = zentaiGamenMap.get(nodeId);
+      if (!item) continue;
 
       const frame = zentaiGamenToPlaybackFrame({
-        zentaiGamen: zg,
-        gridWidth: project.grid_width,
-        gridHeight: project.grid_height,
-        defaultPanelDurationMs: project.default_panel_duration_ms,
+        zentaiGamen: item,
+        gridWidth: context.project.grid_width,
+        gridHeight: context.project.grid_height,
+        defaultPanelDurationMs: context.project.default_panel_duration_ms,
         previousVisibleGrid,
         keepDurationMs: 0,
       });
@@ -156,50 +172,52 @@ export default function EditorPage() {
         keepMask: frame.kind === "keep" ? frame.mask : null,
         keepHasPreviousDisplay:
           frame.kind === "keep" ? previousVisibleGrid !== null : false,
-        memo: zg.memo || "",
+        memo: item.memo || "",
       });
       previousVisibleGrid = getPlaybackFrameFinalGrid(frame);
     }
 
     if (scenes.length === 0) {
-      alert("シーンデータがありません");
-      return;
+      throw new Error("シーンデータがありません");
     }
 
-    // Generate HTML for each cell position
     const zip = new JSZip();
-    const w = project.grid_width;
-    const h = project.grid_height;
+    const width = context.project.grid_width;
+    const height = context.project.grid_height;
 
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const cellScenes = scenes.map((scene, idx) => ({
-          sceneNumber: idx + 1,
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const cellScenes = scenes.map((scene, index) => ({
+          sceneNumber: index + 1,
           action:
             scene.keepMask &&
             scene.keepHasPreviousDisplay &&
-            isKeepMaskSelected(scene.keepMask.cells[y * w + x])
+            isKeepMaskSelected(scene.keepMask.cells[y * width + x])
               ? ("keep" as const)
               : ("color" as const),
-          colorIndex: scene.grid.cells[y * w + x] as ColorIndex,
+          colorIndex: scene.grid.cells[y * width + x] as ColorIndex,
           memo: scene.memo,
         }));
 
-        const html = generateScriptHtml(x, y, cellScenes, project.name);
+        const html = generateScriptHtml(
+          x,
+          y,
+          cellScenes,
+          context.project.name
+        );
 
         zip.file(`${y + 1}列${x + 1}番.html`, html);
       }
     }
 
-    // Download ZIP
     const blob = await zip.generateAsync({ type: "blob" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${project.name}_パネル台本.zip`;
-    a.click();
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${context.project.name}_パネル台本.zip`;
+    anchor.click();
     URL.revokeObjectURL(url);
-  }, [project, projectId, zentaiGamenId, supabase]);
+  }, [context, projectId, supabase, zentaiGamenId]);
 
   if (loading) {
     return (
@@ -209,10 +227,10 @@ export default function EditorPage() {
     );
   }
 
-  if (!grid || !zentaiGamen || !project) {
+  if (error || !context || !grid || !zentaiGamen) {
     return (
       <div className="h-full flex items-center justify-center">
-        <p className="text-muted">データが見つかりません</p>
+        <p className="text-muted">{error ?? "データが見つかりません"}</p>
       </div>
     );
   }
@@ -226,11 +244,18 @@ export default function EditorPage() {
       initialMotionData={zentaiGamen.motion_data ?? null}
       zentaiGamenId={zentaiGamenId}
       projectId={projectId}
-      branchId={project.active_branch_id}
+      branchId={context.currentBranch.id}
       initialName={zentaiGamen.name}
       initialMemo={zentaiGamen.memo || ""}
       onSave={handleSave}
       onExport={handleExport}
+      auth={context.auth}
+      currentBranch={context.currentBranch}
+      branches={context.branches}
+      unreadGitNotifications={context.unreadGitNotifications}
+      canEditCurrentBranch={context.canEditCurrentBranch}
+      canCreateBranches={context.canCreateBranches}
+      canRequestMerge={context.canRequestMerge}
     />
   );
 }

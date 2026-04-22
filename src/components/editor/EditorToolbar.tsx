@@ -35,6 +35,7 @@ interface EditorToolbarProps {
   hasKeepSelection?: boolean;
   onToggleKeepSelecting?: () => void;
   onClearKeepSelection?: () => void;
+  canEdit: boolean;
 }
 
 const tools: { id: Tool; label: string; icon: string }[] = [
@@ -77,10 +78,10 @@ export default function EditorToolbar({
   onToggleKeepSelecting,
   onClearKeepSelection,
   showMemo,
+  canEdit,
 }: EditorToolbarProps) {
   return (
     <div className="flex flex-col bg-card border-b border-card-border">
-      {/* Top row: back, name, edit toggle, save status, play */}
       <div className="flex items-center gap-2 px-3 py-2">
         <button
           onClick={onBack}
@@ -93,8 +94,9 @@ export default function EditorToolbar({
         <input
           type="text"
           value={name}
-          onChange={(e) => onNameChange(e.target.value)}
-          className="flex-1 bg-transparent text-foreground font-medium px-2 py-1 border-b border-transparent hover:border-card-border focus:border-accent focus:outline-none transition-colors min-w-0"
+          onChange={(event) => onNameChange(event.target.value)}
+          readOnly={!canEdit}
+          className="flex-1 bg-transparent text-foreground font-medium px-2 py-1 border-b border-transparent hover:border-card-border focus:border-accent focus:outline-none transition-colors min-w-0 read-only:cursor-default read-only:opacity-80"
         />
 
         <button
@@ -119,7 +121,8 @@ export default function EditorToolbar({
           <>
             <button
               onClick={onToggleKeepSelecting}
-              className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
+              disabled={!canEdit}
+              className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 disabled:opacity-40 ${
                 isKeepSelecting
                   ? "bg-accent/20 text-accent"
                   : "text-muted hover:text-foreground"
@@ -130,7 +133,8 @@ export default function EditorToolbar({
             {(hasKeepSelection || !isKeepSelecting) && (
               <button
                 onClick={onToggleKeepSelecting}
-                className={`px-2 py-1 text-[10px] rounded transition-colors shrink-0 ${
+                disabled={!canEdit}
+                className={`px-2 py-1 text-[10px] rounded transition-colors shrink-0 disabled:opacity-40 ${
                   isKeepSelecting
                     ? "bg-accent/20 text-accent"
                     : "text-muted hover:text-foreground"
@@ -142,7 +146,8 @@ export default function EditorToolbar({
             {hasKeepSelection && (
               <button
                 onClick={onClearKeepSelection}
-                className="px-2 py-1 text-[10px] text-muted hover:text-foreground transition-colors shrink-0"
+                disabled={!canEdit}
+                className="px-2 py-1 text-[10px] text-muted hover:text-foreground transition-colors shrink-0 disabled:opacity-40"
               >
                 選択解除
               </button>
@@ -152,7 +157,8 @@ export default function EditorToolbar({
           <>
             <button
               onClick={onToggleMove}
-              className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
+              disabled={!canEdit}
+              className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 disabled:opacity-40 ${
                 isMoveMode
                   ? "bg-accent/20 text-accent"
                   : "text-muted hover:text-foreground"
@@ -166,7 +172,8 @@ export default function EditorToolbar({
                 {(hasMoveSelection || !isMoveSelecting) && (
                   <button
                     onClick={onToggleMoveSelecting}
-                    className={`px-2 py-1 text-[10px] rounded transition-colors shrink-0 ${
+                    disabled={!canEdit}
+                    className={`px-2 py-1 text-[10px] rounded transition-colors shrink-0 disabled:opacity-40 ${
                       isMoveSelecting
                         ? "bg-accent/20 text-accent"
                         : "text-muted hover:text-foreground"
@@ -177,7 +184,7 @@ export default function EditorToolbar({
                 )}
                 <button
                   onClick={onUndo}
-                  disabled={!canUndo}
+                  disabled={!canEdit || !canUndo}
                   className="px-2 py-1 text-[10px] text-muted hover:text-foreground disabled:opacity-30 transition-colors shrink-0"
                 >
                   ↩ 戻す
@@ -185,7 +192,8 @@ export default function EditorToolbar({
                 {hasMoveSelection && (
                   <button
                     onClick={onClearMoveSelection}
-                    className="px-2 py-1 text-[10px] text-muted hover:text-foreground transition-colors shrink-0"
+                    disabled={!canEdit}
+                    className="px-2 py-1 text-[10px] text-muted hover:text-foreground transition-colors shrink-0 disabled:opacity-40"
                   >
                     選択解除
                   </button>
@@ -198,7 +206,8 @@ export default function EditorToolbar({
         {!isKeepMode && (
           <button
             onClick={onToggleEdit}
-            className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 ${
+            disabled={!canEdit}
+            className={`px-3 py-1 text-sm rounded-lg transition-colors shrink-0 disabled:opacity-40 ${
               isEditing
                 ? "bg-accent/20 text-accent"
                 : "text-muted hover:text-foreground"
@@ -227,8 +236,7 @@ export default function EditorToolbar({
         )}
       </div>
 
-      {/* Bottom row: tools, undo/redo — only visible when editing */}
-      {isEditing && !isKeepMode && (
+      {isEditing && !isKeepMode && canEdit && (
         <div className="flex items-center gap-1 px-3 py-1.5 overflow-x-auto">
           {tools.map((tool) => (
             <button

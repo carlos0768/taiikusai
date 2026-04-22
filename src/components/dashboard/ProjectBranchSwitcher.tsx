@@ -9,6 +9,10 @@ interface ProjectBranchSwitcherProps {
   projectId: string;
   branches: ProjectBranch[];
   currentBranch: ProjectBranch;
+  canCreateBranches: boolean;
+  canRequestMerge: boolean;
+  canMergeToMainDirectly: boolean;
+  canDeleteBranches: boolean;
 }
 
 function BranchIcon() {
@@ -43,6 +47,10 @@ export default function ProjectBranchSwitcher({
   projectId,
   branches,
   currentBranch,
+  canCreateBranches,
+  canRequestMerge,
+  canMergeToMainDirectly,
+  canDeleteBranches,
 }: ProjectBranchSwitcherProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -67,6 +75,7 @@ export default function ProjectBranchSwitcher({
   }, []);
 
   async function handleCreateBranch() {
+    if (!canCreateBranches) return;
     const name = prompt("新しいブランチ名を入力してください");
     if (!name) return;
 
@@ -104,6 +113,7 @@ export default function ProjectBranchSwitcher({
   }
 
   async function handleMergeToMain() {
+    if (!canMergeToMainDirectly) return;
     const confirmed = confirm(
       `「${currentBranch.name}」の最新状態を main に取り込みますか？`
     );
@@ -139,7 +149,46 @@ export default function ProjectBranchSwitcher({
     }
   }
 
+  async function handleRequestMainMerge() {
+    if (!canRequestMerge) return;
+    const summary = prompt("main への反映内容を簡単に入力してください", "");
+
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          branchId: currentBranch.id,
+          summary: summary ?? "",
+        }),
+      });
+      const result = (await response.json()) as
+        | { request: { id: string } }
+        | { error?: string };
+
+      if (!response.ok || !("request" in result)) {
+        throw new Error(
+          "error" in result ? result.error : "main への申請に失敗しました"
+        );
+      }
+
+      setOpen(false);
+      alert("main への申請を作成しました。");
+      router.push(buildBranchPath(`/project/${projectId}/git/requests`, currentBranch.id));
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "main への申請に失敗しました"
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDeleteBranch() {
+    if (!canDeleteBranches) return;
     const confirmed = confirm(`「${currentBranch.name}」を削除しますか？`);
     if (!confirmed) return;
 
@@ -219,39 +268,57 @@ export default function ProjectBranchSwitcher({
           </div>
 
           <div className="border-t border-card-border p-2">
-            <button
-              type="button"
-              onClick={() => {
-                void handleCreateBranch();
-              }}
-              disabled={busy}
-              className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-background disabled:opacity-60"
-            >
-              新しいブランチを作成
-            </button>
+            {canCreateBranches && (
+              <button
+                type="button"
+                onClick={() => {
+                  void handleCreateBranch();
+                }}
+                disabled={busy}
+                className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-background disabled:opacity-60"
+              >
+                新しいブランチを作成
+              </button>
+            )}
 
             {!currentBranch.is_main && (
               <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleMergeToMain();
-                  }}
-                  disabled={busy}
-                  className="mt-1 w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-background disabled:opacity-60"
-                >
-                  main に merge
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleDeleteBranch();
-                  }}
-                  disabled={busy}
-                  className="mt-1 w-full rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger/10 disabled:opacity-60"
-                >
-                  ブランチを削除
-                </button>
+                {canMergeToMainDirectly && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleMergeToMain();
+                    }}
+                    disabled={busy}
+                    className="mt-1 w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-background disabled:opacity-60"
+                  >
+                    main に merge
+                  </button>
+                )}
+                {!canMergeToMainDirectly && canRequestMerge && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleRequestMainMerge();
+                    }}
+                    disabled={busy}
+                    className="mt-1 w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-background disabled:opacity-60"
+                  >
+                    main へ申請
+                  </button>
+                )}
+                {canDeleteBranches && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleDeleteBranch();
+                    }}
+                    disabled={busy}
+                    className="mt-1 w-full rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger/10 disabled:opacity-60"
+                  >
+                    ブランチを削除
+                  </button>
+                )}
               </>
             )}
           </div>

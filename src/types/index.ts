@@ -1,18 +1,38 @@
 export interface Profile {
   id: string;
-  username: string;
+  username?: string | null;
+  login_id: string;
+  display_name: string;
+  is_admin: boolean;
+  status: "active" | "disabled";
+  created_by: string | null;
+  git_notifications_enabled: boolean;
   created_at: string;
+  updated_at: string;
+}
+
+export interface UserPermissions {
+  user_id: string;
+  can_view_projects: boolean;
+  can_create_branches: boolean;
+  can_edit_branch_content: boolean;
+  can_request_main_merge: boolean;
+  can_view_git_requests: boolean;
+  can_manage_accounts: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AuthProfile extends Profile {
+  permissions: UserPermissions;
 }
 
 export interface MusicData {
   source_type: "youtube" | "file";
-  // youtube
   video_id?: string;
-  // file (uploaded to storage bucket project-audio)
-  file_url?: string; // 再生に使う公開 URL
-  file_path?: string; // storage object key (削除用)
-  file_name?: string; // 表示用
-  // 共通
+  file_url?: string;
+  file_path?: string;
+  file_name?: string;
   start_sec: number;
   end_sec: number;
   offset_sec: number;
@@ -38,6 +58,7 @@ export interface Project {
   default_panel_duration_ms: number;
   default_interval_ms: number;
   music_data: MusicData | null;
+  main_branch_requires_admin_approval: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -48,6 +69,7 @@ export interface ProjectBranch extends ProjectBranchSettings {
   name: string;
   is_main: boolean;
   source_branch_id: string | null;
+  created_by?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -59,13 +81,13 @@ export interface BranchScopedProject extends Project {
 }
 
 export type PanelType = "general" | "motion" | "keep";
-export type MotionType = "wave"; // 将来 'fade' 'sweep' 等を追加可能
+export type MotionType = "wave";
 
 export interface WaveMotionData {
-  after_grid_data: string; // base64 encoded GridData (適用後)
-  before_duration_ms: number; // 素地を表示する時間
-  after_duration_ms: number; // 適用後を表示する時間
-  speed_columns_per_sec: number; // 何列/秒で伝播するか
+  after_grid_data: string;
+  before_duration_ms: number;
+  after_duration_ms: number;
+  speed_columns_per_sec: number;
 }
 
 export const DEFAULT_WAVE_MOTION_DATA = (
@@ -82,7 +104,7 @@ export interface ZentaiGamen {
   project_id: string;
   branch_id: string;
   name: string;
-  grid_data: string; // base64 encoded (motion パネルでは "before/素地" を保持)
+  grid_data: string;
   thumbnail: string | null;
   position_x: number;
   position_y: number;
@@ -188,4 +210,61 @@ export interface ProjectBranchMerge {
   target_branch_id: string;
   snapshot: ProjectBranchMergeSnapshot;
   created_at: string;
+}
+
+export type MergeRequestStatus =
+  | "open"
+  | "approved"
+  | "rejected"
+  | "cancelled";
+
+export interface MergeRequest {
+  id: string;
+  project_id: string;
+  source_branch_id: string;
+  target_branch_id: string;
+  requested_by: string;
+  summary: string;
+  status: MergeRequestStatus;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Notification {
+  id: string;
+  recipient_id: string;
+  project_id: string | null;
+  kind: string;
+  title: string;
+  body: string;
+  reference_id: string | null;
+  is_read: boolean;
+  created_at: string;
+  read_at: string | null;
+}
+
+export interface GitNotificationSummary {
+  unreadCount: number;
+  hasUnread: boolean;
+}
+
+export interface BranchContextResponse {
+  project: BranchScopedProject;
+  branches: ProjectBranch[];
+  currentBranch: ProjectBranch;
+  auth: AuthProfile;
+  canEditCurrentBranch: boolean;
+  canCreateBranches: boolean;
+  canRequestMerge: boolean;
+  canViewGitRequests: boolean;
+  unreadGitNotifications: number;
+}
+
+export interface MergeRequestListItem extends MergeRequest {
+  source_branch_name: string;
+  target_branch_name: string;
+  requested_by_display_name: string;
+  reviewed_by_display_name: string | null;
 }

@@ -13,7 +13,6 @@ interface GridCanvasProps {
   activeTool: Tool;
   activeColor: ColorIndex;
   selection: { x1: number; y1: number; x2: number; y2: number } | null;
-  onPaintCell: (x: number, y: number, color: ColorIndex) => void;
   onStartBatchPaint: () => void;
   onBatchPaintCell: (x: number, y: number, color: ColorIndex) => void;
   onFloodFill: (x: number, y: number, color: ColorIndex) => void;
@@ -38,7 +37,6 @@ export default function GridCanvas({
   activeTool,
   activeColor,
   selection,
-  onPaintCell,
   onStartBatchPaint,
   onBatchPaintCell,
   onFloodFill,
@@ -68,28 +66,6 @@ export default function GridCanvas({
   const rafRef = useRef<number | null>(null);
   const sizeRef = useRef({ width: 0, height: 0 });
 
-  // Resize handler
-  useEffect(() => {
-    const container = containerRef.current;
-    const canvas = canvasRef.current;
-    if (!container || !canvas) return;
-
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      const { width, height } = entry.contentRect;
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = width * dpr;
-      canvas.height = height * dpr;
-      canvas.style.width = `${width}px`;
-      canvas.style.height = `${height}px`;
-      sizeRef.current = { width, height };
-      scheduleRender();
-    });
-
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, []);
-
   const scheduleRender = useCallback(() => {
     if (rafRef.current !== null) return;
     rafRef.current = requestAnimationFrame(() => {
@@ -112,6 +88,28 @@ export default function GridCanvas({
       );
     });
   }, [viewport, selection, moveSelectedCells, moveDragOffset, gridRef]);
+
+  // Resize handler
+  useEffect(() => {
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    if (!container || !canvas) return;
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const { width, height } = entry.contentRect;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      sizeRef.current = { width, height };
+      scheduleRender();
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [scheduleRender]);
 
   // Re-render on revision/viewport/selection/moveSelectedCells/offset changes
   useEffect(() => {
@@ -199,6 +197,7 @@ export default function GridCanvas({
       onSelectionChange,
       moveSelectedCells,
       onMoveSelectedCellsChange,
+      onMoveDragOffsetChange,
       isMoveSelecting,
       isEditing,
       disableMoveDrag,

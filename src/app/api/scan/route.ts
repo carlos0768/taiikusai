@@ -1,17 +1,23 @@
 import { NextResponse } from "next/server";
+import { requirePermission, requireAuth } from "@/lib/server/auth";
+import { toErrorResponse } from "@/lib/server/errors";
 
 export async function POST(request: Request) {
-  const { image, gridWidth, gridHeight } = await request.json();
+  try {
+    const { profile } = await requireAuth();
+    requirePermission(profile, "can_edit_branch_content");
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "ANTHROPIC_API_KEY not configured" },
-      { status: 500 }
-    );
-  }
+    const { image, gridWidth, gridHeight } = await request.json();
 
-  const prompt = `この画像を${gridWidth}列×${gridHeight}行のグリッドに変換してください。
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "ANTHROPIC_API_KEY not configured" },
+        { status: 500 }
+      );
+    }
+
+    const prompt = `この画像を${gridWidth}列×${gridHeight}行のグリッドに変換してください。
 
 各セルは以下の色インデックスのいずれかです:
 - 0: 白
@@ -27,7 +33,6 @@ export async function POST(request: Request) {
 
 JSONのみを返してください。説明は不要です。`;
 
-  try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -101,9 +106,6 @@ JSONのみを返してください。説明は不要です。`;
 
     return NextResponse.json({ gridData });
   } catch (err) {
-    return NextResponse.json(
-      { error: `Scan failed: ${String(err)}` },
-      { status: 500 }
-    );
+    return toErrorResponse(err);
   }
 }

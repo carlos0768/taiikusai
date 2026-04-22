@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/server/auth";
 import {
   buildBranchStateSnapshot,
   cloneConnectionsToBranch,
@@ -14,37 +15,24 @@ import {
 } from "@/lib/projectBranches";
 import type { Project, ProjectBranch } from "@/types";
 import { createClient } from "@/lib/supabase/server";
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  if (
-    error &&
-    typeof error === "object" &&
-    "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
-  }
-
-  return "ブランチの merge に失敗しました";
-}
+import { HttpError, toErrorResponse } from "@/lib/server/errors";
 
 export async function POST(
   _request: Request,
   context: { params: Promise<{ projectId: string; branchId: string }> }
 ) {
-  const { projectId, branchId } = await context.params;
-  const supabase = await createClient();
-
-  let createdMergeId: string | null = null;
-  let project: Project | null = null;
-  let mainBranch: ProjectBranch | null = null;
-  let mainState: ProjectBranchState | null = null;
-
   try {
+    const { profile } = await requireAuth();
+    if (!profile.is_admin) {
+      throw new HttpError(403, "admin のみ直接 merge できます");
+    }
+
+    const { projectId, branchId } = await context.params;
+    const supabase = await createClient();
+    let project: Project | null = null;
+    let mainBranch: ProjectBranch | null = null;
+    let mainState: ProjectBranchState | null = null;
+
     const contextResult = await fetchProjectBranchContext(
       supabase,
       projectId,
@@ -101,8 +89,6 @@ export async function POST(
       throw mergeInsertError ?? new Error("merge ログの保存に失敗しました");
     }
 
-    createdMergeId = mergeRow.id;
-
     const { panels, idMap } = clonePanelsToBranch({
       projectId,
       branchId: mainBranch.id,
@@ -129,34 +115,8 @@ export async function POST(
       mergedFromBranchId: sourceBranch.id,
     });
   } catch (error) {
-    try {
-      if (mainBranch && mainState) {
-        await replaceBranchState(supabase, {
-          projectId,
-          targetBranch: mainBranch,
-          settings: getProjectBranchSettings(mainState.project),
-          panels: mainState.panels,
-          connections: mainState.connections,
-          syncMainCache: true,
-        });
-      }
-
-      if (createdMergeId) {
-        await supabase
-          .from("project_branch_merges")
-          .delete()
-          .eq("id", createdMergeId);
-      }
-    } catch {
-      return NextResponse.json(
-        { error: `merge に失敗しました。${getErrorMessage(error)}` },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json(
-      { error: getErrorMessage(error) },
-      { status: 500 }
+    return toErrorResponse(
+      error instanceof Error ? error : new Error("ブランチの merge に失敗しました")
     );
   }
 }

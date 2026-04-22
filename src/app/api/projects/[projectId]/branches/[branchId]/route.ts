@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { fetchProjectBranchContext } from "@/lib/projectBranches";
+import { requireAuth, requirePermission } from "@/lib/server/auth";
 import { createClient } from "@/lib/supabase/server";
+import { toErrorResponse } from "@/lib/server/errors";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) {
@@ -23,10 +25,12 @@ export async function DELETE(
   _request: Request,
   context: { params: Promise<{ projectId: string; branchId: string }> }
 ) {
-  const { projectId, branchId } = await context.params;
-  const supabase = await createClient();
-
   try {
+    const { profile } = await requireAuth();
+    requirePermission(profile, "can_create_branches");
+
+    const { projectId, branchId } = await context.params;
+    const supabase = await createClient();
     const { branches, mainBranch } = await fetchProjectBranchContext(
       supabase,
       projectId,
@@ -63,9 +67,8 @@ export async function DELETE(
       fallbackBranchId: mainBranch.id,
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: getErrorMessage(error) },
-      { status: 500 }
+    return toErrorResponse(
+      error instanceof Error ? error : new Error(getErrorMessage(error))
     );
   }
 }
