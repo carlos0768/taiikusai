@@ -74,7 +74,7 @@ export function generateScriptHtml(
 ): string {
   const position = `${cellY + 1}列${cellX + 1}番`;
   const COLS_PER_GROUP = 3; // 番号, 色, 動き
-  const GROUPS_PER_ROW = 2;
+  const GROUPS_PER_ROW = 4;
   const ROWS_PER_PAGE = Math.ceil(scenes.length / GROUPS_PER_ROW);
 
   // Build scene rows grouped into columns
