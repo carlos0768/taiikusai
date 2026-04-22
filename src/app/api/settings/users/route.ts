@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   assertLoginId,
+  buildProfileIdentityFields,
   listProfilesWithPermissions,
   normalizeStatus,
   parsePermissionInput,
@@ -68,7 +69,7 @@ export async function POST(request: Request) {
     const nextIsAdmin = Boolean(isAdmin);
     const { error: profileError } = await admin.from("profiles").upsert({
       id: created.user.id,
-      login_id: normalizedLoginId,
+      ...buildProfileIdentityFields(normalizedLoginId),
       display_name: String(displayName).trim(),
       is_admin: nextIsAdmin,
       status: normalizeStatus(status),
