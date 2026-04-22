@@ -1,15 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import {
+  getResizeHistoryPanelCount,
+  isResizeHistoryRestorable,
+} from "@/lib/resizeHistory";
 import {
   MAX_TIMING_MS,
   MIN_TIMING_MS,
   msToSecondsString,
   TIMING_STEP_MS,
 } from "@/lib/playback/timing";
-import type { Project, ZentaiGamen } from "@/types";
+import type {
+  Project,
+  ProjectGridResizeHistory,
+  ZentaiGamen,
+} from "@/types";
 
 interface ResizeResponse {
   project: Project;
@@ -17,6 +25,17 @@ interface ResizeResponse {
   resizedWavePanelCount: number;
   warning?: string | null;
 }
+
+interface RestoreResponse {
+  project: Project;
+  restoredHistoryId: string;
+  createdRollbackHistoryId: string;
+}
+
+const historyDateFormatter = new Intl.DateTimeFormat("ja-JP", {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
 
 function parseTimingInput(value: string): number | null {
   const seconds = Number(value);
@@ -31,6 +50,40 @@ function isValidGridSize(value: number): boolean {
   return Number.isInteger(value) && value >= 5 && value <= 200;
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+
+  return "設定情報の読み込みに失敗しました";
+}
+
+function getHistoryLoadErrorMessage(error: unknown): string {
+  const message = getErrorMessage(error);
+  const refersHistoryTable = message.includes("project_grid_resize_history");
+  const isHistoryConfigError =
+    refersHistoryTable &&
+    (message.includes("schema cache") ||
+      message.includes("does not exist") ||
+      message.includes("relation") ||
+      message.includes("row-level security policy"));
+
+  if (isHistoryConfigError) {
+    return "履歴機能のDB設定が未適用のため、履歴一覧を表示できません。履歴テーブルと policy 用 migration を適用してください。";
+  }
+
+  return "履歴一覧の読み込みに失敗しました。";
+}
+
 export default function ProjectSettingsPage() {
   const params = useParams();
   const projectId = params.projectId as string;
@@ -41,6 +94,7 @@ export default function ProjectSettingsPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [panelCount, setPanelCount] = useState(0);
   const [wavePanelCount, setWavePanelCount] = useState(0);
+  const [histories, setHistories] = useState<ProjectGridResizeHistory[]>([]);
 
   const [gridWidth, setGridWidth] = useState(50);
   const [gridHeight, setGridHeight] = useState(30);
@@ -57,59 +111,70 @@ export default function ProjectSettingsPage() {
   const [timingSuccess, setTimingSuccess] = useState<string | null>(null);
 
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
+  const [restoreSavingId, setRestoreSavingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadSettings = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    setHistoryLoadError(null);
 
-    async function loadSettings() {
-      setLoading(true);
-      setLoadError(null);
+    const [
+      { data: projectData, error: projectError },
+      { data: panelData, error: panelError },
+      { data: historyData, error: historyError },
+    ] = await Promise.all([
+      supabase.from("projects").select("*").eq("id", projectId).single(),
+      supabase
+        .from("zentai_gamen")
+        .select("id,panel_type,motion_type")
+        .eq("project_id", projectId),
+      supabase
+        .from("project_grid_resize_history")
+        .select("*")
+        .eq("project_id", projectId)
+        .order("created_at", { ascending: false }),
+    ]);
 
-      const [{ data: projectData, error: projectError }, { data: panelData, error: panelError }] =
-        await Promise.all([
-          supabase.from("projects").select("*").eq("id", projectId).single(),
-          supabase
-            .from("zentai_gamen")
-            .select("id,panel_type,motion_type")
-            .eq("project_id", projectId),
-        ]);
-
-      if (cancelled) return;
-
-      if (projectError || !projectData || panelError) {
-        setLoadError("設定情報の読み込みに失敗しました");
-        setLoading(false);
-        return;
-      }
-
-      const zentaiGamen = (panelData ?? []) as Pick<
-        ZentaiGamen,
-        "id" | "panel_type" | "motion_type"
-      >[];
-
-      setProject(projectData);
-      setGridWidth(projectData.grid_width);
-      setGridHeight(projectData.grid_height);
-      setSavedPanelMs(projectData.default_panel_duration_ms);
-      setSavedIntervalMs(projectData.default_interval_ms);
-      setPanelInput(msToSecondsString(projectData.default_panel_duration_ms));
-      setIntervalInput(msToSecondsString(projectData.default_interval_ms));
-      setPanelCount(zentaiGamen.length);
-      setWavePanelCount(
-        zentaiGamen.filter(
-          (panel) =>
-            panel.panel_type === "motion" && panel.motion_type === "wave"
-        ).length
-      );
+    if (projectError || !projectData || panelError) {
+      setLoadError("設定情報の読み込みに失敗しました");
       setLoading(false);
+      return;
     }
 
-    void loadSettings();
+    const zentaiGamen = (panelData ?? []) as Pick<
+      ZentaiGamen,
+      "id" | "panel_type" | "motion_type"
+    >[];
 
-    return () => {
-      cancelled = true;
-    };
+    setProject(projectData);
+    setGridWidth(projectData.grid_width);
+    setGridHeight(projectData.grid_height);
+    setSavedPanelMs(projectData.default_panel_duration_ms);
+    setSavedIntervalMs(projectData.default_interval_ms);
+    setPanelInput(msToSecondsString(projectData.default_panel_duration_ms));
+    setIntervalInput(msToSecondsString(projectData.default_interval_ms));
+    setPanelCount(zentaiGamen.length);
+    setWavePanelCount(
+      zentaiGamen.filter(
+        (panel) =>
+          panel.panel_type === "motion" && panel.motion_type === "wave"
+      ).length
+    );
+
+    if (historyError) {
+      setHistories([]);
+      setHistoryLoadError(getHistoryLoadErrorMessage(historyError));
+    } else {
+      setHistories((historyData ?? []) as ProjectGridResizeHistory[]);
+    }
+
+    setLoading(false);
   }, [projectId, supabase]);
+
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
 
   const hasGridChanges =
     project !== null &&
@@ -118,7 +183,7 @@ export default function ProjectSettingsPage() {
     isValidGridSize(gridWidth) && isValidGridSize(gridHeight);
   const isResizeDisabled =
     loading || resizeSaving || !project || !hasGridChanges || !isGridFormValid;
-  const isBusy = resizeSaving || timingSaving;
+  const isBusy = resizeSaving || timingSaving || restoreSavingId !== null;
 
   async function handleResizeSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -159,8 +224,7 @@ export default function ProjectSettingsPage() {
         (result.warning ? `\n\n${result.warning}` : "");
 
       alert(successMessage);
-      router.push(`/project/${projectId}`);
-      router.refresh();
+      await loadSettings();
     } catch (error) {
       setResizeError(
         error instanceof Error
@@ -169,6 +233,48 @@ export default function ProjectSettingsPage() {
       );
     } finally {
       setResizeSaving(false);
+    }
+  }
+
+  async function handleRestore(history: ProjectGridResizeHistory) {
+    if (!isResizeHistoryRestorable(history)) return;
+
+    const confirmed = confirm(
+      `${history.from_grid_width} × ${history.from_grid_height} → ${history.to_grid_width} × ${history.to_grid_height} の版へ復元しますか？\n\n復元前の現在状態も新しい履歴として保存されます。`
+    );
+    if (!confirmed) return;
+
+    setRestoreSavingId(history.id);
+    setHistoryLoadError(null);
+
+    try {
+      const response = await fetch(
+        `/api/projects/${projectId}/resize-history/${history.id}/restore`,
+        { method: "POST" }
+      );
+      const result = (await response.json()) as
+        | RestoreResponse
+        | { error?: string };
+
+      if (!response.ok) {
+        const error = "error" in result ? result.error : undefined;
+        throw new Error(error ?? "履歴の復元に失敗しました");
+      }
+
+      if (!("project" in result)) {
+        throw new Error("履歴の復元に失敗しました");
+      }
+
+      alert("選択した版へ復元しました。復元前の現在状態も履歴に保存しました。");
+      await loadSettings();
+    } catch (error) {
+      setHistoryLoadError(
+        error instanceof Error
+          ? error.message
+          : "履歴の復元に失敗しました"
+      );
+    } finally {
+      setRestoreSavingId(null);
     }
   }
 
@@ -447,6 +553,82 @@ export default function ProjectSettingsPage() {
                   </button>
                 </div>
               </form>
+
+              <section className="p-4 bg-card border border-card-border rounded-xl space-y-4">
+                <div>
+                  <h2 className="font-medium">リサイズ履歴</h2>
+                  <p className="text-sm text-muted mt-1">
+                    保存済みのリサイズ履歴を一覧表示します。新形式の履歴は、その版へ復元できます。
+                  </p>
+                </div>
+
+                {historyLoadError && (
+                  <div className="px-3 py-2 rounded-lg bg-danger/10 text-sm text-danger">
+                    {historyLoadError}
+                  </div>
+                )}
+
+                {!historyLoadError && histories.length === 0 && (
+                  <p className="text-sm text-muted">履歴はまだありません。</p>
+                )}
+
+                {!historyLoadError && histories.length > 0 && (
+                  <div className="space-y-3">
+                    {histories.map((history) => {
+                      const isRestorable = isResizeHistoryRestorable(history);
+                      const isRestoring = restoreSavingId === history.id;
+
+                      return (
+                        <div
+                          key={history.id}
+                          className="p-4 border border-card-border rounded-lg bg-background/60"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-medium">
+                                  {historyDateFormatter.format(
+                                    new Date(history.created_at)
+                                  )}
+                                </p>
+                                {!isRestorable && (
+                                  <span className="px-2 py-0.5 text-xs rounded-full bg-danger/10 text-danger">
+                                    復元不可
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-sm text-muted mt-1">
+                                {history.from_grid_width} × {history.from_grid_height}
+                                {" "}→{" "}
+                                {history.to_grid_width} × {history.to_grid_height}
+                              </p>
+                              <p className="text-xs text-muted mt-1">
+                                保存パネル数: {getResizeHistoryPanelCount(history)} 枚
+                              </p>
+                              {!isRestorable && (
+                                <p className="text-xs text-muted mt-2">
+                                  接続情報を持たない旧形式の履歴のため、この版へは戻せません。
+                                </p>
+                              )}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleRestore(history);
+                              }}
+                              disabled={!isRestorable || restoreSavingId !== null}
+                              className="px-3 py-2 bg-accent text-black text-sm font-medium rounded-lg hover:opacity-90 disabled:opacity-50 shrink-0"
+                            >
+                              {isRestoring ? "復元中..." : "復元"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
             </>
           )}
         </div>
