@@ -2,13 +2,15 @@ import { createClient } from "@/lib/supabase/client";
 import type { Connection } from "@/types";
 
 export async function getConnectionsByProject(
-  projectId: string
+  projectId: string,
+  branchId: string
 ): Promise<Connection[]> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from("connections")
     .select("*")
     .eq("project_id", projectId)
+    .eq("branch_id", branchId)
     .order("sort_order", { ascending: true });
 
   if (error) throw error;
@@ -17,6 +19,7 @@ export async function getConnectionsByProject(
 
 export async function createConnection(
   projectId: string,
+  branchId: string,
   sourceId: string,
   targetId: string,
   sortOrder: number = 0
@@ -26,6 +29,7 @@ export async function createConnection(
     .from("connections")
     .insert({
       project_id: projectId,
+      branch_id: branchId,
       source_id: sourceId,
       target_id: targetId,
       sort_order: sortOrder,
@@ -37,16 +41,21 @@ export async function createConnection(
   return data;
 }
 
-export async function deleteConnection(id: string): Promise<void> {
+export async function deleteConnection(
+  id: string,
+  branchId: string
+): Promise<void> {
   const supabase = createClient();
   const { error } = await supabase
     .from("connections")
     .delete()
-    .eq("id", id);
+    .eq("id", id)
+    .eq("branch_id", branchId);
   if (error) throw error;
 }
 
 export async function deleteConnectionByNodes(
+  branchId: string,
   sourceId: string,
   targetId: string
 ): Promise<void> {
@@ -54,6 +63,7 @@ export async function deleteConnectionByNodes(
   const { error } = await supabase
     .from("connections")
     .delete()
+    .eq("branch_id", branchId)
     .eq("source_id", sourceId)
     .eq("target_id", targetId);
   if (error) throw error;

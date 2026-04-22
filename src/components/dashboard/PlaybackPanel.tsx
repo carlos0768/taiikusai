@@ -27,6 +27,7 @@ const PX_PER_SECOND = 30;
 
 interface PlaybackPanelProps {
   projectId: string;
+  branchId: string;
   timeline: PlaybackTimeline;
   onClose: () => void;
   initialMusic: MusicData | null;
@@ -300,6 +301,7 @@ function updateFrameItemDuration(
 
 export default function PlaybackPanel({
   projectId,
+  branchId,
   timeline,
   onClose,
   initialMusic,
@@ -387,7 +389,8 @@ export default function PlaybackPanel({
           updated_at: new Date().toISOString(),
         })
         .eq("id", item.zentaiGamenId)
-        .eq("project_id", projectId);
+        .eq("project_id", projectId)
+        .eq("branch_id", branchId);
 
       if (error) {
         console.error("Failed to persist frame duration override", error);
@@ -401,7 +404,14 @@ export default function PlaybackPanel({
 
       setSavingKey((current) => (current === key ? null : current));
     },
-    [frameItems, projectId, savingKey, supabase, timeline.defaultPanelDurationMs]
+    [
+      branchId,
+      frameItems,
+      projectId,
+      savingKey,
+      supabase,
+      timeline.defaultPanelDurationMs,
+    ]
   );
 
   const persistGapDuration = useCallback(
@@ -431,7 +441,8 @@ export default function PlaybackPanel({
         .from("connections")
         .update({ interval_override_ms: intervalMs })
         .eq("id", item.connectionId)
-        .eq("project_id", projectId);
+        .eq("project_id", projectId)
+        .eq("branch_id", branchId);
 
       if (error) {
         console.error("Failed to persist gap duration override", error);
@@ -445,7 +456,7 @@ export default function PlaybackPanel({
 
       setSavingKey((current) => (current === key ? null : current));
     },
-    [gapItems, projectId, savingKey, supabase, timeline.defaultIntervalMs]
+    [branchId, gapItems, projectId, savingKey, supabase, timeline.defaultIntervalMs]
   );
 
   useEffect(() => {

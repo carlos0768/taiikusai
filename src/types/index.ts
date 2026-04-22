@@ -19,6 +19,15 @@ export interface MusicData {
   duration: number;
 }
 
+export interface ProjectBranchSettings {
+  grid_width: number;
+  grid_height: number;
+  colors: string[];
+  default_panel_duration_ms: number;
+  default_interval_ms: number;
+  music_data: MusicData | null;
+}
+
 export interface Project {
   id: string;
   owner_id: string;
@@ -31,6 +40,22 @@ export interface Project {
   music_data: MusicData | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ProjectBranch extends ProjectBranchSettings {
+  id: string;
+  project_id: string;
+  name: string;
+  is_main: boolean;
+  source_branch_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BranchScopedProject extends Project {
+  active_branch_id: string;
+  active_branch_name: string;
+  active_branch_is_main: boolean;
 }
 
 export type PanelType = "general" | "motion";
@@ -55,6 +80,7 @@ export const DEFAULT_WAVE_MOTION_DATA = (
 export interface ZentaiGamen {
   id: string;
   project_id: string;
+  branch_id: string;
   name: string;
   grid_data: string; // base64 encoded (motion パネルでは "before/素地" を保持)
   thumbnail: string | null;
@@ -72,6 +98,7 @@ export interface ZentaiGamen {
 export interface Connection {
   id: string;
   project_id: string;
+  branch_id: string;
   source_id: string;
   target_id: string;
   sort_order: number;
@@ -142,11 +169,23 @@ export interface RestorableProjectGridResizeHistorySnapshot
 export interface ProjectGridResizeHistory {
   id: string;
   project_id: string;
+  branch_id: string;
   from_grid_width: number;
   from_grid_height: number;
   to_grid_width: number;
   to_grid_height: number;
   auto_adjust_illustration: boolean;
   snapshot: ProjectGridResizeHistorySnapshot;
+  created_at: string;
+}
+
+export type ProjectBranchMergeSnapshot = ProjectGridResizeHistorySnapshot;
+
+export interface ProjectBranchMerge {
+  id: string;
+  project_id: string;
+  source_branch_id: string;
+  target_branch_id: string;
+  snapshot: ProjectBranchMergeSnapshot;
   created_at: string;
 }
