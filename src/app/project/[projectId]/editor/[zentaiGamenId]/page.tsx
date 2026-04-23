@@ -6,7 +6,12 @@ import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/client";
 import { fetchJson } from "@/lib/client/api";
 import { decodeGrid } from "@/lib/grid/codec";
-import { getPlaybackFrameFinalGrid, type GridData, type ColorIndex } from "@/lib/grid/types";
+import {
+  countUndefinedCells,
+  getPlaybackFrameFinalGrid,
+  type ColorIndex,
+  type GridData,
+} from "@/lib/grid/types";
 import GridEditor, { type GridEditorSavePayload } from "@/components/editor/GridEditor";
 import { findPlaybackRoutes } from "@/lib/api/connections";
 import { generateScriptHtml } from "@/lib/export/generateScript";
@@ -147,7 +152,9 @@ export default function EditorPage() {
       (allZg as ZentaiGamen[]).map((item) => [item.id, item])
     );
     const scenes: {
+      name: string;
       grid: GridData;
+      beforeGrid: GridData | null;
       keepMask: GridData | null;
       keepHasPreviousDisplay: boolean;
       memo: string;
@@ -168,7 +175,9 @@ export default function EditorPage() {
       });
 
       scenes.push({
+        name: item.name,
         grid: getPlaybackFrameFinalGrid(frame),
+        beforeGrid: frame.kind === "wave" ? frame.before : null,
         keepMask: frame.kind === "keep" ? frame.mask : null,
         keepHasPreviousDisplay:
           frame.kind === "keep" ? previousVisibleGrid !== null : false,
@@ -179,6 +188,26 @@ export default function EditorPage() {
 
     if (scenes.length === 0) {
       throw new Error("シーンデータがありません");
+    }
+
+    const undefinedReport: { name: string; count: number }[] = [];
+    for (const scene of scenes) {
+      const count =
+        countUndefinedCells(scene.grid) +
+        (scene.beforeGrid ? countUndefinedCells(scene.beforeGrid) : 0);
+      if (count > 0) {
+        undefinedReport.push({ name: scene.name, count });
+      }
+    }
+
+    if (undefinedReport.length > 0) {
+      const lines = undefinedReport
+        .map((r) => `・${r.name}（${r.count}セル）`)
+        .join("\n");
+      const ok = window.confirm(
+        `連結されたパネルに未塗りのセルが残っています。\n\n${lines}\n\nこのまま出力しますか？`
+      );
+      if (!ok) return;
     }
 
     const zip = new JSZip();

@@ -84,6 +84,15 @@ export function cloneGrid(grid: GridData): GridData {
   };
 }
 
+/** grid.cells 内の UNDEFINED_COLOR (未定義・灰色) セル数を返す。 */
+export function countUndefinedCells(grid: GridData): number {
+  let count = 0;
+  for (let i = 0; i < grid.cells.length; i += 1) {
+    if (grid.cells[i] === UNDEFINED_COLOR) count += 1;
+  }
+  return count;
+}
+
 /**
  * PlaybackFrame: アニメーション再生で扱うフレーム
  *  - general: 従来の一般パネル。フレーム到来時に grid 全体を一斉表示する
