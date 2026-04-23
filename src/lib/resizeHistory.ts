@@ -34,6 +34,7 @@ export function buildResizeHistorySnapshotConnections(
     target_id: connection.target_id,
     sort_order: connection.sort_order,
     interval_override_ms: connection.interval_override_ms,
+    keep_mask_grid_data: connection.keep_mask_grid_data,
   }));
 }
 

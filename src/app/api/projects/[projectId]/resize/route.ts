@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { decodeGrid, encodeGrid } from "@/lib/grid/codec";
 import {
+  fetchBranchConnections,
   fetchBranchPanels,
   getProjectBranchSettings,
 } from "@/lib/projectBranchState";
@@ -18,6 +19,7 @@ import { normalizeKeepMaskGrid } from "@/lib/keep";
 import { createClient } from "@/lib/supabase/server";
 import type {
   BranchScopedProject,
+  Connection,
   ProjectBranch,
   WaveMotionData,
   ZentaiGamen,
@@ -33,6 +35,11 @@ interface PreparedPanelUpdate {
   id: string;
   gridData: string;
   motionData: WaveMotionData | null;
+}
+
+interface PreparedConnectionUpdate {
+  id: string;
+  keepMaskGridData: string;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -95,6 +102,7 @@ export async function POST(
   let projectView!: BranchScopedProject;
   let currentBranch!: ProjectBranch;
   let panels: ZentaiGamen[] = [];
+  let connections: Connection[] = [];
 
   try {
     const contextResult = await fetchProjectBranchContext(
@@ -104,7 +112,10 @@ export async function POST(
     );
     projectView = contextResult.projectView;
     currentBranch = contextResult.currentBranch;
-    panels = await fetchBranchPanels(supabase, projectId, currentBranch.id);
+    [panels, connections] = await Promise.all([
+      fetchBranchPanels(supabase, projectId, currentBranch.id),
+      fetchBranchConnections(supabase, projectId, currentBranch.id),
+    ]);
   } catch {
     return NextResponse.json(
       { error: "プロジェクトまたはブランチの取得に失敗しました" },
@@ -131,6 +142,7 @@ export async function POST(
 
   const allPanels = panels ?? [];
   const preparedUpdates: PreparedPanelUpdate[] = [];
+  const preparedConnectionUpdates: PreparedConnectionUpdate[] = [];
   let resizedWavePanelCount = 0;
 
   for (const panel of allPanels) {
@@ -160,19 +172,29 @@ export async function POST(
       continue;
     }
 
-    if (panel.panel_type === "keep") {
-      preparedUpdates.push({
-        id: panel.id,
-        gridData: encodeGrid(normalizeKeepMaskGrid(resizeGrid(beforeGrid, resizeOptions))),
-        motionData: null,
-      });
-      continue;
-    }
-
     preparedUpdates.push({
       id: panel.id,
       gridData: encodeGrid(resizeGrid(beforeGrid, resizeOptions)),
       motionData: panel.motion_data ?? null,
+    });
+  }
+
+  for (const connection of connections) {
+    if (!connection.keep_mask_grid_data) continue;
+
+    const keepMask = normalizeKeepMaskGrid(
+      resizeGrid(
+        decodeGrid(
+          connection.keep_mask_grid_data,
+          projectView.grid_width,
+          projectView.grid_height
+        ),
+        resizeOptions
+      )
+    );
+    preparedConnectionUpdates.push({
+      id: connection.id,
+      keepMaskGridData: encodeGrid(keepMask),
     });
   }
 
@@ -185,7 +207,14 @@ export async function POST(
       },
     ])
   );
+  const originalConnections = new Map(
+    connections.map((connection) => [
+      connection.id,
+      connection.keep_mask_grid_data,
+    ])
+  );
   const appliedPanelIds: string[] = [];
+  const appliedConnectionIds: string[] = [];
   let branchUpdated = false;
 
   try {
@@ -202,6 +231,17 @@ export async function POST(
 
       if (error) throw error;
       appliedPanelIds.push(update.id);
+    }
+
+    for (const update of preparedConnectionUpdates) {
+      const { error } = await supabase
+        .from("connections")
+        .update({ keep_mask_grid_data: update.keepMaskGridData })
+        .eq("id", update.id)
+        .eq("branch_id", currentBranch.id);
+
+      if (error) throw error;
+      appliedConnectionIds.push(update.id);
     }
 
     const { data: updatedBranch, error: updateBranchError } = await supabase
@@ -240,6 +280,19 @@ export async function POST(
       resizedWavePanelCount,
     });
   } catch (error) {
+    for (let index = appliedConnectionIds.length - 1; index >= 0; index--) {
+      const connectionId = appliedConnectionIds[index];
+      if (!originalConnections.has(connectionId)) continue;
+
+      await supabase
+        .from("connections")
+        .update({
+          keep_mask_grid_data: originalConnections.get(connectionId) ?? null,
+        })
+        .eq("id", connectionId)
+        .eq("branch_id", currentBranch.id);
+    }
+
     for (let index = appliedPanelIds.length - 1; index >= 0; index--) {
       const panelId = appliedPanelIds[index];
       const original = originalPanels.get(panelId);

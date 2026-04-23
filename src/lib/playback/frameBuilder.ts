@@ -6,8 +6,10 @@ import {
   type PlaybackFrame,
 } from "@/lib/grid/types";
 import {
-  normalizeKeepMaskGrid,
-  resolveKeepDisplayGrid,
+  applyKeepTransition,
+  decodeKeepMask,
+  filterKeepMaskBySameColor,
+  hasKeepCells,
 } from "@/lib/keep";
 import type { Connection, ZentaiGamen } from "@/types";
 import {
@@ -28,6 +30,7 @@ export interface PlaybackGapItem {
   connectionId: string | null;
   intervalMs: number;
   transitionKind: "white" | "keep";
+  transitionGrid: GridData | null;
   isIntervalOverride: boolean;
   isIntervalEditable: boolean;
 }
@@ -56,7 +59,7 @@ export function getIntervalDurationMs(
 /**
  * ZentaiGamen を再生用の PlaybackFrame に変換する。
  * - panel_type === 'motion' && motion_type === 'wave' の場合: ウェーブフレームを構築
- * - それ以外: 一般フレーム (durationMs はデフォルト 2000ms)
+ * - それ以外: 一般フレーム
  */
 export function zentaiGamenToPlaybackFrame(
   params: {
@@ -64,8 +67,6 @@ export function zentaiGamenToPlaybackFrame(
     gridWidth: number;
     gridHeight: number;
     defaultPanelDurationMs?: number;
-    previousVisibleGrid?: GridData | null;
-    keepDurationMs?: number;
   }
 ): PlaybackFrame {
   const {
@@ -73,22 +74,7 @@ export function zentaiGamenToPlaybackFrame(
     gridWidth,
     gridHeight,
     defaultPanelDurationMs = DEFAULT_PANEL_DURATION_MS,
-    previousVisibleGrid = null,
-    keepDurationMs = 0,
   } = params;
-
-  if (zg.panel_type === "keep") {
-    const mask = normalizeKeepMaskGrid(
-      decodeGrid(zg.grid_data, gridWidth, gridHeight)
-    );
-    return {
-      kind: "keep",
-      mask,
-      displayGrid: resolveKeepDisplayGrid(previousVisibleGrid, mask),
-      durationMs: keepDurationMs,
-      name: zg.name,
-    };
-  }
 
   if (
     zg.panel_type === "motion" &&
@@ -141,26 +127,16 @@ export function buildPlaybackTimeline(params: {
 
   const frameItems: PlaybackFrameItem[] = [];
   const gapItems: PlaybackGapItem[] = [];
-  let previousVisibleGrid: GridData | null = null;
 
   route.forEach((nodeId, index) => {
     const zg = zgMap.get(nodeId);
     if (!zg) return;
-    const previousNodeId = index > 0 ? route[index - 1] : null;
-    const previousConnection =
-      previousNodeId !== null
-        ? connectionMap.get(`${previousNodeId}:${nodeId}`)
-        : undefined;
 
     const frame = zentaiGamenToPlaybackFrame({
       zentaiGamen: zg,
       gridWidth,
       gridHeight,
       defaultPanelDurationMs,
-      previousVisibleGrid,
-      keepDurationMs: previousConnection
-        ? getIntervalDurationMs(previousConnection, defaultIntervalMs)
-        : 0,
     });
     const durationMs = getFrameTotalMs(frame);
 
@@ -168,25 +144,47 @@ export function buildPlaybackTimeline(params: {
       zentaiGamenId: zg.id,
       frame,
       durationMs,
-      timelineWidthMs: frame.kind === "keep" ? 0 : durationMs,
+      timelineWidthMs: durationMs,
       isDurationOverride:
         frame.kind === "general" && zg.panel_duration_override_ms !== null,
       isDurationEditable: frame.kind === "general",
     });
-    previousVisibleGrid = getPlaybackFrameFinalGrid(frame);
 
     if (index >= route.length - 1) return;
 
     const nextId = route[index + 1];
     const connection = connectionMap.get(`${nodeId}:${nextId}`);
     const nextZentaiGamen = zgMap.get(nextId);
+    const rawMask = decodeKeepMask(
+      connection?.keep_mask_grid_data,
+      gridWidth,
+      gridHeight
+    );
+    let transitionGrid: GridData | null = null;
+
+    if (connection && nextZentaiGamen && rawMask) {
+      const nextFrame = zentaiGamenToPlaybackFrame({
+        zentaiGamen: nextZentaiGamen,
+        gridWidth,
+        gridHeight,
+        defaultPanelDurationMs,
+      });
+      const sourceGrid = getPlaybackFrameFinalGrid(frame);
+      const targetGrid = getPlaybackFrameFinalGrid(nextFrame);
+      const keepMask = filterKeepMaskBySameColor(sourceGrid, targetGrid, rawMask);
+
+      if (hasKeepCells(keepMask)) {
+        transitionGrid = applyKeepTransition(sourceGrid, keepMask);
+      }
+    }
+
     gapItems.push({
       connectionId: connection?.id ?? null,
       intervalMs: connection
         ? getIntervalDurationMs(connection, defaultIntervalMs)
         : defaultIntervalMs,
-      transitionKind:
-        nextZentaiGamen?.panel_type === "keep" ? "keep" : "white",
+      transitionKind: transitionGrid ? "keep" : "white",
+      transitionGrid,
       isIntervalOverride: connection?.interval_override_ms !== null,
       isIntervalEditable: Boolean(connection),
     });

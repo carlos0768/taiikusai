@@ -15,7 +15,7 @@ import {
 import GridEditor, { type GridEditorSavePayload } from "@/components/editor/GridEditor";
 import { findPlaybackRoutes } from "@/lib/api/connections";
 import { generateScriptHtml } from "@/lib/export/generateScript";
-import { isKeepMaskSelected } from "@/lib/keep";
+import { decodeKeepMask, filterKeepMaskBySameColor, isKeepCell } from "@/lib/keep";
 import { zentaiGamenToPlaybackFrame } from "@/lib/playback/frameBuilder";
 import type { BranchContextResponse, Connection, ZentaiGamen } from "@/types";
 
@@ -151,40 +151,56 @@ export default function EditorPage() {
     const zentaiGamenMap = new Map(
       (allZg as ZentaiGamen[]).map((item) => [item.id, item])
     );
+    const width = context.project.grid_width;
+    const height = context.project.grid_height;
+    const connectionMap = new Map(
+      (allConns as Connection[]).map((connection) => [
+        `${connection.source_id}:${connection.target_id}`,
+        connection,
+      ])
+    );
     const scenes: {
       name: string;
       grid: GridData;
       beforeGrid: GridData | null;
       keepMask: GridData | null;
-      keepHasPreviousDisplay: boolean;
       memo: string;
     }[] = [];
-    let previousVisibleGrid: GridData | null = null;
 
-    for (const nodeId of route) {
+    route.forEach((nodeId, index) => {
       const item = zentaiGamenMap.get(nodeId);
-      if (!item) continue;
+      if (!item) return;
 
       const frame = zentaiGamenToPlaybackFrame({
         zentaiGamen: item,
-        gridWidth: context.project.grid_width,
-        gridHeight: context.project.grid_height,
+        gridWidth: width,
+        gridHeight: height,
         defaultPanelDurationMs: context.project.default_panel_duration_ms,
-        previousVisibleGrid,
-        keepDurationMs: 0,
       });
+      const grid = getPlaybackFrameFinalGrid(frame);
+      const previousNodeId = route[index - 1];
+      const previousConnection = previousNodeId
+        ? connectionMap.get(`${previousNodeId}:${nodeId}`)
+        : null;
+      const previousScene = scenes[scenes.length - 1];
+      const rawKeepMask = decodeKeepMask(
+        previousConnection?.keep_mask_grid_data,
+        width,
+        height
+      );
+      const keepMask =
+        rawKeepMask && previousScene
+          ? filterKeepMaskBySameColor(previousScene.grid, grid, rawKeepMask)
+          : null;
 
       scenes.push({
         name: item.name,
-        grid: getPlaybackFrameFinalGrid(frame),
+        grid,
         beforeGrid: frame.kind === "wave" ? frame.before : null,
-        keepMask: frame.kind === "keep" ? frame.mask : null,
-        keepHasPreviousDisplay:
-          frame.kind === "keep" ? previousVisibleGrid !== null : false,
+        keepMask,
         memo: item.memo || "",
       });
-      previousVisibleGrid = getPlaybackFrameFinalGrid(frame);
-    }
+    });
 
     if (scenes.length === 0) {
       throw new Error("シーンデータがありません");
@@ -211,20 +227,16 @@ export default function EditorPage() {
     }
 
     const zip = new JSZip();
-    const width = context.project.grid_width;
-    const height = context.project.grid_height;
 
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
+        const cellIndex = y * width + x;
         const cellScenes = scenes.map((scene, index) => ({
           sceneNumber: index + 1,
-          action:
-            scene.keepMask &&
-            scene.keepHasPreviousDisplay &&
-            isKeepMaskSelected(scene.keepMask.cells[y * width + x])
-              ? ("keep" as const)
-              : ("color" as const),
-          colorIndex: scene.grid.cells[y * width + x] as ColorIndex,
+          action: isKeepCell(scene.keepMask, cellIndex)
+            ? ("keep" as const)
+            : ("color" as const),
+          colorIndex: scene.grid.cells[cellIndex] as ColorIndex,
           memo: scene.memo,
         }));
 

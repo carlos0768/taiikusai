@@ -12,7 +12,8 @@ export interface ZentaiGamenNodeData {
   gridHeight: number;
   hasOutgoingEdge: boolean;
   isWave: boolean;
-  isKeep: boolean;
+  isKeepRangeSelected?: boolean;
+  isKeepRangeStart?: boolean;
   onDoubleClick: (id: string) => void;
   onLongPress: (id: string, name: string, x: number, y: number) => void;
   [key: string]: unknown;
@@ -49,15 +50,11 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
     for (let y = 0; y < grid.height; y++) {
       for (let x = 0; x < grid.width; x++) {
         const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
-        ctx.fillStyle = nodeData.isKeep
-          ? colorIdx === 1
-            ? "#FFD700"
-            : "#FFFFFF"
-          : COLOR_MAP[colorIdx];
+        ctx.fillStyle = COLOR_MAP[colorIdx];
         ctx.fillRect(x * cellW, y * cellH, Math.ceil(cellW), Math.ceil(cellH));
       }
     }
-  }, [nodeData.gridData, nodeData.gridWidth, nodeData.gridHeight, nodeData.isKeep]);
+  }, [nodeData.gridData, nodeData.gridWidth, nodeData.gridHeight]);
 
   const didMoveRef = useRef(false);
   const longPressTriggeredRef = useRef(false);
@@ -121,7 +118,11 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
 
   return (
     <div
-      className="bg-card border border-card-border rounded-lg shadow-lg overflow-visible select-none relative"
+      className={`bg-card rounded-lg shadow-lg overflow-visible select-none relative transition-colors ${
+        nodeData.isKeepRangeSelected
+          ? "border-2 border-accent shadow-accent/30"
+          : "border border-card-border"
+      }`}
       style={{ width: 176, cursor: "grab" }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -140,15 +141,15 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
             〜 WAVE
           </span>
         )}
-        {nodeData.isKeep && (
-          <span className="absolute top-1 left-1 px-1.5 py-0.5 text-[9px] font-bold bg-accent text-black rounded">
-            KEEP
-          </span>
-        )}
       </div>
 
       {/* Name */}
       <div className="px-2 py-1.5 text-xs text-foreground truncate">
+        {nodeData.isKeepRangeStart && (
+          <span className="mr-1 rounded bg-accent px-1 py-0.5 text-[10px] font-semibold text-black">
+            start
+          </span>
+        )}
         {nodeData.name}
       </div>
 

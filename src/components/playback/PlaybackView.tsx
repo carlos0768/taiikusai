@@ -126,7 +126,12 @@ export default function PlaybackView({ timeline, onBack }: PlaybackViewProps) {
 
     const frame = frames[currentIndex];
     if (!frame) return;
-    const dims = frameDimensions(frame);
+    const activeTransitionGrid = isWhiteFrame
+      ? timeline.gapItems[currentIndex]?.transitionGrid ?? null
+      : null;
+    const dims = activeTransitionGrid
+      ? { width: activeTransitionGrid.width, height: activeTransitionGrid.height }
+      : frameDimensions(frame);
     const rect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
 
@@ -143,6 +148,11 @@ export default function PlaybackView({ timeline, onBack }: PlaybackViewProps) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, canvasW, canvasH);
 
+    if (isWhiteFrame && activeTransitionGrid) {
+      drawGrid(ctx, activeTransitionGrid, canvasW, canvasH);
+      return;
+    }
+
     if (isWhiteFrame) {
       ctx.fillStyle = "#FFFFFF";
       ctx.fillRect(0, 0, canvasW, canvasH);
@@ -156,10 +166,14 @@ export default function PlaybackView({ timeline, onBack }: PlaybackViewProps) {
     } else {
       drawWave(ctx, frame, frameElapsedMs, canvasW, canvasH);
     }
-  }, [currentIndex, frames, frameElapsedMs, isWhiteFrame]);
+  }, [currentIndex, frames, frameElapsedMs, isWhiteFrame, timeline.gapItems]);
 
   const currentFrame = frames[currentIndex];
-  const headerName = currentFrame?.name ?? `Frame ${currentIndex + 1}`;
+  const headerName = isWhiteFrame
+    ? timeline.gapItems[currentIndex]?.transitionKind === "keep"
+      ? "（keep中）"
+      : "（折り中）"
+    : currentFrame?.name ?? `Frame ${currentIndex + 1}`;
 
   return (
     <div className="h-full flex flex-col bg-background">

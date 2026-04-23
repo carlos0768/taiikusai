@@ -125,6 +125,7 @@ export interface Connection {
   target_id: string;
   sort_order: number;
   interval_override_ms: number | null;
+  keep_mask_grid_data: string | null;
   created_at: string;
 }
 
@@ -171,6 +172,7 @@ export interface ProjectGridResizeHistorySnapshotConnection {
   target_id: string;
   sort_order: number;
   interval_override_ms: number | null;
+  keep_mask_grid_data: string | null;
 }
 
 export interface ProjectGridResizeHistorySnapshot {

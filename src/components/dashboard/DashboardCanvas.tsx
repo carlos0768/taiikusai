@@ -13,7 +13,6 @@ import {
   type Connection,
   type Node,
   type Edge,
-  type EdgeMouseHandler,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useRouter } from "next/navigation";
@@ -37,16 +36,26 @@ import { parseExcel, parseCsv } from "@/lib/import/parseSpreadsheet";
 import { findPlaybackRoutes } from "@/lib/api/connections";
 import {
   buildPlaybackTimeline,
+  zentaiGamenToPlaybackFrame,
   type PlaybackTimeline,
 } from "@/lib/playback/frameBuilder";
-import { createEmptyGrid } from "@/lib/grid/types";
-import { createKeepMaskGrid } from "@/lib/keep";
+import {
+  createEmptyGrid,
+  getPlaybackFrameFinalGrid,
+  type GridData,
+} from "@/lib/grid/types";
+import {
+  buildDefaultKeepMask,
+  decodeKeepMask,
+  encodeKeepMask,
+} from "@/lib/keep";
 import { resizeGrid } from "@/lib/grid/resize";
 import { DEFAULT_WAVE_MOTION_DATA } from "@/types";
 import CameraCapture from "@/components/scan/CameraCapture";
 import ZentaiGamenNode from "./ZentaiGamenNode";
 import ConnectionEdge from "./ConnectionEdge";
 import ContextMenu, { type SubMenuItem } from "./ContextMenu";
+import KeepConnectionEditor from "./KeepConnectionEditor";
 import NodeDeleteMenu from "./NodeDeleteMenu";
 import Sidebar from "./Sidebar";
 import PlaybackPanel from "./PlaybackPanel";
@@ -63,6 +72,71 @@ interface DashboardCanvasProps {
   initialConnections: DBConnection[];
   auth: AuthProfile;
   unreadGitNotifications: number;
+}
+
+function findConnectionPath(
+  connections: DBConnection[],
+  startId: string,
+  targetId: string
+): string[] | null {
+  function findPaths(sourceId: string, destinationId: string): string[][] {
+    const adjacency = new Map<string, string[]>();
+    connections.forEach((connection) => {
+      const targets = adjacency.get(connection.source_id) ?? [];
+      targets.push(connection.target_id);
+      adjacency.set(connection.source_id, targets);
+    });
+
+    const paths: string[][] = [];
+    function dfs(currentId: string, path: string[], visited: Set<string>) {
+      if (paths.length > 1) return;
+      if (currentId === destinationId) {
+        paths.push([...path]);
+        return;
+      }
+
+      const targets = adjacency.get(currentId) ?? [];
+      targets.forEach((nextId) => {
+        if (visited.has(nextId)) return;
+        visited.add(nextId);
+        path.push(nextId);
+        dfs(nextId, path, visited);
+        path.pop();
+        visited.delete(nextId);
+      });
+    }
+
+    dfs(sourceId, [sourceId], new Set([sourceId]));
+    return paths;
+  }
+
+  const forwardPaths = findPaths(startId, targetId);
+  if (forwardPaths.length === 1) return forwardPaths[0];
+  if (forwardPaths.length > 1) {
+    throw new Error("keep範囲の経路が複数あります。分岐を減らしてから選択してください");
+  }
+
+  const reversePaths = findPaths(targetId, startId);
+  if (reversePaths.length === 1) return reversePaths[0];
+  if (reversePaths.length > 1) {
+    throw new Error("keep範囲の経路が複数あります。分岐を減らしてから選択してください");
+  }
+
+  return null;
+}
+
+function buildConnectionEdges(
+  connections: DBConnection[],
+  data?: Edge["data"]
+): Edge[] {
+  return connections.map((connection) => ({
+    id: connection.id,
+    source: connection.source_id,
+    target: connection.target_id,
+    type: "connection",
+    markerEnd: undefined,
+    data,
+  }));
 }
 
 function DashboardCanvasInner({
@@ -159,6 +233,24 @@ function DashboardCanvasInner({
     nodeId: string;
     nodeName: string;
   } | null>(null);
+  const [edgeMenu, setEdgeMenu] = useState<{
+    x: number;
+    y: number;
+    connectionId: string;
+  } | null>(null);
+  const [keepRangeStart, setKeepRangeStart] = useState<{
+    nodeId: string;
+    nodeName: string;
+  } | null>(null);
+  const [keepRangePath, setKeepRangePath] = useState<string[] | null>(null);
+  const [keepEditor, setKeepEditor] = useState<{
+    connectionId: string;
+    sourceName: string;
+    targetName: string;
+    sourceGrid: GridData;
+    targetGrid: GridData;
+    mask: GridData;
+  } | null>(null);
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -171,8 +263,107 @@ function DashboardCanvasInner({
       .then(({ data }) => setTemplates((data ?? []) as Template[]));
   }, [supabase]);
 
+  const getZentaiGamenDisplayGrid = useCallback(
+    (zg: ZentaiGamen): GridData =>
+      getPlaybackFrameFinalGrid(
+        zentaiGamenToPlaybackFrame({
+          zentaiGamen: zg,
+          gridWidth: project.grid_width,
+          gridHeight: project.grid_height,
+          defaultPanelDurationMs: project.default_panel_duration_ms,
+        })
+      ),
+    [
+      project.default_panel_duration_ms,
+      project.grid_height,
+      project.grid_width,
+    ]
+  );
+
+  const persistConnectionKeepMask = useCallback(
+    async (connectionId: string, mask: GridData) => {
+      const encodedMask = encodeKeepMask(mask);
+      const { error } = await supabase
+        .from("connections")
+        .update({ keep_mask_grid_data: encodedMask })
+        .eq("id", connectionId)
+        .eq("branch_id", project.active_branch_id);
+
+      if (error) throw error;
+
+      setConnectionList((prev) =>
+        prev.map((connection) =>
+          connection.id === connectionId
+            ? { ...connection, keep_mask_grid_data: encodedMask }
+            : connection
+        )
+      );
+    },
+    [project.active_branch_id, supabase]
+  );
+
   const handleNodeDoubleClick = useCallback(
-    (nodeId: string) => {
+    async (nodeId: string) => {
+      if (keepRangeStart) {
+        if (!canEditCurrentBranch) return;
+        if (nodeId === keepRangeStart.nodeId) {
+          setActionError("keep範囲の終了パネルを選択してください");
+          return;
+        }
+
+        try {
+          const path = findConnectionPath(
+            connectionList,
+            keepRangeStart.nodeId,
+            nodeId
+          );
+          if (!path || path.length < 2) {
+            setActionError("選択したパネル間に連続した接続経路がありません");
+            return;
+          }
+
+          setKeepRangePath(path);
+
+          const zentaiGamenMap = new Map(
+            zentaiGamenList.map((item) => [item.id, item])
+          );
+          const connectionMap = new Map(
+            connectionList.map((connection) => [
+              `${connection.source_id}:${connection.target_id}`,
+              connection,
+            ])
+          );
+
+          for (let index = 0; index < path.length - 1; index += 1) {
+            const sourceId = path[index];
+            const targetId = path[index + 1];
+            const source = zentaiGamenMap.get(sourceId);
+            const target = zentaiGamenMap.get(targetId);
+            const connection = connectionMap.get(`${sourceId}:${targetId}`);
+
+            if (!source || !target || !connection) {
+              throw new Error("keep範囲内の接続データを解決できませんでした");
+            }
+
+            const sourceGrid = getZentaiGamenDisplayGrid(source);
+            const targetGrid = getZentaiGamenDisplayGrid(target);
+            await persistConnectionKeepMask(
+              connection.id,
+              buildDefaultKeepMask(sourceGrid, targetGrid)
+            );
+          }
+
+          setActionError(null);
+          setKeepRangeStart(null);
+          window.setTimeout(() => setKeepRangePath(null), 1200);
+        } catch (error) {
+          setActionError(
+            error instanceof Error ? error.message : "keep範囲の作成に失敗しました"
+          );
+        }
+        return;
+      }
+
       router.push(
         buildBranchPath(
           `/project/${project.id}/editor/${nodeId}`,
@@ -180,15 +371,27 @@ function DashboardCanvasInner({
         )
       );
     },
-    [project.id, project.active_branch_id, router]
+    [
+      canEditCurrentBranch,
+      connectionList,
+      getZentaiGamenDisplayGrid,
+      keepRangeStart,
+      persistConnectionKeepMask,
+      project.active_branch_id,
+      project.id,
+      router,
+      zentaiGamenList,
+    ]
   );
 
   const handleNodeLongPress = useCallback(
     (nodeId: string, nodeName: string, x: number, y: number) => {
+      if (keepRangeStart) return;
       setContextMenu(null);
+      setEdgeMenu(null);
       setNodeMenu({ x, y, nodeId, nodeName });
     },
-    []
+    [keepRangeStart]
   );
 
   const buildNodes = useCallback(
@@ -205,7 +408,8 @@ function DashboardCanvasInner({
           gridHeight: project.grid_height,
           hasOutgoingEdge: sourceIds.has(item.id),
           isWave: item.panel_type === "motion" && item.motion_type === "wave",
-          isKeep: item.panel_type === "keep",
+          isKeepRangeSelected: keepRangePath?.includes(item.id) ?? false,
+          isKeepRangeStart: keepRangeStart?.nodeId === item.id,
           onDoubleClick: handleNodeDoubleClick,
           onLongPress: handleNodeLongPress,
         },
@@ -214,19 +418,15 @@ function DashboardCanvasInner({
     [
       handleNodeDoubleClick,
       handleNodeLongPress,
+      keepRangePath,
+      keepRangeStart,
       project.grid_height,
       project.grid_width,
     ]
   );
 
   const buildEdges = useCallback((nextConnections: DBConnection[]): Edge[] => {
-    return nextConnections.map((connection) => ({
-      id: connection.id,
-      source: connection.source_id,
-      target: connection.target_id,
-      type: "connection",
-      markerEnd: undefined,
-    }));
+    return buildConnectionEdges(nextConnections);
   }, []);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(
@@ -242,11 +442,35 @@ function DashboardCanvasInner({
     setNodes(buildNodes(initialZentaiGamen, initialConnections));
     setEdges(buildEdges(initialConnections));
   }, [
-    buildEdges,
-    buildNodes,
     initialConnections,
     initialZentaiGamen,
     setEdges,
+    setNodes,
+  ]);
+
+  useEffect(() => {
+    const selectedIds = new Set(
+      keepRangePath ?? (keepRangeStart ? [keepRangeStart.nodeId] : [])
+    );
+    const startId = keepRangeStart?.nodeId ?? null;
+
+    setNodes((existingNodes) =>
+      existingNodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          isKeepRangeSelected: selectedIds.has(node.id),
+          isKeepRangeStart: node.id === startId,
+          onDoubleClick: handleNodeDoubleClick,
+          onLongPress: handleNodeLongPress,
+        },
+      }))
+    );
+  }, [
+    handleNodeDoubleClick,
+    handleNodeLongPress,
+    keepRangePath,
+    keepRangeStart,
     setNodes,
   ]);
 
@@ -305,26 +529,73 @@ function DashboardCanvasInner({
     ]
   );
 
-  const onEdgeClick: EdgeMouseHandler = useCallback(
-    async (_, edge) => {
+  const handleEdgeClick = useCallback(
+    async (edgeId: string) => {
       if (!canEditCurrentBranch) return;
 
       const { error } = await supabase
         .from("connections")
         .delete()
-        .eq("id", edge.id)
+        .eq("id", edgeId)
         .eq("branch_id", project.active_branch_id);
       if (error) {
         setActionError(error.message);
         return;
       }
 
+      const nextConnections = connectionList.filter(
+        (connection) => connection.id !== edgeId
+      );
+      const sourceIds = new Set(
+        nextConnections.map((connection) => connection.source_id)
+      );
+
       setActionError(null);
-      setConnectionList((prev) => prev.filter((connection) => connection.id !== edge.id));
-      setEdges((existingEdges) => existingEdges.filter((item) => item.id !== edge.id));
+      setEdgeMenu(null);
+      setConnectionList(nextConnections);
+      setEdges((existingEdges) => existingEdges.filter((item) => item.id !== edgeId));
+      setNodes((existingNodes) =>
+        existingNodes.map((node) => ({
+          ...node,
+          data: {
+            ...node.data,
+            hasOutgoingEdge: sourceIds.has(node.id),
+          },
+        }))
+      );
     },
-    [canEditCurrentBranch, project.active_branch_id, setEdges, supabase]
+    [
+      canEditCurrentBranch,
+      connectionList,
+      project.active_branch_id,
+      setEdges,
+      setNodes,
+      supabase,
+    ]
   );
+
+  const handleEdgeLongPress = useCallback(
+    (edgeId: string, x: number, y: number) => {
+      if (!canEditCurrentBranch) return;
+      setContextMenu(null);
+      setNodeMenu(null);
+      setEdgeMenu({ x, y, connectionId: edgeId });
+    },
+    [canEditCurrentBranch]
+  );
+
+  useEffect(() => {
+    setEdges((existingEdges) =>
+      existingEdges.map((edge) => ({
+        ...edge,
+        data: {
+          ...edge.data,
+          onClick: handleEdgeClick,
+          onLongPress: handleEdgeLongPress,
+        },
+      }))
+    );
+  }, [handleEdgeClick, handleEdgeLongPress, setEdges]);
 
   const onNodeDragStop = useCallback(
     async (_event: unknown, node: Node) => {
@@ -356,10 +627,12 @@ function DashboardCanvasInner({
   const onPanePointerDown = useCallback(
     (event: React.PointerEvent) => {
       if (!canEditCurrentBranch) return;
+      if (keepRangeStart) return;
 
       longPressStartRef.current = { x: event.clientX, y: event.clientY };
       longPressTimerRef.current = setTimeout(() => {
         setNodeMenu(null);
+        setEdgeMenu(null);
         const flowPosition = reactFlowInstance.screenToFlowPosition({
           x: event.clientX,
           y: event.clientY,
@@ -373,7 +646,7 @@ function DashboardCanvasInner({
         });
       }, 500);
     },
-    [canEditCurrentBranch, reactFlowInstance]
+    [canEditCurrentBranch, keepRangeStart, reactFlowInstance]
   );
 
   const onPanePointerMove = useCallback((event: React.PointerEvent) => {
@@ -398,7 +671,9 @@ function DashboardCanvasInner({
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node) => {
       event.preventDefault();
+      if (keepRangeStart) return;
       const nodeData = node.data as { name?: string };
+      setEdgeMenu(null);
       setNodeMenu({
         x: event.clientX,
         y: event.clientY,
@@ -406,7 +681,7 @@ function DashboardCanvasInner({
         nodeName: nodeData.name ?? "Untitled",
       });
     },
-    []
+    [keepRangeStart]
   );
 
   const createAndNavigate = useCallback(
@@ -470,13 +745,6 @@ function DashboardCanvasInner({
   const handleCreateManual = useCallback(async () => {
     const emptyGrid = createEmptyGrid(project.grid_width, project.grid_height);
     await createAndNavigate(encodeGrid(emptyGrid), "Untitled");
-  }, [createAndNavigate, project.grid_height, project.grid_width]);
-
-  const handleCreateKeep = useCallback(async () => {
-    const keepMask = createKeepMaskGrid(project.grid_width, project.grid_height);
-    await createAndNavigate(encodeGrid(keepMask), "keep", {
-      panelType: "keep",
-    });
   }, [createAndNavigate, project.grid_height, project.grid_width]);
 
   const handleCreateWave = useCallback(async () => {
@@ -563,10 +831,15 @@ function DashboardCanvasInner({
     async (zentaiGamenId: string) => {
       const existing = zentaiGamenList.find((item) => item.id === zentaiGamenId);
       if (!existing) return;
+      const panelType: PanelType =
+        existing.panel_type === "keep" ? "general" : existing.panel_type;
       await createAndNavigate(existing.grid_data, `${existing.name} (コピー)`, {
-        panelType: existing.panel_type,
-        motionType: existing.motion_type,
-        motionData: existing.motion_data ? { ...existing.motion_data } : null,
+        panelType,
+        motionType: panelType === "motion" ? existing.motion_type : null,
+        motionData:
+          panelType === "motion" && existing.motion_data
+            ? { ...existing.motion_data }
+            : null,
       });
     },
     [createAndNavigate, zentaiGamenList]
@@ -716,6 +989,92 @@ function DashboardCanvasInner({
     [canEditCurrentBranch, nodeMenu, project.active_branch_id, setNodes, supabase]
   );
 
+  const handleStartKeepRange = useCallback(() => {
+    if (!nodeMenu || !canEditCurrentBranch) return;
+
+    setKeepRangeStart({
+      nodeId: nodeMenu.nodeId,
+      nodeName: nodeMenu.nodeName,
+    });
+    setKeepRangePath([nodeMenu.nodeId]);
+    setActionError(null);
+    setEdgeMenu(null);
+    setNodeMenu(null);
+  }, [canEditCurrentBranch, nodeMenu]);
+
+  const handleOpenKeepEditor = useCallback(
+    async (connectionId: string) => {
+      const connection = connectionList.find((item) => item.id === connectionId);
+      if (!connection) {
+        setActionError("接続が見つかりません");
+        return;
+      }
+
+      const source = zentaiGamenList.find((item) => item.id === connection.source_id);
+      const target = zentaiGamenList.find((item) => item.id === connection.target_id);
+      if (!source || !target) {
+        setActionError("接続先のパネルが見つかりません");
+        return;
+      }
+
+      const sourceGrid = getZentaiGamenDisplayGrid(source);
+      const targetGrid = getZentaiGamenDisplayGrid(target);
+      const existingMask = decodeKeepMask(
+        connection.keep_mask_grid_data,
+        project.grid_width,
+        project.grid_height
+      );
+      const mask = existingMask ?? buildDefaultKeepMask(sourceGrid, targetGrid);
+
+      if (!existingMask && canEditCurrentBranch) {
+        try {
+          await persistConnectionKeepMask(connection.id, mask);
+        } catch (error) {
+          setActionError(
+            error instanceof Error ? error.message : "keep表示の初期化に失敗しました"
+          );
+          return;
+        }
+      }
+
+      setKeepEditor({
+        connectionId: connection.id,
+        sourceName: source.name,
+        targetName: target.name,
+        sourceGrid,
+        targetGrid,
+        mask,
+      });
+      setActionError(null);
+      setEdgeMenu(null);
+    },
+    [
+      canEditCurrentBranch,
+      connectionList,
+      getZentaiGamenDisplayGrid,
+      persistConnectionKeepMask,
+      project.grid_height,
+      project.grid_width,
+      zentaiGamenList,
+    ]
+  );
+
+  const handleSaveKeepEditor = useCallback(
+    async (mask: GridData) => {
+      if (!keepEditor) return;
+      try {
+        await persistConnectionKeepMask(keepEditor.connectionId, mask);
+        setActionError(null);
+      } catch (error) {
+        setActionError(
+          error instanceof Error ? error.message : "keep表示の保存に失敗しました"
+        );
+        throw error;
+      }
+    },
+    [keepEditor, persistConnectionKeepMask]
+  );
+
   const handlePlayFromNode = useCallback(async () => {
     if (!nodeMenu) return;
 
@@ -723,6 +1082,7 @@ function DashboardCanvasInner({
     setNodeMenu(null);
 
     const liveConnections: DBConnection[] = edges.map((edge) => ({
+      ...(connectionList.find((connection) => connection.id === edge.id) ?? {}),
       id: edge.id,
       project_id: project.id,
       branch_id: project.active_branch_id,
@@ -732,6 +1092,9 @@ function DashboardCanvasInner({
       interval_override_ms:
         connectionList.find((connection) => connection.id === edge.id)
           ?.interval_override_ms ?? null,
+      keep_mask_grid_data:
+        connectionList.find((connection) => connection.id === edge.id)
+          ?.keep_mask_grid_data ?? null,
       created_at: "",
     }));
 
@@ -838,6 +1201,30 @@ function DashboardCanvasInner({
           </div>
         )}
 
+        {keepRangeStart && (
+          <div className="absolute left-16 right-4 top-36 z-30 rounded-xl border border-accent/50 bg-card/95 px-4 py-3 shadow-xl backdrop-blur-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  keep範囲選択中: {keepRangeStart.nodeName}
+                </p>
+                <p className="text-xs text-muted">
+                  終了パネルをタップすると、接続順の範囲を自動選択して同色セルを keep ON にします
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setKeepRangeStart(null);
+                  setKeepRangePath(null);
+                }}
+                className="rounded-lg border border-card-border px-3 py-2 text-sm text-muted hover:text-foreground"
+              >
+                キャンセル
+              </button>
+            </div>
+          </div>
+        )}
+
         <div
           className="h-full w-full"
           onPointerDown={onPanePointerDown}
@@ -850,7 +1237,6 @@ function DashboardCanvasInner({
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onEdgeClick={onEdgeClick}
             onNodeDragStop={onNodeDragStop}
             onNodeContextMenu={onNodeContextMenu}
             nodeTypes={nodeTypes}
@@ -878,7 +1264,6 @@ function DashboardCanvasInner({
             x={contextMenu.screenX}
             y={contextMenu.screenY}
             onManual={handleCreateManual}
-            onKeep={handleCreateKeep}
             onWave={handleCreateWave}
             onScan={handleScan}
             onSelectTemplate={handleSelectTemplate}
@@ -898,9 +1283,30 @@ function DashboardCanvasInner({
             onDelete={handleDeleteNode}
             onRename={handleRenameNode}
             onPlay={handlePlayFromNode}
+            onKeep={handleStartKeepRange}
             onClose={() => setNodeMenu(null)}
             canEdit={canEditCurrentBranch}
           />
+        )}
+
+        {edgeMenu && (
+          <div
+            className="fixed z-50 min-w-[140px] rounded-lg border border-card-border bg-card py-1 shadow-xl"
+            style={{ left: edgeMenu.x, top: edgeMenu.y }}
+          >
+            <button
+              onClick={() => void handleOpenKeepEditor(edgeMenu.connectionId)}
+              className="w-full px-4 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-accent/10"
+            >
+              keep表示
+            </button>
+            <button
+              onClick={() => setEdgeMenu(null)}
+              className="w-full px-4 py-2 text-left text-xs text-muted transition-colors hover:bg-background"
+            >
+              閉じる
+            </button>
+          </div>
         )}
 
         {showCamera && (
@@ -929,6 +1335,19 @@ function DashboardCanvasInner({
           onClose={() => setPlaybackData(null)}
           initialMusic={currentMusic}
           onMusicChange={handleMusicChange}
+        />
+      )}
+
+      {keepEditor && (
+        <KeepConnectionEditor
+          sourceName={keepEditor.sourceName}
+          targetName={keepEditor.targetName}
+          sourceGrid={keepEditor.sourceGrid}
+          targetGrid={keepEditor.targetGrid}
+          initialMask={keepEditor.mask}
+          canEdit={canEditCurrentBranch}
+          onSave={handleSaveKeepEditor}
+          onClose={() => setKeepEditor(null)}
         />
       )}
     </div>

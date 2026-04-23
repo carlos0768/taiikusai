@@ -510,7 +510,10 @@ export default function PlaybackPanel({
     const dpr = window.devicePixelRatio || 1;
     const frame = frames[currentIndex];
     if (!frame) return;
-    const baseGrid = getPlaybackFrameBaseGrid(frame);
+    const activeTransitionGrid = isWhiteFrame
+      ? gapItems[currentIndex]?.transitionGrid ?? null
+      : null;
+    const baseGrid = activeTransitionGrid ?? getPlaybackFrameBaseGrid(frame);
 
     let canvasW = fixedSize.w;
     let canvasH = fixedSize.h;
@@ -556,7 +559,9 @@ export default function PlaybackPanel({
 
     const pad = Math.max(0.5, cellW * 0.03);
     let displayGridFor: (x: number) => GridData;
-    if (frame.kind === "general") {
+    if (activeTransitionGrid) {
+      displayGridFor = () => activeTransitionGrid;
+    } else if (frame.kind === "general") {
       displayGridFor = () => frame.grid;
     } else if (frame.kind === "keep") {
       displayGridFor = () => frame.displayGrid;
@@ -567,7 +572,7 @@ export default function PlaybackPanel({
     }
     for (let y = 0; y < baseGrid.height; y++) {
       for (let x = 0; x < baseGrid.width; x++) {
-        if (isWhiteFrame) {
+        if (isWhiteFrame && !activeTransitionGrid) {
           ctx.fillStyle = "#FFFFFF";
         } else {
           const g = displayGridFor(x);
@@ -581,7 +586,15 @@ export default function PlaybackPanel({
         );
       }
     }
-  }, [currentIndex, fixedSize, frameElapsedMs, frames, isWhiteFrame, panelSize]);
+  }, [
+    currentIndex,
+    fixedSize,
+    frameElapsedMs,
+    frames,
+    gapItems,
+    isWhiteFrame,
+    panelSize,
+  ]);
 
   return (
     <div
@@ -592,7 +605,9 @@ export default function PlaybackPanel({
       <div className="flex items-center justify-between px-3 py-2 border-b border-card-border shrink-0">
         <span className="text-sm font-medium truncate">
           {isWhiteFrame
-            ? "（折り中）"
+            ? gapItems[currentIndex]?.transitionKind === "keep"
+              ? "（keep中）"
+              : "（折り中）"
             : frames[currentIndex]?.name ?? `Frame ${currentIndex + 1}`}
           {frames[currentIndex]?.kind === "wave" && !isWhiteFrame && (
             <span className="ml-1 text-[10px] text-accent">〜WAVE</span>
@@ -671,11 +686,7 @@ export default function PlaybackPanel({
                 <GapButton
                   intervalMs={gapItems[idx].intervalMs}
                   widthPx={(gapItems[idx].intervalMs / 1000) * PX_PER_SECOND}
-                  isActive={
-                    gapItems[idx].transitionKind === "keep"
-                      ? !isWhiteFrame && currentIndex === idx + 1
-                      : isWhiteFrame && currentIndex === idx
-                  }
+                  isActive={isWhiteFrame && currentIndex === idx}
                   isOverride={gapItems[idx].isIntervalOverride}
                   isSaving={
                     gapItems[idx].connectionId !== null &&
