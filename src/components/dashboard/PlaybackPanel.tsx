@@ -554,7 +554,7 @@ export default function PlaybackPanel({
       ctx.stroke();
     }
 
-    const pad = Math.max(1, cellW * 0.06);
+    const pad = Math.max(0.5, cellW * 0.03);
     let displayGridFor: (x: number) => GridData;
     if (frame.kind === "general") {
       displayGridFor = () => frame.grid;
