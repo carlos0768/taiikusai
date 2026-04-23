@@ -75,10 +75,6 @@ function DashboardCanvasInner({
     if (!currentBranch.is_main) return true;
     return !project.main_branch_requires_admin_approval;
   }, [auth, currentBranch.is_main, project.main_branch_requires_admin_approval]);
-  const canCreateBranches = auth.is_admin || auth.permissions.can_create_branches;
-  const canRequestMerge =
-    !currentBranch.is_main &&
-    (auth.is_admin || auth.permissions.can_request_main_merge);
   const canViewGit =
     auth.is_admin ||
     auth.permissions.can_view_git_requests ||
@@ -560,31 +556,6 @@ function DashboardCanvasInner({
     }
   }, [connectionList, nodeMenu, project.grid_height, project.grid_width, zentaiGamenList]);
 
-  const handleCreateBranch = useCallback(async () => {
-    if (!canCreateBranches) return;
-
-    const name = window.prompt("新しいブランチ名を入力してください（英数字小文字）");
-    if (!name) return;
-
-    try {
-      const response = await fetchJson<{ branch: ProjectBranch }>(
-        `/api/projects/${project.id}/branches`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            name,
-            sourceBranchName: currentBranch.name,
-          }),
-        }
-      );
-
-      router.push(`/project/${project.id}${branchQuery(response.branch.name)}`);
-      router.refresh();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "ブランチを作成できませんでした");
-    }
-  }, [canCreateBranches, currentBranch.name, project.id, router]);
-
   const handleSwitchBranch = useCallback(
     (nextBranchName: string) => {
       router.push(`/project/${project.id}${branchQuery(nextBranchName)}`);
@@ -592,38 +563,6 @@ function DashboardCanvasInner({
     },
     [project.id, router]
   );
-
-  const handleRequestMerge = useCallback(async () => {
-    if (!canRequestMerge) return;
-
-    const summary = window.prompt(
-      "main への反映内容を簡単に入力してください",
-      ""
-    );
-
-    try {
-      await fetchJson(`/api/projects/${project.id}/requests`, {
-        method: "POST",
-        body: JSON.stringify({
-          branchName: currentBranch.name,
-          summary: summary ?? "",
-        }),
-      });
-
-      setActionError(null);
-      window.alert("main への申請を作成しました");
-      router.push(`/project/${project.id}/git/requests${currentBranchQuery}`);
-      router.refresh();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "申請を作成できませんでした");
-    }
-  }, [
-    canRequestMerge,
-    currentBranch.name,
-    currentBranchQuery,
-    project.id,
-    router,
-  ]);
 
   const templateMenuItems: SubMenuItem[] = templates.map((item) => ({
     id: item.id,
@@ -684,30 +623,6 @@ function DashboardCanvasInner({
               >
                 {currentBranch.is_main ? "main" : "作業ブランチ"}
               </span>
-              {canCreateBranches && (
-                <button
-                  onClick={handleCreateBranch}
-                  className="rounded-lg border border-card-border px-3 py-2 text-sm text-foreground hover:border-accent/50 transition-colors"
-                >
-                  ブランチ作成
-                </button>
-              )}
-              {canRequestMerge && (
-                <button
-                  onClick={handleRequestMerge}
-                  className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-black hover:opacity-90 transition-opacity"
-                >
-                  main へ申請
-                </button>
-              )}
-              {canViewGit && (
-                <button
-                  onClick={() => router.push(`/project/${project.id}/git/requests${currentBranchQuery}`)}
-                  className="rounded-lg border border-card-border px-3 py-2 text-sm text-muted hover:text-foreground transition-colors"
-                >
-                  Git / リクエスト
-                </button>
-              )}
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted">
               <span>
