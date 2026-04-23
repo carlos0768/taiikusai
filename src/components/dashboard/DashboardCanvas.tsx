@@ -1025,18 +1025,8 @@ function DashboardCanvasInner({
         project.grid_width,
         project.grid_height
       );
-      const mask = existingMask ?? buildDefaultKeepMask(sourceGrid, targetGrid);
-
-      if (!existingMask && canEditCurrentBranch) {
-        try {
-          await persistConnectionKeepMask(connection.id, mask);
-        } catch (error) {
-          setActionError(
-            error instanceof Error ? error.message : "keep表示の初期化に失敗しました"
-          );
-          return;
-        }
-      }
+      const mask =
+        existingMask ?? createKeepMaskGrid(project.grid_width, project.grid_height);
 
       setKeepEditor({
         connectionId: connection.id,
@@ -1050,10 +1040,8 @@ function DashboardCanvasInner({
       setEdgeMenu(null);
     },
     [
-      canEditCurrentBranch,
       connectionList,
       getZentaiGamenDisplayGrid,
-      persistConnectionKeepMask,
       project.grid_height,
       project.grid_width,
       zentaiGamenList,
