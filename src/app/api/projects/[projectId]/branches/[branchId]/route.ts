@@ -52,6 +52,13 @@ export async function DELETE(
       );
     }
 
+    if (!profile.is_admin && targetBranch.created_by !== profile.id) {
+      return NextResponse.json(
+        { error: "他アカウントが作成したブランチは削除できません" },
+        { status: 403 }
+      );
+    }
+
     const { error } = await supabase
       .from("project_branches")
       .delete()

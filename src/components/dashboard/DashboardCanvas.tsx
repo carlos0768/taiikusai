@@ -81,9 +81,9 @@ function DashboardCanvasInner({
   const canEditCurrentBranch = useMemo(() => {
     if (auth.is_admin) return true;
     if (currentBranch.is_main) return false;
-    if (auth.permissions.can_edit_branch_content) return true;
     return (
-      auth.permissions.can_create_branches &&
+      (auth.permissions.can_edit_branch_content ||
+        auth.permissions.can_create_branches) &&
       currentBranch.created_by === auth.id
     );
   }, [
@@ -95,9 +95,16 @@ function DashboardCanvasInner({
     currentBranch.is_main,
   ]);
   const canCreateBranches = auth.is_admin || auth.permissions.can_create_branches;
+  const isOwnCurrentBranch = currentBranch.created_by === auth.id;
   const canRequestMerge =
     !currentBranch.is_main &&
-    (auth.is_admin || auth.permissions.can_request_main_merge);
+    (auth.is_admin ||
+      (auth.permissions.can_request_main_merge && isOwnCurrentBranch));
+  const canDeleteCurrentBranch =
+    auth.is_admin ||
+    (!currentBranch.is_main &&
+      auth.permissions.can_create_branches &&
+      isOwnCurrentBranch);
   const canViewGit =
     auth.is_admin ||
     auth.permissions.can_view_git_requests ||
@@ -803,14 +810,16 @@ function DashboardCanvasInner({
           canCreateBranches={canCreateBranches}
           canRequestMerge={canRequestMerge}
           canMergeToMainDirectly={auth.is_admin && !currentBranch.is_main}
-          canDeleteBranches={canCreateBranches}
+          canDeleteBranches={canDeleteCurrentBranch}
         />
 
         {!canEditCurrentBranch && (
           <div className="absolute top-20 left-16 z-30 rounded-lg border border-card-border bg-card/95 px-3 py-2 text-xs text-muted shadow-sm">
             {currentBranch.is_main
               ? "main は admin のみ直接編集できます。作業ブランチから申請してください"
-              : "このアカウントは閲覧専用です"}
+              : currentBranch.created_by && currentBranch.created_by !== auth.id
+                ? "他アカウントが作成したブランチは編集できません"
+                : "このアカウントは閲覧専用です"}
           </div>
         )}
 

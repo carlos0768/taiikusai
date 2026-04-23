@@ -232,9 +232,9 @@ export default function ProjectSettingsPage() {
       (profile.is_admin ||
         (currentBranch &&
           !currentBranch.is_main &&
+          currentBranch.created_by === profile.id &&
           (profile.permissions.can_edit_branch_content ||
-            (profile.permissions.can_create_branches &&
-              currentBranch.created_by === profile.id))))
+            profile.permissions.can_create_branches)))
   );
 
   const hasGridChanges =
