@@ -45,6 +45,10 @@ export async function POST(
       throw new HttpError(400, "main からの申請は作成できません");
     }
 
+    if (!profile.is_admin && sourceBranch.created_by !== profile.id) {
+      throw new HttpError(403, "他アカウントが作成したブランチは申請できません");
+    }
+
     const targetBranch = await resolveMainBranch(projectId);
     const requestRow = await createMergeRequest({
       projectId,

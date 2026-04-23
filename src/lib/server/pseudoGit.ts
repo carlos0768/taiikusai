@@ -35,9 +35,9 @@ export function canEditBranch(
 ) {
   if (auth.is_admin) return true;
   if (branch.is_main) return false;
-  if (auth.permissions.can_edit_branch_content) return true;
   return (
-    auth.permissions.can_create_branches &&
+    (auth.permissions.can_edit_branch_content ||
+      auth.permissions.can_create_branches) &&
     branch.created_by === auth.id
   );
 }

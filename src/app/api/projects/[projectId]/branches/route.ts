@@ -81,7 +81,9 @@ export async function GET(
       canCreateBranches: profile.is_admin || profile.permissions.can_create_branches,
       canRequestMerge:
         !contextResult.currentBranch.is_main &&
-        (profile.is_admin || profile.permissions.can_request_main_merge),
+        (profile.is_admin ||
+          (profile.permissions.can_request_main_merge &&
+            contextResult.currentBranch.created_by === profile.id)),
       canViewGitRequests: canViewGit(profile),
       unreadGitNotifications,
     });
