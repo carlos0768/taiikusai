@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { prefetchRoutes } from "@/lib/client/prefetch";
 import { buildBranchPath } from "@/lib/projectBranches";
 import type { ProjectBranch } from "@/types";
 
@@ -73,6 +74,13 @@ export default function ProjectBranchSwitcher({
       document.removeEventListener("pointerdown", handlePointerDown);
     };
   }, []);
+
+  useEffect(() => {
+    prefetchRoutes(router, [
+      ...branches.map((branch) => buildBranchPath(pathname, branch.id)),
+      buildBranchPath(`/project/${projectId}/git/requests`, currentBranch.id),
+    ]);
+  }, [branches, currentBranch.id, pathname, projectId, router]);
 
   async function handleCreateBranch() {
     if (!canCreateBranches) return;

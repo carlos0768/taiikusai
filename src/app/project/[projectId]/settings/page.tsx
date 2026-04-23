@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ProjectBranchGraph from "@/components/settings/ProjectBranchGraph";
 import { fetchJson } from "@/lib/client/api";
+import { prefetchRoutes } from "@/lib/client/prefetch";
 import { updateProjectBranchSettings } from "@/lib/api/projects";
 import {
   buildBranchPath,
@@ -440,6 +441,10 @@ export default function ProjectSettingsPage() {
   const backHref = project
     ? buildBranchPath(`/project/${projectId}`, project.active_branch_id)
     : `/project/${projectId}`;
+
+  useEffect(() => {
+    prefetchRoutes(router, [backHref]);
+  }, [backHref, router]);
 
   if (loading) {
     return (

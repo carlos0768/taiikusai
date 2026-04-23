@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { prefetchRoutes } from "@/lib/client/prefetch";
 import { createClient } from "@/lib/supabase/client";
 import { buildBranchPath, fetchProjectBranchContext } from "@/lib/projectBranches";
 import { findPlaybackRoutes } from "@/lib/api/connections";
@@ -26,6 +27,14 @@ export default function PlaybackPage() {
   const [selectedRoute, setSelectedRoute] = useState<number | null>(null);
 
   const supabase = useMemo(() => createClient(), []);
+  const backHref = buildBranchPath(
+    `/project/${projectId}`,
+    requestedBranchId ?? project?.active_branch_id ?? ""
+  );
+
+  useEffect(() => {
+    prefetchRoutes(router, [backHref]);
+  }, [backHref, router]);
 
   useEffect(() => {
     async function load() {
@@ -74,10 +83,8 @@ export default function PlaybackPage() {
   }, [projectId, requestedBranchId, startId, supabase]);
 
   const handleBack = useCallback(() => {
-    router.push(
-      buildBranchPath(`/project/${projectId}`, requestedBranchId ?? project?.active_branch_id ?? "")
-    );
-  }, [project?.active_branch_id, projectId, requestedBranchId, router]);
+    router.push(backHref);
+  }, [backHref, router]);
 
   if (loading) {
     return (

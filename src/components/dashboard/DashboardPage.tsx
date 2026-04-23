@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { fetchJson } from "@/lib/client/api";
 import { getClientErrorMessage } from "@/lib/client/errors";
+import { prefetchRoutes } from "@/lib/client/prefetch";
 import type { AuthProfile, Project } from "@/types";
 
 interface MeResponse {
@@ -59,6 +60,13 @@ export default function DashboardPage() {
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
+
+  useEffect(() => {
+    prefetchRoutes(
+      router,
+      projects.map((project) => `/project/${project.id}`)
+    );
+  }, [projects, router]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();

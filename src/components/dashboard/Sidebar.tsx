@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { prefetchRoutes } from "@/lib/client/prefetch";
 import { buildBranchPath } from "@/lib/projectBranches";
 
 interface SidebarProps {
@@ -24,6 +26,7 @@ export default function Sidebar({
   showGit,
 }: SidebarProps) {
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   useEffect(() => {
     function handleClickOutside(event: PointerEvent) {
@@ -40,29 +43,36 @@ export default function Sidebar({
     return () => document.removeEventListener("pointerdown", handleClickOutside);
   }, [isOpen, onClose]);
 
-  const navItems = [
-    {
-      label: "ダッシュボード",
-      href: buildBranchPath(`/project/${projectId}`, branchId),
-    },
-    {
-      label: "テンプレ",
-      href: buildBranchPath(`/project/${projectId}/templates`, branchId),
-    },
-    ...(showGit
-      ? [
-          {
-            label: "Git",
-            href: buildBranchPath(`/project/${projectId}/git/requests`, branchId),
-            showBadge: showGitBadge,
-          },
-        ]
-      : []),
-    {
-      label: "設定",
-      href: buildBranchPath(`/project/${projectId}/settings`, branchId),
-    },
-  ];
+  const navItems = useMemo(
+    () => [
+      {
+        label: "ダッシュボード",
+        href: buildBranchPath(`/project/${projectId}`, branchId),
+      },
+      {
+        label: "テンプレ",
+        href: buildBranchPath(`/project/${projectId}/templates`, branchId),
+      },
+      ...(showGit
+        ? [
+            {
+              label: "Git",
+              href: buildBranchPath(`/project/${projectId}/git/requests`, branchId),
+              showBadge: showGitBadge,
+            },
+          ]
+        : []),
+      {
+        label: "設定",
+        href: buildBranchPath(`/project/${projectId}/settings`, branchId),
+      },
+    ],
+    [branchId, projectId, showGit, showGitBadge]
+  );
+
+  useEffect(() => {
+    prefetchRoutes(router, [...navItems.map((item) => item.href), "/dashboard"]);
+  }, [navItems, router]);
 
   return (
     <>
