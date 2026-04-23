@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import { findPlaybackRoutes } from "@/lib/api/connections";
 import { decodeGrid } from "@/lib/grid/codec";
 import { generateScriptHtml } from "@/lib/export/generateScript";
+import { decodeKeepMask, filterKeepMaskBySameColor, isKeepCell } from "@/lib/keep";
 import type { GridData, ColorIndex } from "@/lib/grid/types";
 import type {
   BranchContextResponse,
@@ -127,18 +128,43 @@ export default function EditorPage() {
     const zentaiGamenMap = new Map(
       (allZentaiGamen as ZentaiGamen[]).map((item) => [item.id, item])
     );
-    const scenes: { grid: GridData; memo: string }[] = [];
+    const width = state.context.project.grid_width;
+    const height = state.context.project.grid_height;
+    const connectionMap = new Map(
+      (allConnections as Connection[]).map((connection) => [
+        `${connection.source_id}:${connection.target_id}`,
+        connection,
+      ])
+    );
+    const scenes: { grid: GridData; keepMask: GridData | null; memo: string }[] = [];
 
-    route.forEach((nodeId) => {
+    route.forEach((nodeId, index) => {
       const item = zentaiGamenMap.get(nodeId);
       if (!item) return;
 
+      const previousNodeId = route[index - 1];
+      const previousItem = previousNodeId ? zentaiGamenMap.get(previousNodeId) : null;
+      const previousConnection = previousNodeId
+        ? connectionMap.get(`${previousNodeId}:${nodeId}`)
+        : null;
+      const grid = decodeGrid(
+        item.grid_data,
+        width,
+        height
+      );
+      const rawKeepMask = decodeKeepMask(previousConnection?.keep_mask_grid_data, width, height);
+      const keepMask =
+        rawKeepMask && previousItem
+          ? filterKeepMaskBySameColor(
+              decodeGrid(previousItem.grid_data, width, height),
+              grid,
+              rawKeepMask
+            )
+          : null;
+
       scenes.push({
-        grid: decodeGrid(
-          item.grid_data,
-          state.context.project.grid_width,
-          state.context.project.grid_height
-        ),
+        grid,
+        keepMask,
         memo: item.memo || "",
       });
     });
@@ -148,14 +174,14 @@ export default function EditorPage() {
     }
 
     const zip = new JSZip();
-    const width = state.context.project.grid_width;
-    const height = state.context.project.grid_height;
 
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
+        const cellIndex = y * width + x;
         const cellScenes = scenes.map((scene, index) => ({
           sceneNumber: index + 1,
-          colorIndex: scene.grid.cells[y * width + x] as ColorIndex,
+          colorIndex: scene.grid.cells[cellIndex] as ColorIndex,
+          action: isKeepCell(scene.keepMask, cellIndex) ? "keep" as const : "color" as const,
           memo: scene.memo,
         }));
 

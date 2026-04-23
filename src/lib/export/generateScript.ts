@@ -3,6 +3,7 @@ import type { ColorIndex } from "@/lib/grid/types";
 interface SceneData {
   sceneNumber: number;
   colorIndex: ColorIndex;
+  action: "color" | "keep";
   memo: string;
 }
 
@@ -14,13 +15,8 @@ const COLOR_DISPLAY: Record<number, string> = {
   4: "青",
 };
 
-function getColorDisplay(
-  colorIndex: ColorIndex,
-  prevColorIndex: ColorIndex | null
-): string {
-  if (prevColorIndex !== null && colorIndex === prevColorIndex) {
-    return "keep";
-  }
+function getColorDisplay(colorIndex: ColorIndex, action: SceneData["action"]): string {
+  if (action === "keep") return "keep";
   return COLOR_DISPLAY[colorIndex] ?? "ー";
 }
 
@@ -82,12 +78,8 @@ export function generateScriptHtml(
       const sceneIdx = group * ROWS_PER_PAGE + row;
       if (sceneIdx < scenes.length) {
         const scene = scenes[sceneIdx];
-        const prevScene = sceneIdx > 0 ? scenes[sceneIdx - 1] : null;
-        const colorText = getColorDisplay(
-          scene.colorIndex,
-          prevScene?.colorIndex ?? null
-        );
-        const isKeep = colorText === "keep";
+        const colorText = getColorDisplay(scene.colorIndex, scene.action);
+        const isKeep = scene.action === "keep";
         const colorClass = isKeep ? "keep" : COLOR_CLASS[scene.colorIndex] ?? "";
 
         tableRows += `<td class="col-num"><b>${scene.sceneNumber}</b></td>`;

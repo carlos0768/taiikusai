@@ -60,6 +60,7 @@ export interface Connection {
   source_id: string;
   target_id: string;
   sort_order: number;
+  keep_mask_grid_data: string | null;
   created_at: string;
 }
 

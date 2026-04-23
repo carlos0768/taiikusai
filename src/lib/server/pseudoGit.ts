@@ -228,6 +228,7 @@ export async function copyBranchSnapshot(
       source_id: nodeIdMap.get(connection.source_id)!,
       target_id: nodeIdMap.get(connection.target_id)!,
       sort_order: connection.sort_order,
+      keep_mask_grid_data: connection.keep_mask_grid_data ?? null,
     }));
 
   if (nextConnections.length > 0) {

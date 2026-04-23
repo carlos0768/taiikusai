@@ -9,6 +9,7 @@ interface NodeDeleteMenuProps {
   onDelete: () => void;
   onRename: (newName: string) => void;
   onPlay: () => void;
+  onKeep: () => void;
   onClose: () => void;
   canEdit: boolean;
 }
@@ -20,6 +21,7 @@ export default function NodeDeleteMenu({
   onDelete,
   onRename,
   onPlay,
+  onKeep,
   onClose,
   canEdit,
 }: NodeDeleteMenuProps) {
@@ -95,6 +97,14 @@ export default function NodeDeleteMenu({
       >
         ▶ 再生
       </button>
+      {canEdit && (
+        <button
+          onClick={onKeep}
+          className="w-full px-4 py-2.5 text-sm text-foreground hover:bg-accent/10 transition-colors text-left"
+        >
+          keep
+        </button>
+      )}
       {canEdit && (
         <button
           onClick={() => setRenaming(true)}

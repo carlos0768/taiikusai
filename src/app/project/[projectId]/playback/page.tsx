@@ -4,9 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { fetchJson } from "@/lib/client/api";
-import { decodeGrid } from "@/lib/grid/codec";
 import { findPlaybackRoutes } from "@/lib/api/connections";
-import type { GridData } from "@/lib/grid/types";
+import { buildPlaybackFrames } from "@/lib/playback/buildPlaybackFrames";
 import type { BranchContextResponse, Connection, ZentaiGamen } from "@/types";
 import PlaybackView from "@/components/playback/PlaybackView";
 import RouteSelector from "@/components/playback/RouteSelector";
@@ -22,6 +21,7 @@ export default function PlaybackPage() {
 
   const [loading, setLoading] = useState(true);
   const [zentaiGamen, setZentaiGamen] = useState<ZentaiGamen[]>([]);
+  const [connections, setConnections] = useState<Connection[]>([]);
   const [routes, setRoutes] = useState<string[][]>([]);
   const [selectedRoute, setSelectedRoute] = useState<number | null>(null);
   const [gridWidth, setGridWidth] = useState(50);
@@ -53,6 +53,7 @@ export default function PlaybackPage() {
       setZentaiGamen((nextZentaiGamen ?? []) as ZentaiGamen[]);
 
       const currentConnections = (nextConnections ?? []) as Connection[];
+      setConnections(currentConnections);
       if (startId && currentConnections) {
         const foundRoutes = findPlaybackRoutes(currentConnections, startId);
         setRoutes(foundRoutes);
@@ -96,16 +97,13 @@ export default function PlaybackPage() {
   }
 
   const route = routes[selectedRoute ?? 0] ?? [];
-  const zentaiGamenMap = new Map(zentaiGamen.map((item) => [item.id, item]));
-  const frames: GridData[] = [];
-  const frameNames: string[] = [];
-
-  route.forEach((nodeId) => {
-    const item = zentaiGamenMap.get(nodeId);
-    if (!item) return;
-    frames.push(decodeGrid(item.grid_data, gridWidth, gridHeight));
-    frameNames.push(item.name);
-  });
+  const { frames, frameNames } = buildPlaybackFrames(
+    route,
+    zentaiGamen,
+    connections,
+    gridWidth,
+    gridHeight
+  );
 
   if (frames.length === 0) {
     return (
