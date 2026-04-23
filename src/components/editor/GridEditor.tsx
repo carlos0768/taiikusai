@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { prefetchRoutes } from "@/lib/client/prefetch";
 import { buildBranchPath } from "@/lib/projectBranches";
 import {
   type ColorIndex,
@@ -143,6 +144,26 @@ export default function GridEditor({
   const [actionError, setActionError] = useState<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    prefetchRoutes(router, [
+      buildBranchPath(`/project/${projectId}`, branchId),
+      buildBranchPath(`/project/${projectId}/git/requests`, currentBranch.id),
+      ...branches.map((branch) =>
+        buildBranchPath(
+          `/project/${projectId}/editor/${zentaiGamenId}`,
+          branch.id
+        )
+      ),
+    ]);
+  }, [
+    branchId,
+    branches,
+    currentBranch.id,
+    projectId,
+    router,
+    zentaiGamenId,
+  ]);
 
   useEffect(() => {
     setSelection(null);
