@@ -80,10 +80,20 @@ function DashboardCanvasInner({
 
   const canEditCurrentBranch = useMemo(() => {
     if (auth.is_admin) return true;
-    if (!auth.permissions.can_edit_branch_content) return false;
-    if (!currentBranch.is_main) return true;
-    return !project.main_branch_requires_admin_approval;
-  }, [auth, currentBranch.is_main, project.main_branch_requires_admin_approval]);
+    if (currentBranch.is_main) return false;
+    if (auth.permissions.can_edit_branch_content) return true;
+    return (
+      auth.permissions.can_create_branches &&
+      currentBranch.created_by === auth.id
+    );
+  }, [
+    auth.id,
+    auth.is_admin,
+    auth.permissions.can_create_branches,
+    auth.permissions.can_edit_branch_content,
+    currentBranch.created_by,
+    currentBranch.is_main,
+  ]);
   const canCreateBranches = auth.is_admin || auth.permissions.can_create_branches;
   const canRequestMerge =
     !currentBranch.is_main &&
@@ -463,6 +473,8 @@ function DashboardCanvasInner({
   }, [createAndNavigate, project.grid_height, project.grid_width]);
 
   const handleCreateWave = useCallback(async () => {
+    if (!canEditCurrentBranch) return;
+
     const positionX = contextMenu?.flowX ?? 0;
     const positionY = contextMenu?.flowY ?? 0;
     const emptyGrid = createEmptyGrid(project.grid_width, project.grid_height);
@@ -500,6 +512,7 @@ function DashboardCanvasInner({
       )
     );
   }, [
+    canEditCurrentBranch,
     contextMenu,
     project.active_branch_id,
     project.grid_height,
@@ -796,7 +809,7 @@ function DashboardCanvasInner({
         {!canEditCurrentBranch && (
           <div className="absolute top-20 left-16 z-30 rounded-lg border border-card-border bg-card/95 px-3 py-2 text-xs text-muted shadow-sm">
             {currentBranch.is_main
-              ? "main は保護中です。編集は作業ブランチで行ってください"
+              ? "main は admin のみ直接編集できます。作業ブランチから申請してください"
               : "このアカウントは閲覧専用です"}
           </div>
         )}
