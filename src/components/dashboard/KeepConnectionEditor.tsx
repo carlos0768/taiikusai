@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
-import { normalizeKeepMaskGrid } from "@/lib/keep";
+import { createKeepMaskGrid, normalizeKeepMaskGrid } from "@/lib/keep";
 
 interface KeepConnectionEditorProps {
   sourceName: string;
@@ -217,6 +217,20 @@ export default function KeepConnectionEditor({
     }
   }, [canEdit, mask, onClose, onSave, saving]);
 
+  const handleSaveDisabled = useCallback(async () => {
+    if (!canEdit || saving) return;
+    const disabledMask = createKeepMaskGrid(sourceGrid.width, sourceGrid.height);
+    setSaving(true);
+    try {
+      await onSave(disabledMask);
+      setMask(disabledMask);
+      setDirty(false);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  }, [canEdit, onClose, onSave, saving, sourceGrid.height, sourceGrid.width]);
+
   const enabledCount = useMemo(() => {
     let count = 0;
     for (let index = 0; index < mask.cells.length; index += 1) {
@@ -286,6 +300,15 @@ export default function KeepConnectionEditor({
             keep ON: {enabledCount}セル{dirty ? " / 未保存" : ""}
           </span>
           <div className="flex gap-2">
+            {canEdit && (
+              <button
+                onClick={handleSaveDisabled}
+                disabled={saving}
+                className="rounded-lg border border-danger/40 px-3 py-2 text-sm text-danger hover:bg-danger/10 disabled:opacity-50"
+              >
+                全OFFで保存
+              </button>
+            )}
             <button
               onClick={onClose}
               className="rounded-lg border border-card-border px-3 py-2 text-sm text-muted hover:text-foreground"

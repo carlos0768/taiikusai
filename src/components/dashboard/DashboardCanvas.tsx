@@ -46,6 +46,7 @@ import {
 } from "@/lib/grid/types";
 import {
   buildDefaultKeepMask,
+  createKeepMaskGrid,
   decodeKeepMask,
   encodeKeepMask,
 } from "@/lib/keep";
@@ -1075,6 +1076,35 @@ function DashboardCanvasInner({
     [keepEditor, persistConnectionKeepMask]
   );
 
+  const handleDisableConnectionKeep = useCallback(
+    async (connectionId: string) => {
+      if (!canEditCurrentBranch) return;
+
+      try {
+        await persistConnectionKeepMask(
+          connectionId,
+          createKeepMaskGrid(project.grid_width, project.grid_height)
+        );
+        setActionError(null);
+        setEdgeMenu(null);
+        if (keepEditor?.connectionId === connectionId) {
+          setKeepEditor(null);
+        }
+      } catch (error) {
+        setActionError(
+          error instanceof Error ? error.message : "keep表示の無効化に失敗しました"
+        );
+      }
+    },
+    [
+      canEditCurrentBranch,
+      keepEditor,
+      persistConnectionKeepMask,
+      project.grid_height,
+      project.grid_width,
+    ]
+  );
+
   const handlePlayFromNode = useCallback(async () => {
     if (!nodeMenu) return;
 
@@ -1300,6 +1330,16 @@ function DashboardCanvasInner({
             >
               keep表示
             </button>
+            {canEditCurrentBranch && (
+              <button
+                onClick={() =>
+                  void handleDisableConnectionKeep(edgeMenu.connectionId)
+                }
+                className="w-full px-4 py-2.5 text-left text-sm text-danger transition-colors hover:bg-danger/10"
+              >
+                keepを全OFF
+              </button>
+            )}
             <button
               onClick={() => setEdgeMenu(null)}
               className="w-full px-4 py-2 text-left text-xs text-muted transition-colors hover:bg-background"
