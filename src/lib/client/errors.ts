@@ -1,0 +1,19 @@
+export function getClientErrorMessage(
+  error: unknown,
+  fallback: string
+): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+
+  return fallback;
+}

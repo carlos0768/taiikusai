@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { prefetchRoutes } from "@/lib/client/prefetch";
+import { buildBranchPath } from "@/lib/projectBranches";
 
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
   projectName: string;
-  branchName: string;
+  branchId: string;
   showGitBadge: boolean;
   showGit: boolean;
 }
@@ -18,64 +21,77 @@ export default function Sidebar({
   onClose,
   projectId,
   projectName,
-  branchName,
+  branchId,
   showGitBadge,
   showGit,
 }: SidebarProps) {
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const query = branchName === "main" ? "" : `?branch=${branchName}`;
+  const router = useRouter();
 
   useEffect(() => {
-    function handleClickOutside(e: PointerEvent) {
+    function handleClickOutside(event: PointerEvent) {
       if (
         isOpen &&
         sidebarRef.current &&
-        !sidebarRef.current.contains(e.target as Node)
+        !sidebarRef.current.contains(event.target as Node)
       ) {
         onClose();
       }
     }
+
     document.addEventListener("pointerdown", handleClickOutside);
     return () => document.removeEventListener("pointerdown", handleClickOutside);
   }, [isOpen, onClose]);
 
-  const navItems = [
-    { label: "ダッシュボード", href: `/project/${projectId}${query}` },
-    { label: "テンプレ", href: `/project/${projectId}/templates` },
-    ...(showGit
-      ? [
-          {
-            label: "Git",
-            href: `/project/${projectId}/git/requests${query}`,
-            showBadge: showGitBadge,
-          },
-        ]
-      : []),
-    { label: "設定", href: `/project/${projectId}/settings${query}` },
-  ];
+  const navItems = useMemo(
+    () => [
+      {
+        label: "ダッシュボード",
+        href: buildBranchPath(`/project/${projectId}`, branchId),
+      },
+      {
+        label: "テンプレ",
+        href: buildBranchPath(`/project/${projectId}/templates`, branchId),
+      },
+      ...(showGit
+        ? [
+            {
+              label: "Git",
+              href: buildBranchPath(`/project/${projectId}/git/requests`, branchId),
+              showBadge: showGitBadge,
+            },
+          ]
+        : []),
+      {
+        label: "設定",
+        href: buildBranchPath(`/project/${projectId}/settings`, branchId),
+      },
+    ],
+    [branchId, projectId, showGit, showGitBadge]
+  );
+
+  useEffect(() => {
+    prefetchRoutes(router, [...navItems.map((item) => item.href), "/dashboard"]);
+  }, [navItems, router]);
 
   return (
     <>
-      {/* Backdrop */}
       {isOpen && (
         <div className="fixed inset-0 bg-black/50 z-40 transition-opacity" />
       )}
 
-      {/* Sidebar */}
       <div
         ref={sidebarRef}
         className={`fixed top-0 left-0 h-full w-64 bg-card border-r border-card-border z-50 transform transition-transform duration-200 ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        {/* Project name */}
         <div className="px-4 py-4 border-b border-card-border">
           <h2 className="font-semibold text-foreground truncate">
             {projectName}
           </h2>
         </div>
 
-        {/* Navigation */}
         <nav className="py-2">
           {navItems.map((item) => (
             <Link
@@ -92,7 +108,6 @@ export default function Sidebar({
           ))}
         </nav>
 
-        {/* Footer */}
         <div className="absolute bottom-0 left-0 right-0 border-t border-card-border p-4">
           <Link
             href="/dashboard"

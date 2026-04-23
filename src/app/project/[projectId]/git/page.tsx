@@ -10,6 +10,6 @@ export default async function GitPage({
   const { projectId } = await params;
   const { branch } = await searchParams;
   redirect(
-    `/project/${projectId}/git/requests${branch && branch !== "main" ? `?branch=${branch}` : ""}`
+    `/project/${projectId}/git/requests${branch ? `?branch=${branch}` : ""}`
   );
 }

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { fetchJson } from "@/lib/client/api";
+import { getClientErrorMessage } from "@/lib/client/errors";
+import { prefetchRoutes } from "@/lib/client/prefetch";
 import type { AuthProfile, Project } from "@/types";
 
 interface MeResponse {
@@ -49,9 +51,7 @@ export default function DashboardPage() {
         setProjects([]);
       }
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "ダッシュボードの読み込みに失敗しました";
-      setError(message);
+      setError(getClientErrorMessage(err, "ダッシュボードの読み込みに失敗しました"));
     } finally {
       setLoading(false);
     }
@@ -60,6 +60,13 @@ export default function DashboardPage() {
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
+
+  useEffect(() => {
+    prefetchRoutes(
+      router,
+      projects.map((project) => `/project/${project.id}`)
+    );
+  }, [projects, router]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -96,7 +103,7 @@ export default function DashboardPage() {
 
       router.push(`/project/${data.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "プロジェクトを作成できませんでした");
+      setError(getClientErrorMessage(err, "プロジェクトを作成できませんでした"));
     } finally {
       setCreating(false);
     }
@@ -113,7 +120,7 @@ export default function DashboardPage() {
       }
       setProjects((prev) => prev.filter((project) => project.id !== id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "削除に失敗しました");
+      setError(getClientErrorMessage(err, "削除に失敗しました"));
     }
   }
 

@@ -11,55 +11,67 @@ import {
   addEdge,
   ReactFlowProvider,
   type Connection,
-  type Edge,
   type Node,
+  type Edge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { fetchJson } from "@/lib/client/api";
-import { encodeGrid, decodeGrid } from "@/lib/grid/codec";
-import { createEmptyGrid, type GridData } from "@/lib/grid/types";
+import { decodeGrid, encodeGrid } from "@/lib/grid/codec";
+import { buildBranchPath } from "@/lib/projectBranches";
+import type {
+  AuthProfile,
+  BranchScopedProject,
+  MusicData,
+  MotionType,
+  PanelType,
+  ProjectBranch,
+  Template,
+  WaveMotionData,
+  ZentaiGamen,
+  Connection as DBConnection,
+} from "@/types";
+import { updateProjectMusic } from "@/lib/api/projects";
+import { parseExcel, parseCsv } from "@/lib/import/parseSpreadsheet";
+import { findPlaybackRoutes } from "@/lib/api/connections";
+import {
+  buildPlaybackTimeline,
+  zentaiGamenToPlaybackFrame,
+  type PlaybackTimeline,
+} from "@/lib/playback/frameBuilder";
+import {
+  createEmptyGrid,
+  getPlaybackFrameFinalGrid,
+  type GridData,
+} from "@/lib/grid/types";
 import {
   buildDefaultKeepMask,
   decodeKeepMask,
   encodeKeepMask,
 } from "@/lib/keep";
-import { buildPlaybackFrames } from "@/lib/playback/buildPlaybackFrames";
-import { parseExcel, parseCsv } from "@/lib/import/parseSpreadsheet";
-import { findPlaybackRoutes } from "@/lib/api/connections";
-import type {
-  AuthProfile,
-  Connection as DBConnection,
-  Project,
-  ProjectBranch,
-  Template,
-  ZentaiGamen,
-} from "@/types";
+import { resizeGrid } from "@/lib/grid/resize";
+import { DEFAULT_WAVE_MOTION_DATA } from "@/types";
 import CameraCapture from "@/components/scan/CameraCapture";
-import ContextMenu, { type SubMenuItem } from "./ContextMenu";
+import ZentaiGamenNode from "./ZentaiGamenNode";
 import ConnectionEdge from "./ConnectionEdge";
+import ContextMenu, { type SubMenuItem } from "./ContextMenu";
 import KeepConnectionEditor from "./KeepConnectionEditor";
 import NodeDeleteMenu from "./NodeDeleteMenu";
-import PlaybackPanel from "./PlaybackPanel";
 import Sidebar from "./Sidebar";
-import ZentaiGamenNode from "./ZentaiGamenNode";
+import PlaybackPanel from "./PlaybackPanel";
+import ProjectBranchSwitcher from "./ProjectBranchSwitcher";
 
 const nodeTypes = { zentaiGamen: ZentaiGamenNode };
 const edgeTypes = { connection: ConnectionEdge };
 
 interface DashboardCanvasProps {
-  project: Project;
+  project: BranchScopedProject;
+  branches: ProjectBranch[];
+  currentBranch: ProjectBranch;
   initialZentaiGamen: ZentaiGamen[];
   initialConnections: DBConnection[];
   auth: AuthProfile;
-  branches: ProjectBranch[];
-  currentBranch: ProjectBranch;
   unreadGitNotifications: number;
-}
-
-function branchQuery(branchName: string) {
-  return branchName === "main" ? "" : `?branch=${branchName}`;
 }
 
 function findConnectionPath(
@@ -129,28 +141,50 @@ function buildConnectionEdges(
 
 function DashboardCanvasInner({
   project,
+  branches,
+  currentBranch,
   initialZentaiGamen,
   initialConnections,
   auth,
-  branches,
-  currentBranch,
   unreadGitNotifications,
 }: DashboardCanvasProps) {
-  const [supabase] = useState(() => createClient());
   const router = useRouter();
+  const supabase = useMemo(() => createClient(), []);
   const reactFlowInstance = useReactFlow();
-  const currentBranchQuery = branchQuery(currentBranch.name);
+
   const canEditCurrentBranch = useMemo(() => {
     if (auth.is_admin) return true;
-    if (!auth.permissions.can_edit_branch_content) return false;
-    if (!currentBranch.is_main) return true;
-    return !project.main_branch_requires_admin_approval;
-  }, [auth, currentBranch.is_main, project.main_branch_requires_admin_approval]);
+    if (currentBranch.is_main) return false;
+    return (
+      (auth.permissions.can_edit_branch_content ||
+        auth.permissions.can_create_branches) &&
+      currentBranch.created_by === auth.id
+    );
+  }, [
+    auth.id,
+    auth.is_admin,
+    auth.permissions.can_create_branches,
+    auth.permissions.can_edit_branch_content,
+    currentBranch.created_by,
+    currentBranch.is_main,
+  ]);
+  const canCreateBranches = auth.is_admin || auth.permissions.can_create_branches;
+  const isOwnCurrentBranch = currentBranch.created_by === auth.id;
+  const canRequestMerge =
+    !currentBranch.is_main &&
+    (auth.is_admin ||
+      (auth.permissions.can_request_main_merge && isOwnCurrentBranch));
+  const canDeleteCurrentBranch =
+    auth.is_admin ||
+    (!currentBranch.is_main &&
+      auth.permissions.can_create_branches &&
+      isOwnCurrentBranch);
   const canViewGit =
     auth.is_admin ||
     auth.permissions.can_view_git_requests ||
     auth.permissions.can_request_main_merge ||
     auth.permissions.can_create_branches;
+  const showGitBadge = canViewGit && unreadGitNotifications > 0;
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -164,10 +198,29 @@ function DashboardCanvasInner({
 
   const [showCamera, setShowCamera] = useState(false);
   const [scanProcessing, setScanProcessing] = useState(false);
-  const [playbackData, setPlaybackData] = useState<{
-    frames: GridData[];
-    frameNames: string[];
-  } | null>(null);
+  const [playbackData, setPlaybackData] = useState<PlaybackTimeline | null>(null);
+
+  const [currentMusic, setCurrentMusic] = useState<MusicData | null>(
+    project.music_data ?? null
+  );
+
+  useEffect(() => {
+    setCurrentMusic(project.music_data ?? null);
+  }, [project.music_data, project.active_branch_id]);
+
+  const handleMusicChange = useCallback(
+    async (data: MusicData | null) => {
+      setCurrentMusic(data);
+      await updateProjectMusic(
+        project.id,
+        project.active_branch_id,
+        project.active_branch_is_main,
+        data
+      );
+    },
+    [project.id, project.active_branch_id, project.active_branch_is_main]
+  );
+
   const [contextMenu, setContextMenu] = useState<{
     screenX: number;
     screenY: number;
@@ -202,17 +255,41 @@ function DashboardCanvasInner({
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
 
+  useEffect(() => {
+    supabase
+      .from("templates")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .then(({ data }) => setTemplates((data ?? []) as Template[]));
+  }, [supabase]);
+
+  const getZentaiGamenDisplayGrid = useCallback(
+    (zg: ZentaiGamen): GridData =>
+      getPlaybackFrameFinalGrid(
+        zentaiGamenToPlaybackFrame({
+          zentaiGamen: zg,
+          gridWidth: project.grid_width,
+          gridHeight: project.grid_height,
+          defaultPanelDurationMs: project.default_panel_duration_ms,
+        })
+      ),
+    [
+      project.default_panel_duration_ms,
+      project.grid_height,
+      project.grid_width,
+    ]
+  );
+
   const persistConnectionKeepMask = useCallback(
     async (connectionId: string, mask: GridData) => {
       const encodedMask = encodeKeepMask(mask);
       const { error } = await supabase
         .from("connections")
         .update({ keep_mask_grid_data: encodedMask })
-        .eq("id", connectionId);
+        .eq("id", connectionId)
+        .eq("branch_id", project.active_branch_id);
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
 
       setConnectionList((prev) =>
         prev.map((connection) =>
@@ -222,7 +299,7 @@ function DashboardCanvasInner({
         )
       );
     },
-    [supabase]
+    [project.active_branch_id, supabase]
   );
 
   const handleNodeDoubleClick = useCallback(
@@ -268,16 +345,8 @@ function DashboardCanvasInner({
               throw new Error("keep範囲内の接続データを解決できませんでした");
             }
 
-            const sourceGrid = decodeGrid(
-              source.grid_data,
-              project.grid_width,
-              project.grid_height
-            );
-            const targetGrid = decodeGrid(
-              target.grid_data,
-              project.grid_width,
-              project.grid_height
-            );
+            const sourceGrid = getZentaiGamenDisplayGrid(source);
+            const targetGrid = getZentaiGamenDisplayGrid(target);
             await persistConnectionKeepMask(
               connection.id,
               buildDefaultKeepMask(sourceGrid, targetGrid)
@@ -295,16 +364,20 @@ function DashboardCanvasInner({
         return;
       }
 
-      router.push(`/project/${project.id}/editor/${nodeId}${currentBranchQuery}`);
+      router.push(
+        buildBranchPath(
+          `/project/${project.id}/editor/${nodeId}`,
+          project.active_branch_id
+        )
+      );
     },
     [
       canEditCurrentBranch,
       connectionList,
-      currentBranchQuery,
+      getZentaiGamenDisplayGrid,
       keepRangeStart,
       persistConnectionKeepMask,
-      project.grid_height,
-      project.grid_width,
+      project.active_branch_id,
       project.id,
       router,
       zentaiGamenList,
@@ -334,6 +407,9 @@ function DashboardCanvasInner({
           gridWidth: project.grid_width,
           gridHeight: project.grid_height,
           hasOutgoingEdge: sourceIds.has(item.id),
+          isWave: item.panel_type === "motion" && item.motion_type === "wave",
+          isKeepRangeSelected: keepRangePath?.includes(item.id) ?? false,
+          isKeepRangeStart: keepRangeStart?.nodeId === item.id,
           onDoubleClick: handleNodeDoubleClick,
           onLongPress: handleNodeLongPress,
         },
@@ -342,71 +418,22 @@ function DashboardCanvasInner({
     [
       handleNodeDoubleClick,
       handleNodeLongPress,
+      keepRangePath,
+      keepRangeStart,
       project.grid_height,
       project.grid_width,
     ]
   );
 
+  const buildEdges = useCallback((nextConnections: DBConnection[]): Edge[] => {
+    return buildConnectionEdges(nextConnections);
+  }, []);
+
   const [nodes, setNodes, onNodesChange] = useNodesState(
     buildNodes(initialZentaiGamen, initialConnections)
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState(
-    buildConnectionEdges(initialConnections)
-  );
-
-  const handleEdgeClick = useCallback(
-    async (edgeId: string) => {
-      if (!canEditCurrentBranch) return;
-
-      const { error } = await supabase.from("connections").delete().eq("id", edgeId);
-      if (error) {
-        setActionError(error.message);
-        return;
-      }
-
-      const nextConnections = connectionList.filter(
-        (connection) => connection.id !== edgeId
-      );
-      const sourceIds = new Set(nextConnections.map((connection) => connection.source_id));
-
-      setConnectionList(nextConnections);
-      setEdges((existingEdges) => existingEdges.filter((item) => item.id !== edgeId));
-      setNodes((existingNodes) =>
-        existingNodes.map((node) => ({
-          ...node,
-          data: {
-            ...node.data,
-            hasOutgoingEdge: sourceIds.has(node.id),
-          },
-        }))
-      );
-    },
-    [
-      canEditCurrentBranch,
-      connectionList,
-      setEdges,
-      setNodes,
-      supabase,
-    ]
-  );
-
-  const handleEdgeLongPress = useCallback(
-    (edgeId: string, x: number, y: number) => {
-      if (!canEditCurrentBranch) return;
-      setContextMenu(null);
-      setNodeMenu(null);
-      setEdgeMenu({ x, y, connectionId: edgeId });
-    },
-    [canEditCurrentBranch]
-  );
-
-  const buildEdges = useCallback(
-    (nextConnections: DBConnection[]): Edge[] =>
-      buildConnectionEdges(nextConnections, {
-        onClick: handleEdgeClick,
-        onLongPress: handleEdgeLongPress,
-      }),
-    [handleEdgeClick, handleEdgeLongPress]
+    buildEdges(initialConnections)
   );
 
   useEffect(() => {
@@ -434,44 +461,18 @@ function DashboardCanvasInner({
           ...node.data,
           isKeepRangeSelected: selectedIds.has(node.id),
           isKeepRangeStart: node.id === startId,
-        },
-      }))
-    );
-  }, [keepRangePath, keepRangeStart, setNodes]);
-
-  useEffect(() => {
-    setNodes((existingNodes) =>
-      existingNodes.map((node) => ({
-        ...node,
-        data: {
-          ...node.data,
           onDoubleClick: handleNodeDoubleClick,
           onLongPress: handleNodeLongPress,
         },
       }))
     );
-  }, [handleNodeDoubleClick, handleNodeLongPress, setNodes]);
-
-  useEffect(() => {
-    setEdges((existingEdges) =>
-      existingEdges.map((edge) => ({
-        ...edge,
-        data: {
-          ...edge.data,
-          onClick: handleEdgeClick,
-          onLongPress: handleEdgeLongPress,
-        },
-      }))
-    );
-  }, [handleEdgeClick, handleEdgeLongPress, setEdges]);
-
-  useEffect(() => {
-    supabase
-      .from("templates")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .then(({ data }) => setTemplates((data ?? []) as Template[]));
-  }, [supabase]);
+  }, [
+    handleNodeDoubleClick,
+    handleNodeLongPress,
+    keepRangePath,
+    keepRangeStart,
+    setNodes,
+  ]);
 
   const onConnect = useCallback(
     async (connection: Connection) => {
@@ -483,7 +484,7 @@ function DashboardCanvasInner({
         .from("connections")
         .insert({
           project_id: project.id,
-          branch_id: currentBranch.id,
+          branch_id: project.active_branch_id,
           source_id: connection.source,
           target_id: connection.target,
           sort_order: 0,
@@ -497,6 +498,7 @@ function DashboardCanvasInner({
       }
 
       const nextConnection = data as DBConnection;
+      setActionError(null);
       setConnectionList((prev) => [...prev, nextConnection]);
       setEdges((existingEdges) =>
         addEdge(
@@ -505,10 +507,6 @@ function DashboardCanvasInner({
             id: nextConnection.id,
             type: "connection",
             markerEnd: undefined,
-            data: {
-              onClick: handleEdgeClick,
-              onLongPress: handleEdgeLongPress,
-            },
           },
           existingEdges
         )
@@ -523,15 +521,81 @@ function DashboardCanvasInner({
     },
     [
       canEditCurrentBranch,
-      currentBranch.id,
-      handleEdgeClick,
-      handleEdgeLongPress,
+      project.active_branch_id,
       project.id,
       setEdges,
       setNodes,
       supabase,
     ]
   );
+
+  const handleEdgeClick = useCallback(
+    async (edgeId: string) => {
+      if (!canEditCurrentBranch) return;
+
+      const { error } = await supabase
+        .from("connections")
+        .delete()
+        .eq("id", edgeId)
+        .eq("branch_id", project.active_branch_id);
+      if (error) {
+        setActionError(error.message);
+        return;
+      }
+
+      const nextConnections = connectionList.filter(
+        (connection) => connection.id !== edgeId
+      );
+      const sourceIds = new Set(
+        nextConnections.map((connection) => connection.source_id)
+      );
+
+      setActionError(null);
+      setEdgeMenu(null);
+      setConnectionList(nextConnections);
+      setEdges((existingEdges) => existingEdges.filter((item) => item.id !== edgeId));
+      setNodes((existingNodes) =>
+        existingNodes.map((node) => ({
+          ...node,
+          data: {
+            ...node.data,
+            hasOutgoingEdge: sourceIds.has(node.id),
+          },
+        }))
+      );
+    },
+    [
+      canEditCurrentBranch,
+      connectionList,
+      project.active_branch_id,
+      setEdges,
+      setNodes,
+      supabase,
+    ]
+  );
+
+  const handleEdgeLongPress = useCallback(
+    (edgeId: string, x: number, y: number) => {
+      if (!canEditCurrentBranch) return;
+      setContextMenu(null);
+      setNodeMenu(null);
+      setEdgeMenu({ x, y, connectionId: edgeId });
+    },
+    [canEditCurrentBranch]
+  );
+
+  useEffect(() => {
+    setEdges((existingEdges) =>
+      existingEdges.map((edge) => ({
+        ...edge,
+        data: {
+          ...edge.data,
+          onClick: handleEdgeClick,
+          onLongPress: handleEdgeLongPress,
+        },
+      }))
+    );
+  }, [handleEdgeClick, handleEdgeLongPress, setEdges]);
 
   const onNodeDragStop = useCallback(
     async (_event: unknown, node: Node) => {
@@ -540,13 +604,15 @@ function DashboardCanvasInner({
       const { error } = await supabase
         .from("zentai_gamen")
         .update({ position_x: node.position.x, position_y: node.position.y })
-        .eq("id", node.id);
+        .eq("id", node.id)
+        .eq("branch_id", project.active_branch_id);
 
       if (error) {
         setActionError(error.message);
         return;
       }
 
+      setActionError(null);
       setZentaiGamenList((prev) =>
         prev.map((item) =>
           item.id === node.id
@@ -555,7 +621,7 @@ function DashboardCanvasInner({
         )
       );
     },
-    [canEditCurrentBranch, supabase]
+    [canEditCurrentBranch, project.active_branch_id, supabase]
   );
 
   const onPanePointerDown = useCallback(
@@ -566,6 +632,7 @@ function DashboardCanvasInner({
       longPressStartRef.current = { x: event.clientX, y: event.clientY };
       longPressTimerRef.current = setTimeout(() => {
         setNodeMenu(null);
+        setEdgeMenu(null);
         const flowPosition = reactFlowInstance.screenToFlowPosition({
           x: event.clientX,
           y: event.clientY,
@@ -606,6 +673,7 @@ function DashboardCanvasInner({
       event.preventDefault();
       if (keepRangeStart) return;
       const nodeData = node.data as { name?: string };
+      setEdgeMenu(null);
       setNodeMenu({
         x: event.clientX,
         y: event.clientY,
@@ -617,21 +685,35 @@ function DashboardCanvasInner({
   );
 
   const createAndNavigate = useCallback(
-    async (gridData: string, name: string) => {
+    async (
+      gridData: string,
+      name: string,
+      options?: {
+        panelType?: PanelType;
+        motionType?: MotionType | null;
+        motionData?: WaveMotionData | null;
+      }
+    ) => {
       if (!canEditCurrentBranch) return;
 
       const positionX = contextMenu?.flowX ?? 0;
       const positionY = contextMenu?.flowY ?? 0;
+      const panelType = options?.panelType ?? "general";
+      const motionType = options?.motionType ?? null;
+      const motionData = options?.motionData ?? null;
 
       const { data, error } = await supabase
         .from("zentai_gamen")
         .insert({
           project_id: project.id,
-          branch_id: currentBranch.id,
+          branch_id: project.active_branch_id,
           name,
           grid_data: gridData,
           position_x: positionX,
           position_y: positionY,
+          panel_type: panelType,
+          motion_type: motionType,
+          motion_data: motionData,
         })
         .select()
         .single();
@@ -642,13 +724,18 @@ function DashboardCanvasInner({
         return;
       }
 
-      router.push(`/project/${project.id}/editor/${data.id}${currentBranchQuery}`);
+      setActionError(null);
+      router.push(
+        buildBranchPath(
+          `/project/${project.id}/editor/${data.id}`,
+          project.active_branch_id
+        )
+      );
     },
     [
       canEditCurrentBranch,
       contextMenu,
-      currentBranch.id,
-      currentBranchQuery,
+      project.active_branch_id,
       project.id,
       router,
       supabase,
@@ -660,30 +747,113 @@ function DashboardCanvasInner({
     await createAndNavigate(encodeGrid(emptyGrid), "Untitled");
   }, [createAndNavigate, project.grid_height, project.grid_width]);
 
+  const handleCreateWave = useCallback(async () => {
+    if (!canEditCurrentBranch) return;
+
+    const positionX = contextMenu?.flowX ?? 0;
+    const positionY = contextMenu?.flowY ?? 0;
+    const emptyGrid = createEmptyGrid(project.grid_width, project.grid_height);
+    const beforeEncoded = encodeGrid(emptyGrid);
+    const afterEncoded = encodeGrid(emptyGrid);
+    const motionData = DEFAULT_WAVE_MOTION_DATA(afterEncoded);
+
+    const { data, error } = await supabase
+      .from("zentai_gamen")
+      .insert({
+        project_id: project.id,
+        branch_id: project.active_branch_id,
+        name: "ウェーブ",
+        grid_data: beforeEncoded,
+        position_x: positionX,
+        position_y: positionY,
+        panel_type: "motion",
+        motion_type: "wave",
+        motion_data: motionData,
+      })
+      .select()
+      .single();
+
+    setContextMenu(null);
+    if (error || !data) {
+      setActionError(error?.message ?? "ウェーブパネルを作成できませんでした");
+      return;
+    }
+
+    setActionError(null);
+    router.push(
+      buildBranchPath(
+        `/project/${project.id}/editor/${data.id}`,
+        project.active_branch_id
+      )
+    );
+  }, [
+    canEditCurrentBranch,
+    contextMenu,
+    project.active_branch_id,
+    project.grid_height,
+    project.grid_width,
+    project.id,
+    router,
+    supabase,
+  ]);
+
   const handleSelectTemplate = useCallback(
     async (templateId: string) => {
       const template = templates.find((item) => item.id === templateId);
       if (!template) return;
-      await createAndNavigate(template.grid_data, `${template.name} (コピー)`);
+
+      let gridData = template.grid_data;
+      if (
+        template.grid_width !== project.grid_width ||
+        template.grid_height !== project.grid_height
+      ) {
+        const resizedGrid = resizeGrid(
+          decodeGrid(
+            template.grid_data,
+            template.grid_width,
+            template.grid_height
+          ),
+          {
+            targetWidth: project.grid_width,
+            targetHeight: project.grid_height,
+            autoAdjustIllustration: true,
+          }
+        );
+        gridData = encodeGrid(resizedGrid);
+      }
+
+      await createAndNavigate(gridData, `${template.name} (コピー)`);
     },
-    [createAndNavigate, templates]
+    [createAndNavigate, project.grid_height, project.grid_width, templates]
   );
 
   const handleSelectExisting = useCallback(
     async (zentaiGamenId: string) => {
       const existing = zentaiGamenList.find((item) => item.id === zentaiGamenId);
       if (!existing) return;
-      await createAndNavigate(existing.grid_data, `${existing.name} (コピー)`);
+      const panelType: PanelType =
+        existing.panel_type === "keep" ? "general" : existing.panel_type;
+      await createAndNavigate(existing.grid_data, `${existing.name} (コピー)`, {
+        panelType,
+        motionType: panelType === "motion" ? existing.motion_type : null,
+        motionData:
+          panelType === "motion" && existing.motion_data
+            ? { ...existing.motion_data }
+            : null,
+      });
     },
     [createAndNavigate, zentaiGamenList]
   );
 
-  const handleImportFile = useCallback((type: "xlsx" | "csv") => {
-    if (!canEditCurrentBranch) return;
-    fileTypeRef.current = type;
-    setContextMenu(null);
-    setTimeout(() => fileInputRef.current?.click(), 100);
-  }, [canEditCurrentBranch]);
+  const handleImportFile = useCallback(
+    (type: "xlsx" | "csv") => {
+      if (!canEditCurrentBranch) return;
+      fileTypeRef.current = type;
+      setContextMenu(null);
+      setTimeout(() => fileInputRef.current?.click(), 100);
+    },
+    [canEditCurrentBranch]
+  );
 
   const handleFileSelected = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -724,20 +894,25 @@ function DashboardCanvasInner({
     async (imageBase64: string) => {
       setShowCamera(false);
       setScanProcessing(true);
-
       try {
-        const response = await fetchJson<{ gridData: string }>("/api/scan", {
+        const response = await fetch("/api/scan", {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             image: imageBase64,
             gridWidth: project.grid_width,
             gridHeight: project.grid_height,
           }),
         });
-
-        await createAndNavigate(response.gridData, "スキャン");
-      } catch (error) {
-        setActionError(error instanceof Error ? error.message : "スキャンに失敗しました");
+        if (!response.ok) {
+          const result = (await response.json()) as { error?: string };
+          setActionError(result.error ?? "スキャンに失敗しました");
+          return;
+        }
+        const { gridData } = (await response.json()) as { gridData: string };
+        await createAndNavigate(gridData, "スキャン");
+      } catch {
+        setActionError("スキャンに失敗しました");
       } finally {
         setScanProcessing(false);
       }
@@ -746,14 +921,19 @@ function DashboardCanvasInner({
   );
 
   const handleDeleteNode = useCallback(async () => {
-    if (!canEditCurrentBranch || !nodeMenu) return;
+    if (!nodeMenu || !canEditCurrentBranch) return;
 
-    const { error } = await supabase.from("zentai_gamen").delete().eq("id", nodeMenu.nodeId);
+    const { error } = await supabase
+      .from("zentai_gamen")
+      .delete()
+      .eq("id", nodeMenu.nodeId)
+      .eq("branch_id", project.active_branch_id);
     if (error) {
       setActionError(error.message);
       return;
     }
 
+    setActionError(null);
     setZentaiGamenList((prev) => prev.filter((item) => item.id !== nodeMenu.nodeId));
     setConnectionList((prev) =>
       prev.filter(
@@ -762,47 +942,55 @@ function DashboardCanvasInner({
           connection.target_id !== nodeMenu.nodeId
       )
     );
-    setNodes((prev) => prev.filter((node) => node.id !== nodeMenu.nodeId));
-    setEdges((prev) =>
-      prev.filter(
+    setNodes((existingNodes) => existingNodes.filter((node) => node.id !== nodeMenu.nodeId));
+    setEdges((existingEdges) =>
+      existingEdges.filter(
         (edge) => edge.source !== nodeMenu.nodeId && edge.target !== nodeMenu.nodeId
       )
     );
     setNodeMenu(null);
-  }, [canEditCurrentBranch, nodeMenu, setEdges, setNodes, supabase]);
+  }, [
+    canEditCurrentBranch,
+    nodeMenu,
+    project.active_branch_id,
+    setEdges,
+    setNodes,
+    supabase,
+  ]);
 
   const handleRenameNode = useCallback(
     async (newName: string) => {
-      if (!canEditCurrentBranch || !nodeMenu) return;
+      if (!nodeMenu || !canEditCurrentBranch) return;
 
       const { error } = await supabase
         .from("zentai_gamen")
         .update({ name: newName })
-        .eq("id", nodeMenu.nodeId);
-
+        .eq("id", nodeMenu.nodeId)
+        .eq("branch_id", project.active_branch_id);
       if (error) {
         setActionError(error.message);
         return;
       }
 
+      setActionError(null);
       setZentaiGamenList((prev) =>
         prev.map((item) =>
           item.id === nodeMenu.nodeId ? { ...item, name: newName } : item
         )
       );
-      setNodes((prev) =>
-        prev.map((node) =>
+      setNodes((existingNodes) =>
+        existingNodes.map((node) =>
           node.id === nodeMenu.nodeId
             ? { ...node, data: { ...node.data, name: newName } }
             : node
         )
       );
     },
-    [canEditCurrentBranch, nodeMenu, setNodes, supabase]
+    [canEditCurrentBranch, nodeMenu, project.active_branch_id, setNodes, supabase]
   );
 
   const handleStartKeepRange = useCallback(() => {
-    if (!canEditCurrentBranch || !nodeMenu) return;
+    if (!nodeMenu || !canEditCurrentBranch) return;
 
     setKeepRangeStart({
       nodeId: nodeMenu.nodeId,
@@ -829,16 +1017,8 @@ function DashboardCanvasInner({
         return;
       }
 
-      const sourceGrid = decodeGrid(
-        source.grid_data,
-        project.grid_width,
-        project.grid_height
-      );
-      const targetGrid = decodeGrid(
-        target.grid_data,
-        project.grid_width,
-        project.grid_height
-      );
+      const sourceGrid = getZentaiGamenDisplayGrid(source);
+      const targetGrid = getZentaiGamenDisplayGrid(target);
       const existingMask = decodeKeepMask(
         connection.keep_mask_grid_data,
         project.grid_width,
@@ -865,11 +1045,13 @@ function DashboardCanvasInner({
         targetGrid,
         mask,
       });
+      setActionError(null);
       setEdgeMenu(null);
     },
     [
       canEditCurrentBranch,
       connectionList,
+      getZentaiGamenDisplayGrid,
       persistConnectionKeepMask,
       project.grid_height,
       project.grid_width,
@@ -893,37 +1075,63 @@ function DashboardCanvasInner({
     [keepEditor, persistConnectionKeepMask]
   );
 
-  const handlePlayFromNode = useCallback(() => {
+  const handlePlayFromNode = useCallback(async () => {
     if (!nodeMenu) return;
 
-    const routes = findPlaybackRoutes(connectionList, nodeMenu.nodeId);
-    const route = routes[0];
-    if (!route || route.length === 0) {
-      setActionError("再生できるルートがありません");
-      return;
-    }
+    const startId = nodeMenu.nodeId;
+    setNodeMenu(null);
 
-    const { frames, frameNames } = buildPlaybackFrames(
-      route,
-      zentaiGamenList,
-      connectionList,
-      project.grid_width,
-      project.grid_height
+    const liveConnections: DBConnection[] = edges.map((edge) => ({
+      ...(connectionList.find((connection) => connection.id === edge.id) ?? {}),
+      id: edge.id,
+      project_id: project.id,
+      branch_id: project.active_branch_id,
+      source_id: edge.source,
+      target_id: edge.target,
+      sort_order: 0,
+      interval_override_ms:
+        connectionList.find((connection) => connection.id === edge.id)
+          ?.interval_override_ms ?? null,
+      keep_mask_grid_data:
+        connectionList.find((connection) => connection.id === edge.id)
+          ?.keep_mask_grid_data ?? null,
+      created_at: "",
+    }));
+
+    const routes = findPlaybackRoutes(
+      liveConnections.length > 0 ? liveConnections : connectionList,
+      startId
     );
-
-    if (frames.length > 0) {
-      setPlaybackData({ frames, frameNames });
-      setNodeMenu(null);
+    let route = routes[0];
+    if (!route || route.length === 0) {
+      route = [startId];
     }
-  }, [connectionList, nodeMenu, project.grid_height, project.grid_width, zentaiGamenList]);
 
-  const handleSwitchBranch = useCallback(
-    (nextBranchName: string) => {
-      router.push(`/project/${project.id}${branchQuery(nextBranchName)}`);
-      router.refresh();
-    },
-    [project.id, router]
-  );
+    const timeline = buildPlaybackTimeline({
+      route,
+      zentaiGamen: zentaiGamenList,
+      connections: connectionList,
+      gridWidth: project.grid_width,
+      gridHeight: project.grid_height,
+      defaultPanelDurationMs: project.default_panel_duration_ms,
+      defaultIntervalMs: project.default_interval_ms,
+    });
+
+    if (timeline.frameItems.length > 0) {
+      setPlaybackData(timeline);
+    }
+  }, [
+    connectionList,
+    edges,
+    nodeMenu,
+    project.active_branch_id,
+    project.default_interval_ms,
+    project.default_panel_duration_ms,
+    project.grid_height,
+    project.grid_width,
+    project.id,
+    zentaiGamenList,
+  ]);
 
   const templateMenuItems: SubMenuItem[] = templates.map((item) => ({
     id: item.id,
@@ -950,60 +1158,39 @@ function DashboardCanvasInner({
           className="absolute top-4 left-4 z-30 w-10 h-10 flex flex-col items-center justify-center gap-1 bg-card border border-card-border rounded-lg hover:border-accent/50 transition-colors"
           aria-label="メニュー"
         >
-          {unreadGitNotifications > 0 && (
-            <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-sky-500" />
+          <span className="w-4 h-0.5 bg-foreground" />
+          <span className="w-4 h-0.5 bg-foreground" />
+          <span className="w-4 h-0.5 bg-foreground" />
+          {showGitBadge && (
+            <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-sky-500" />
           )}
-          <span className="w-4 h-0.5 bg-foreground" />
-          <span className="w-4 h-0.5 bg-foreground" />
-          <span className="w-4 h-0.5 bg-foreground" />
         </button>
 
-        <div className="absolute left-16 right-4 top-4 z-20">
-          <div className="rounded-xl border border-card-border bg-card/95 px-3 py-3 backdrop-blur-sm shadow-lg">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs uppercase tracking-[0.2em] text-muted">
-                Branch
-              </span>
-              <select
-                value={currentBranch.name}
-                onChange={(event) => handleSwitchBranch(event.target.value)}
-                className="min-w-[140px] rounded-lg border border-card-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:border-accent"
-              >
-                {branches.map((branch) => (
-                  <option key={branch.id} value={branch.name}>
-                    {branch.name}
-                  </option>
-                ))}
-              </select>
-              <span
-                className={`rounded-full px-2.5 py-1 text-xs ${
-                  currentBranch.is_main
-                    ? "bg-accent/20 text-accent"
-                    : "bg-sky-500/15 text-sky-300"
-                }`}
-              >
-                {currentBranch.is_main ? "main" : "作業ブランチ"}
-              </span>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted">
-              <span>
-                {canEditCurrentBranch
-                  ? "このブランチは編集できます"
-                  : currentBranch.is_main
-                    ? "main は保護中です。編集は作業ブランチで行ってください"
-                    : "このアカウントは閲覧専用です"}
-              </span>
-              {project.main_branch_requires_admin_approval && (
-                <span>main 反映は admin 承認制です</span>
-              )}
-            </div>
-            {actionError && (
-              <div className="mt-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
-                {actionError}
-              </div>
-            )}
+        <ProjectBranchSwitcher
+          projectId={project.id}
+          branches={branches}
+          currentBranch={currentBranch}
+          canCreateBranches={canCreateBranches}
+          canRequestMerge={canRequestMerge}
+          canMergeToMainDirectly={auth.is_admin && !currentBranch.is_main}
+          canDeleteBranches={canDeleteCurrentBranch}
+        />
+
+        {!canEditCurrentBranch && (
+          <div className="absolute top-20 left-16 z-30 rounded-lg border border-card-border bg-card/95 px-3 py-2 text-xs text-muted shadow-sm">
+            {currentBranch.is_main
+              ? "main は admin のみ直接編集できます。作業ブランチから申請してください"
+              : currentBranch.created_by && currentBranch.created_by !== auth.id
+                ? "他アカウントが作成したブランチは編集できません"
+                : "このアカウントは閲覧専用です"}
           </div>
-        </div>
+        )}
+
+        {actionError && (
+          <div className="absolute top-4 right-4 z-30 max-w-sm rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger shadow-sm">
+            {actionError}
+          </div>
+        )}
 
         {scanProcessing && (
           <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/60">
@@ -1072,11 +1259,12 @@ function DashboardCanvasInner({
           </ReactFlow>
         </div>
 
-        {contextMenu && canEditCurrentBranch && (
+        {contextMenu && (
           <ContextMenu
             x={contextMenu.screenX}
             y={contextMenu.screenY}
             onManual={handleCreateManual}
+            onWave={handleCreateWave}
             onScan={handleScan}
             onSelectTemplate={handleSelectTemplate}
             onSelectExisting={handleSelectExisting}
@@ -1133,17 +1321,20 @@ function DashboardCanvasInner({
           onClose={() => setSidebarOpen(false)}
           projectId={project.id}
           projectName={project.name}
-          branchName={currentBranch.name}
-          showGitBadge={unreadGitNotifications > 0}
+          branchId={project.active_branch_id}
+          showGitBadge={showGitBadge}
           showGit={canViewGit}
         />
       </div>
 
       {playbackData && (
         <PlaybackPanel
-          frames={playbackData.frames}
-          frameNames={playbackData.frameNames}
+          projectId={project.id}
+          branchId={project.active_branch_id}
+          timeline={playbackData}
           onClose={() => setPlaybackData(null)}
+          initialMusic={currentMusic}
+          onMusicChange={handleMusicChange}
         />
       )}
 

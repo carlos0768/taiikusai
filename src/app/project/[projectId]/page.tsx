@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
+import { getClientErrorMessage } from "@/lib/client/errors";
 import { createClient } from "@/lib/supabase/client";
 import { fetchJson } from "@/lib/client/api";
 import DashboardCanvas from "@/components/dashboard/DashboardCanvas";
@@ -11,8 +12,9 @@ export default function ProjectPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const projectId = params.projectId as string;
-  const branchName = searchParams.get("branch") ?? "main";
-  const [supabase] = useState(() => createClient());
+  const requestedBranchId = searchParams.get("branch");
+  const supabase = useMemo(() => createClient(), []);
+
   const [context, setContext] = useState<BranchContextResponse | null>(null);
   const [zentaiGamen, setZentaiGamen] = useState<ZentaiGamen[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -25,7 +27,9 @@ export default function ProjectPage() {
 
     try {
       const nextContext = await fetchJson<BranchContextResponse>(
-        `/api/projects/${projectId}/branches?branch=${branchName}`
+        `/api/projects/${projectId}/branches${
+          requestedBranchId ? `?branch=${requestedBranchId}` : ""
+        }`
       );
 
       const [{ data: nextZentaiGamen, error: zentaiGamenError }, { data: nextConnections, error: connectionsError }] =
@@ -55,14 +59,14 @@ export default function ProjectPage() {
       setZentaiGamen((nextZentaiGamen ?? []) as ZentaiGamen[]);
       setConnections((nextConnections ?? []) as Connection[]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "プロジェクトを読み込めませんでした");
+      setError(getClientErrorMessage(err, "プロジェクトを読み込めませんでした"));
     } finally {
       setLoading(false);
     }
-  }, [branchName, projectId, supabase]);
+  }, [projectId, requestedBranchId, supabase]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   if (loading) {
@@ -84,11 +88,11 @@ export default function ProjectPage() {
   return (
     <DashboardCanvas
       project={context.project}
+      branches={context.branches}
+      currentBranch={context.currentBranch}
       initialZentaiGamen={zentaiGamen}
       initialConnections={connections}
       auth={context.auth}
-      branches={context.branches}
-      currentBranch={context.currentBranch}
       unreadGitNotifications={context.unreadGitNotifications}
     />
   );

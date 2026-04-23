@@ -1,34 +1,122 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
+import { useEffect, useMemo, useRef } from "react";
+import {
+  COLOR_MAP,
+  type ColorIndex,
+  type GridData,
+  type PlaybackFrame,
+  getPlaybackFrameBaseGrid,
+  waveChangedColsAt,
+} from "@/lib/grid/types";
+import type { PlaybackTimeline } from "@/lib/playback/frameBuilder";
+import { msToSecondsString } from "@/lib/playback/timing";
 import { usePlayback } from "./usePlayback";
 
 interface PlaybackViewProps {
-  frames: GridData[];
-  frameNames: string[];
+  timeline: PlaybackTimeline;
   onBack: () => void;
 }
 
-export default function PlaybackView({
-  frames,
-  frameNames,
-  onBack,
-}: PlaybackViewProps) {
+function drawGrid(
+  ctx: CanvasRenderingContext2D,
+  grid: GridData,
+  canvasW: number,
+  canvasH: number
+) {
+  const cellW = canvasW / grid.width;
+  const cellH = canvasH / grid.height;
+  for (let y = 0; y < grid.height; y++) {
+    for (let x = 0; x < grid.width; x++) {
+      const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
+      ctx.fillStyle = COLOR_MAP[colorIdx];
+      ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
+    }
+  }
+  // Grid lines
+  ctx.strokeStyle = "rgba(128, 128, 128, 0.15)";
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x <= grid.width; x++) {
+    ctx.beginPath();
+    ctx.moveTo(x * cellW, 0);
+    ctx.lineTo(x * cellW, canvasH);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= grid.height; y++) {
+    ctx.beginPath();
+    ctx.moveTo(0, y * cellH);
+    ctx.lineTo(canvasW, y * cellH);
+    ctx.stroke();
+  }
+}
+
+function drawWave(
+  ctx: CanvasRenderingContext2D,
+  frame: Extract<PlaybackFrame, { kind: "wave" }>,
+  elapsedMs: number,
+  canvasW: number,
+  canvasH: number
+) {
+  const { before, after } = frame;
+  const cellW = canvasW / before.width;
+  const cellH = canvasH / before.height;
+  const changedCols = waveChangedColsAt(frame, elapsedMs);
+  for (let y = 0; y < before.height; y++) {
+    for (let x = 0; x < before.width; x++) {
+      const grid = x < changedCols ? after : before;
+      const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
+      ctx.fillStyle = COLOR_MAP[colorIdx];
+      ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
+    }
+  }
+  ctx.strokeStyle = "rgba(128, 128, 128, 0.15)";
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x <= before.width; x++) {
+    ctx.beginPath();
+    ctx.moveTo(x * cellW, 0);
+    ctx.lineTo(x * cellW, canvasH);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= before.height; y++) {
+    ctx.beginPath();
+    ctx.moveTo(0, y * cellH);
+    ctx.lineTo(canvasW, y * cellH);
+    ctx.stroke();
+  }
+}
+
+function frameDimensions(frame: PlaybackFrame): { width: number; height: number } {
+  const grid = getPlaybackFrameBaseGrid(frame);
+  return { width: grid.width, height: grid.height };
+}
+
+export default function PlaybackView({ timeline, onBack }: PlaybackViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const frames = useMemo(
+    () => timeline.frameItems.map((item) => item.frame),
+    [timeline.frameItems]
+  );
+  const durations = useMemo(
+    () => timeline.frameItems.map((item) => item.durationMs),
+    [timeline.frameItems]
+  );
+  const intervals = useMemo(
+    () => timeline.gapItems.map((item) => item.intervalMs),
+    [timeline.gapItems]
+  );
 
   const {
     currentIndex,
     isPlaying,
-    intervalMs,
-    setIntervalMs,
+    isWhiteFrame,
+    frameElapsedMs,
     play,
     pause,
     stop,
     next,
     prev,
-  } = usePlayback(frames.length);
+  } = usePlayback({ frames, durations, intervals });
 
   // Render current frame
   useEffect(() => {
@@ -36,17 +124,20 @@ export default function PlaybackView({
     const container = containerRef.current;
     if (!canvas || !container || frames.length === 0) return;
 
-    const grid = frames[currentIndex];
+    const frame = frames[currentIndex];
+    if (!frame) return;
+    const activeTransitionGrid = isWhiteFrame
+      ? timeline.gapItems[currentIndex]?.transitionGrid ?? null
+      : null;
+    const dims = activeTransitionGrid
+      ? { width: activeTransitionGrid.width, height: activeTransitionGrid.height }
+      : frameDimensions(frame);
     const rect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
 
-    // Fit grid to container
-    const cellSize = Math.min(
-      rect.width / grid.width,
-      rect.height / grid.height
-    );
-    const canvasW = grid.width * cellSize;
-    const canvasH = grid.height * cellSize;
+    const cellSize = Math.min(rect.width / dims.width, rect.height / dims.height);
+    const canvasW = dims.width * cellSize;
+    const canvasH = dims.height * cellSize;
 
     canvas.width = canvasW * dpr;
     canvas.height = canvasH * dpr;
@@ -55,34 +146,34 @@ export default function PlaybackView({
 
     const ctx = canvas.getContext("2d")!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, canvasW, canvasH);
 
-    const cellW = canvasW / grid.width;
-    const cellH = canvasH / grid.height;
-
-    for (let y = 0; y < grid.height; y++) {
-      for (let x = 0; x < grid.width; x++) {
-        const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
-        ctx.fillStyle = COLOR_MAP[colorIdx];
-        ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
-      }
+    if (isWhiteFrame && activeTransitionGrid) {
+      drawGrid(ctx, activeTransitionGrid, canvasW, canvasH);
+      return;
     }
 
-    // Grid lines
-    ctx.strokeStyle = "rgba(128, 128, 128, 0.15)";
-    ctx.lineWidth = 0.5;
-    for (let x = 0; x <= grid.width; x++) {
-      ctx.beginPath();
-      ctx.moveTo(x * cellW, 0);
-      ctx.lineTo(x * cellW, canvasH);
-      ctx.stroke();
+    if (isWhiteFrame) {
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fillRect(0, 0, canvasW, canvasH);
+      return;
     }
-    for (let y = 0; y <= grid.height; y++) {
-      ctx.beginPath();
-      ctx.moveTo(0, y * cellH);
-      ctx.lineTo(canvasW, y * cellH);
-      ctx.stroke();
+
+    if (frame.kind === "general") {
+      drawGrid(ctx, frame.grid, canvasW, canvasH);
+    } else if (frame.kind === "keep") {
+      drawGrid(ctx, frame.displayGrid, canvasW, canvasH);
+    } else {
+      drawWave(ctx, frame, frameElapsedMs, canvasW, canvasH);
     }
-  }, [currentIndex, frames]);
+  }, [currentIndex, frames, frameElapsedMs, isWhiteFrame, timeline.gapItems]);
+
+  const currentFrame = frames[currentIndex];
+  const headerName = isWhiteFrame
+    ? timeline.gapItems[currentIndex]?.transitionKind === "keep"
+      ? "（keep中）"
+      : "（折り中）"
+    : currentFrame?.name ?? `Frame ${currentIndex + 1}`;
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -95,7 +186,13 @@ export default function PlaybackView({
           ←
         </button>
         <span className="text-sm font-medium">
-          {frameNames[currentIndex] ?? `Frame ${currentIndex + 1}`}
+          {headerName}
+          {currentFrame?.kind === "keep" && !isWhiteFrame && (
+            <span className="ml-1 text-[10px] text-accent">KEEP</span>
+          )}
+          {currentFrame?.kind === "wave" && !isWhiteFrame && (
+            <span className="ml-1 text-[10px] text-accent">〜WAVE</span>
+          )}
         </span>
         <span className="text-xs text-muted">
           {currentIndex + 1} / {frames.length}
@@ -119,7 +216,6 @@ export default function PlaybackView({
               key={idx}
               onClick={() => {
                 pause();
-                // Direct set through goTo equivalent
               }}
               className={`w-2.5 h-2.5 rounded-full transition-colors ${
                 idx === currentIndex
@@ -160,21 +256,9 @@ export default function PlaybackView({
           </button>
         </div>
 
-        {/* Speed control */}
-        <div className="flex items-center justify-center gap-3">
-          <span className="text-xs text-muted">速度</span>
-          <input
-            type="range"
-            min={500}
-            max={5000}
-            step={100}
-            value={intervalMs}
-            onChange={(e) => setIntervalMs(Number(e.target.value))}
-            className="w-40 accent-accent"
-          />
-          <span className="text-xs text-muted w-12">
-            {(intervalMs / 1000).toFixed(1)}秒
-          </span>
+        <div className="text-center text-[11px] text-muted">
+          通常パネル基本 {msToSecondsString(timeline.defaultPanelDurationMs)}秒 / 折り基本{" "}
+          {msToSecondsString(timeline.defaultIntervalMs)}秒
         </div>
       </div>
     </div>

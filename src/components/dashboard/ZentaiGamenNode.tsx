@@ -11,6 +11,7 @@ export interface ZentaiGamenNodeData {
   gridWidth: number;
   gridHeight: number;
   hasOutgoingEdge: boolean;
+  isWave: boolean;
   isKeepRangeSelected?: boolean;
   isKeepRangeStart?: boolean;
   onDoubleClick: (id: string) => void;
@@ -129,12 +130,17 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
       onPointerCancel={() => { cancelLongPress(); longPressStartRef.current = null; }}
     >
       {/* Thumbnail */}
-      <div className="p-2 bg-background/50 rounded-t-lg">
+      <div className="p-2 bg-background/50 rounded-t-lg relative">
         <canvas
           ref={canvasRef}
           className="w-full rounded"
           style={{ imageRendering: "pixelated" }}
         />
+        {nodeData.isWave && (
+          <span className="absolute top-1 left-1 px-1.5 py-0.5 text-[9px] font-bold bg-accent text-black rounded">
+            〜 WAVE
+          </span>
+        )}
       </div>
 
       {/* Name */}

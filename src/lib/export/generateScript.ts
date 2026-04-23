@@ -2,22 +2,25 @@ import type { ColorIndex } from "@/lib/grid/types";
 
 interface SceneData {
   sceneNumber: number;
-  colorIndex: ColorIndex;
   action: "color" | "keep";
+  colorIndex: ColorIndex;
   memo: string;
 }
 
 const COLOR_DISPLAY: Record<number, string> = {
-  0: "〇", // white
+  0: "〇", // white (fold)
   1: "黄",
   2: "赤",
   3: "●", // black
   4: "青",
+  5: "・", // undefined (designer hasn't decided yet)
 };
 
-function getColorDisplay(colorIndex: ColorIndex, action: SceneData["action"]): string {
-  if (action === "keep") return "keep";
-  return COLOR_DISPLAY[colorIndex] ?? "ー";
+function getColorDisplay(scene: SceneData): string {
+  if (scene.action === "keep") {
+    return "keep";
+  }
+  return COLOR_DISPLAY[scene.colorIndex] ?? "ー";
 }
 
 const CSS = `
@@ -43,6 +46,7 @@ const CSS = `
   .color-red { background: #ffcccc; }
   .color-black { background: #e0e0e0; }
   .color-blue { background: #cce0ff; }
+  .color-undefined { background: #e5e7eb; color: #9ca3af; }
   .keep { color: #888; font-style: italic; }
   .group-header th { font-size: 10pt; border-bottom: 2px solid #000; }
   @media print { body { padding: 5mm; } }
@@ -55,6 +59,7 @@ const COLOR_CLASS: Record<number, string> = {
   2: "color-red",
   3: "color-black",
   4: "color-blue",
+  5: "color-undefined",
 };
 
 export function generateScriptHtml(
@@ -78,8 +83,8 @@ export function generateScriptHtml(
       const sceneIdx = group * ROWS_PER_PAGE + row;
       if (sceneIdx < scenes.length) {
         const scene = scenes[sceneIdx];
-        const colorText = getColorDisplay(scene.colorIndex, scene.action);
-        const isKeep = scene.action === "keep";
+        const colorText = getColorDisplay(scene);
+        const isKeep = colorText === "keep";
         const colorClass = isKeep ? "keep" : COLOR_CLASS[scene.colorIndex] ?? "";
 
         tableRows += `<td class="col-num"><b>${scene.sceneNumber}</b></td>`;

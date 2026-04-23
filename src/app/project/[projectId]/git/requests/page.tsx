@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { fetchJson } from "@/lib/client/api";
+import { getClientErrorMessage } from "@/lib/client/errors";
+import { prefetchRoutes } from "@/lib/client/prefetch";
+import { buildBranchPath } from "@/lib/projectBranches";
 import type { AuthProfile, MergeRequestListItem } from "@/types";
 
 interface RequestsResponse {
@@ -13,16 +16,15 @@ interface MeResponse {
   profile: AuthProfile;
 }
 
-function branchQuery(branchName: string) {
-  return branchName === "main" ? "" : `?branch=${branchName}`;
-}
-
 export default function GitRequestsPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
   const projectId = params.projectId as string;
-  const branchName = searchParams.get("branch") ?? "main";
+  const branchId = searchParams.get("branch");
+  const backHref = branchId
+    ? buildBranchPath(`/project/${projectId}`, branchId)
+    : `/project/${projectId}`;
 
   const [profile, setProfile] = useState<AuthProfile | null>(null);
   const [requests, setRequests] = useState<MergeRequestListItem[]>([]);
@@ -48,7 +50,7 @@ export default function GitRequestsPage() {
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "リクエストを読み込めませんでした");
+      setError(getClientErrorMessage(err, "リクエストを読み込めませんでした"));
     } finally {
       setLoading(false);
     }
@@ -57,6 +59,10 @@ export default function GitRequestsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    prefetchRoutes(router, [backHref]);
+  }, [backHref, router]);
 
   const handleReview = useCallback(
     async (requestId: string, approve: boolean) => {
@@ -67,7 +73,7 @@ export default function GitRequestsPage() {
         });
         await load();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "レビューに失敗しました");
+        setError(getClientErrorMessage(err, "レビューに失敗しました"));
       }
     },
     [load, projectId]
@@ -77,7 +83,7 @@ export default function GitRequestsPage() {
     <div className="h-full flex flex-col">
       <header className="flex items-center gap-2 px-4 py-3 border-b border-card-border">
         <button
-          onClick={() => router.push(`/project/${projectId}${branchQuery(branchName)}`)}
+          onClick={() => router.push(backHref)}
           className="text-muted hover:text-foreground transition-colors text-lg px-2"
         >
           ←

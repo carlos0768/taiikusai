@@ -1,36 +1,36 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import JSZip from "jszip";
-import GridEditor from "@/components/editor/GridEditor";
-import { fetchJson } from "@/lib/client/api";
 import { createClient } from "@/lib/supabase/client";
-import { findPlaybackRoutes } from "@/lib/api/connections";
+import { fetchJson } from "@/lib/client/api";
 import { decodeGrid } from "@/lib/grid/codec";
+import {
+  countUndefinedCells,
+  getPlaybackFrameFinalGrid,
+  type ColorIndex,
+  type GridData,
+} from "@/lib/grid/types";
+import GridEditor, { type GridEditorSavePayload } from "@/components/editor/GridEditor";
+import { findPlaybackRoutes } from "@/lib/api/connections";
 import { generateScriptHtml } from "@/lib/export/generateScript";
 import { decodeKeepMask, filterKeepMaskBySameColor, isKeepCell } from "@/lib/keep";
-import type { GridData, ColorIndex } from "@/lib/grid/types";
-import type {
-  BranchContextResponse,
-  Connection,
-  ZentaiGamen,
-} from "@/types";
-
-interface EditorState {
-  context: BranchContextResponse;
-  zentaiGamen: ZentaiGamen;
-}
+import { zentaiGamenToPlaybackFrame } from "@/lib/playback/frameBuilder";
+import type { BranchContextResponse, Connection, ZentaiGamen } from "@/types";
 
 export default function EditorPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const projectId = params.projectId as string;
   const zentaiGamenId = params.zentaiGamenId as string;
-  const branchName = searchParams.get("branch") ?? "main";
-  const [supabase] = useState(() => createClient());
-  const [state, setState] = useState<EditorState | null>(null);
+  const requestedBranchId = searchParams.get("branch");
+  const supabase = useMemo(() => createClient(), []);
+
+  const [context, setContext] = useState<BranchContextResponse | null>(null);
   const [grid, setGrid] = useState<GridData | null>(null);
+  const [afterGrid, setAfterGrid] = useState<GridData | null>(null);
+  const [zentaiGamen, setZentaiGamen] = useState<ZentaiGamen | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,32 +40,49 @@ export default function EditorPage() {
       setError(null);
 
       try {
-        const context = await fetchJson<BranchContextResponse>(
-          `/api/projects/${projectId}/branches?branch=${branchName}`
+        const nextContext = await fetchJson<BranchContextResponse>(
+          `/api/projects/${projectId}/branches${
+            requestedBranchId ? `?branch=${requestedBranchId}` : ""
+          }`
         );
 
-        const { data: zentaiGamen, error: zentaiGamenError } = await supabase
+        const { data: zg, error: zentaiGamenError } = await supabase
           .from("zentai_gamen")
           .select("*")
           .eq("id", zentaiGamenId)
-          .eq("branch_id", context.currentBranch.id)
+          .eq("project_id", projectId)
+          .eq("branch_id", nextContext.currentBranch.id)
           .single();
 
-        if (zentaiGamenError || !zentaiGamen) {
+        if (zentaiGamenError || !zg) {
           throw zentaiGamenError ?? new Error("対象の画面が見つかりません");
         }
 
-        setState({
-          context,
-          zentaiGamen: zentaiGamen as ZentaiGamen,
-        });
+        setContext(nextContext);
+        setZentaiGamen(zg as ZentaiGamen);
         setGrid(
           decodeGrid(
-            (zentaiGamen as ZentaiGamen).grid_data,
-            context.project.grid_width,
-            context.project.grid_height
+            zg.grid_data,
+            nextContext.project.grid_width,
+            nextContext.project.grid_height
           )
         );
+
+        if (
+          zg.panel_type === "motion" &&
+          zg.motion_type === "wave" &&
+          zg.motion_data
+        ) {
+          setAfterGrid(
+            decodeGrid(
+              zg.motion_data.after_grid_data,
+              nextContext.project.grid_width,
+              nextContext.project.grid_height
+            )
+          );
+        } else {
+          setAfterGrid(null);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "エディタを読み込めませんでした");
       } finally {
@@ -73,97 +90,113 @@ export default function EditorPage() {
       }
     }
 
-    load();
-  }, [branchName, projectId, supabase, zentaiGamenId]);
+    void load();
+  }, [projectId, requestedBranchId, supabase, zentaiGamenId]);
 
   const handleSave = useCallback(
-    async (gridData: string, name: string, memo: string) => {
+    async (payload: GridEditorSavePayload) => {
+      if (!context) return;
+
+      const update: Record<string, unknown> = {
+        grid_data: payload.gridData,
+        name: payload.name,
+        memo: payload.memo,
+        updated_at: new Date().toISOString(),
+      };
+      if (payload.motionData !== undefined) {
+        update.motion_data = payload.motionData;
+      }
+
       const { error: updateError } = await supabase
         .from("zentai_gamen")
-        .update({
-          grid_data: gridData,
-          name,
-          memo,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", zentaiGamenId);
+        .update(update)
+        .eq("id", zentaiGamenId)
+        .eq("project_id", projectId)
+        .eq("branch_id", context.currentBranch.id);
 
       if (updateError) {
         throw updateError;
       }
     },
-    [supabase, zentaiGamenId]
+    [context, projectId, supabase, zentaiGamenId]
   );
 
   const handleExport = useCallback(async () => {
-    if (!state) return;
+    if (!context) return;
 
-    const [{ data: allZentaiGamen, error: zentaiGamenError }, { data: allConnections, error: connectionsError }] =
+    const [{ data: allZg, error: zentaiGamenError }, { data: allConns, error: connectionsError }] =
       await Promise.all([
         supabase
           .from("zentai_gamen")
           .select("*")
           .eq("project_id", projectId)
-          .eq("branch_id", state.context.currentBranch.id),
+          .eq("branch_id", context.currentBranch.id),
         supabase
           .from("connections")
           .select("*")
           .eq("project_id", projectId)
-          .eq("branch_id", state.context.currentBranch.id),
+          .eq("branch_id", context.currentBranch.id),
       ]);
 
-    if (zentaiGamenError || connectionsError || !allZentaiGamen || !allConnections) {
+    if (zentaiGamenError || connectionsError || !allZg || !allConns) {
       throw new Error("データの取得に失敗しました");
     }
 
-    const routes = findPlaybackRoutes(
-      allConnections as Connection[],
-      zentaiGamenId
-    );
+    const routes = findPlaybackRoutes(allConns as Connection[], zentaiGamenId);
     const route = routes[0];
     if (!route || route.length === 0) {
       throw new Error("連結された全体画面がありません");
     }
 
     const zentaiGamenMap = new Map(
-      (allZentaiGamen as ZentaiGamen[]).map((item) => [item.id, item])
+      (allZg as ZentaiGamen[]).map((item) => [item.id, item])
     );
-    const width = state.context.project.grid_width;
-    const height = state.context.project.grid_height;
+    const width = context.project.grid_width;
+    const height = context.project.grid_height;
     const connectionMap = new Map(
-      (allConnections as Connection[]).map((connection) => [
+      (allConns as Connection[]).map((connection) => [
         `${connection.source_id}:${connection.target_id}`,
         connection,
       ])
     );
-    const scenes: { grid: GridData; keepMask: GridData | null; memo: string }[] = [];
+    const scenes: {
+      name: string;
+      grid: GridData;
+      beforeGrid: GridData | null;
+      keepMask: GridData | null;
+      memo: string;
+    }[] = [];
 
     route.forEach((nodeId, index) => {
       const item = zentaiGamenMap.get(nodeId);
       if (!item) return;
 
+      const frame = zentaiGamenToPlaybackFrame({
+        zentaiGamen: item,
+        gridWidth: width,
+        gridHeight: height,
+        defaultPanelDurationMs: context.project.default_panel_duration_ms,
+      });
+      const grid = getPlaybackFrameFinalGrid(frame);
       const previousNodeId = route[index - 1];
-      const previousItem = previousNodeId ? zentaiGamenMap.get(previousNodeId) : null;
       const previousConnection = previousNodeId
         ? connectionMap.get(`${previousNodeId}:${nodeId}`)
         : null;
-      const grid = decodeGrid(
-        item.grid_data,
+      const previousScene = scenes[scenes.length - 1];
+      const rawKeepMask = decodeKeepMask(
+        previousConnection?.keep_mask_grid_data,
         width,
         height
       );
-      const rawKeepMask = decodeKeepMask(previousConnection?.keep_mask_grid_data, width, height);
       const keepMask =
-        rawKeepMask && previousItem
-          ? filterKeepMaskBySameColor(
-              decodeGrid(previousItem.grid_data, width, height),
-              grid,
-              rawKeepMask
-            )
+        rawKeepMask && previousScene
+          ? filterKeepMaskBySameColor(previousScene.grid, grid, rawKeepMask)
           : null;
 
       scenes.push({
+        name: item.name,
         grid,
+        beforeGrid: frame.kind === "wave" ? frame.before : null,
         keepMask,
         memo: item.memo || "",
       });
@@ -173,6 +206,26 @@ export default function EditorPage() {
       throw new Error("シーンデータがありません");
     }
 
+    const undefinedReport: { name: string; count: number }[] = [];
+    for (const scene of scenes) {
+      const count =
+        countUndefinedCells(scene.grid) +
+        (scene.beforeGrid ? countUndefinedCells(scene.beforeGrid) : 0);
+      if (count > 0) {
+        undefinedReport.push({ name: scene.name, count });
+      }
+    }
+
+    if (undefinedReport.length > 0) {
+      const lines = undefinedReport
+        .map((r) => `・${r.name}（${r.count}セル）`)
+        .join("\n");
+      const ok = window.confirm(
+        `連結されたパネルに未塗りのセルが残っています。\n\n${lines}\n\nこのまま出力しますか？`
+      );
+      if (!ok) return;
+    }
+
     const zip = new JSZip();
 
     for (let y = 0; y < height; y += 1) {
@@ -180,8 +233,10 @@ export default function EditorPage() {
         const cellIndex = y * width + x;
         const cellScenes = scenes.map((scene, index) => ({
           sceneNumber: index + 1,
+          action: isKeepCell(scene.keepMask, cellIndex)
+            ? ("keep" as const)
+            : ("color" as const),
           colorIndex: scene.grid.cells[cellIndex] as ColorIndex,
-          action: isKeepCell(scene.keepMask, cellIndex) ? "keep" as const : "color" as const,
           memo: scene.memo,
         }));
 
@@ -189,7 +244,7 @@ export default function EditorPage() {
           x,
           y,
           cellScenes,
-          state.context.project.name
+          context.project.name
         );
 
         zip.file(`${y + 1}列${x + 1}番.html`, html);
@@ -200,10 +255,10 @@ export default function EditorPage() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${state.context.project.name}_パネル台本.zip`;
+    anchor.download = `${context.project.name}_パネル台本.zip`;
     anchor.click();
     URL.revokeObjectURL(url);
-  }, [projectId, state, supabase, zentaiGamenId]);
+  }, [context, projectId, supabase, zentaiGamenId]);
 
   if (loading) {
     return (
@@ -213,7 +268,7 @@ export default function EditorPage() {
     );
   }
 
-  if (!state || !grid) {
+  if (error || !context || !grid || !zentaiGamen) {
     return (
       <div className="h-full flex items-center justify-center">
         <p className="text-muted">{error ?? "データが見つかりません"}</p>
@@ -224,20 +279,24 @@ export default function EditorPage() {
   return (
     <GridEditor
       initialGrid={grid}
+      initialAfterGrid={afterGrid}
+      panelType={zentaiGamen.panel_type ?? "general"}
+      motionType={zentaiGamen.motion_type ?? null}
+      initialMotionData={zentaiGamen.motion_data ?? null}
       zentaiGamenId={zentaiGamenId}
       projectId={projectId}
-      initialName={state.zentaiGamen.name}
-      initialMemo={state.zentaiGamen.memo || ""}
+      branchId={context.currentBranch.id}
+      initialName={zentaiGamen.name}
+      initialMemo={zentaiGamen.memo || ""}
       onSave={handleSave}
       onExport={handleExport}
-      auth={state.context.auth}
-      project={state.context.project}
-      currentBranch={state.context.currentBranch}
-      branches={state.context.branches}
-      unreadGitNotifications={state.context.unreadGitNotifications}
-      canEditCurrentBranch={state.context.canEditCurrentBranch}
-      canCreateBranches={state.context.canCreateBranches}
-      canRequestMerge={state.context.canRequestMerge}
+      auth={context.auth}
+      currentBranch={context.currentBranch}
+      branches={context.branches}
+      unreadGitNotifications={context.unreadGitNotifications}
+      canEditCurrentBranch={context.canEditCurrentBranch}
+      canCreateBranches={context.canCreateBranches}
+      canRequestMerge={context.canRequestMerge}
     />
   );
 }
