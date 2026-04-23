@@ -29,14 +29,17 @@ function throwIfError(error: PostgrestError | null) {
 }
 
 export function canEditBranch(
-  project: Project,
+  _project: Project,
   branch: ProjectBranch,
   auth: AuthProfile
 ) {
   if (auth.is_admin) return true;
-  if (!auth.permissions.can_edit_branch_content) return false;
-  if (!branch.is_main) return true;
-  return !project.main_branch_requires_admin_approval;
+  if (branch.is_main) return false;
+  if (auth.permissions.can_edit_branch_content) return true;
+  return (
+    auth.permissions.can_create_branches &&
+    branch.created_by === auth.id
+  );
 }
 
 export function canViewGit(auth: AuthProfile) {

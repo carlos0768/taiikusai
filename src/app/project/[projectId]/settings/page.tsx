@@ -20,7 +20,6 @@ import { createClient } from "@/lib/supabase/client";
 import type {
   AuthProfile,
   BranchScopedProject,
-  Project,
   ProjectBranch,
   ProjectBranchMerge,
   ZentaiGamen,
@@ -32,10 +31,6 @@ interface UsersResponse {
 
 interface MeResponse {
   profile: AuthProfile;
-}
-
-interface ProjectResponse {
-  project: Project;
 }
 
 interface ResizeResponse {
@@ -50,7 +45,7 @@ const permissionLabels: Array<{
 }> = [
   { key: "can_view_projects", label: "プロジェクト閲覧" },
   { key: "can_create_branches", label: "ブランチ作成" },
-  { key: "can_edit_branch_content", label: "ブランチ編集" },
+  { key: "can_edit_branch_content", label: "作業ブランチ編集" },
   { key: "can_request_main_merge", label: "main 申請" },
   { key: "can_view_git_requests", label: "Git リクエスト閲覧" },
   { key: "can_manage_accounts", label: "アカウント管理" },
@@ -234,11 +229,12 @@ export default function ProjectSettingsPage() {
     profile?.is_admin || profile?.permissions.can_manage_accounts || false;
   const canEditCurrentBranch = Boolean(
     profile &&
-      project &&
       (profile.is_admin ||
-        (profile.permissions.can_edit_branch_content &&
-          (!currentBranch?.is_main ||
-            !project.main_branch_requires_admin_approval)))
+        (currentBranch &&
+          !currentBranch.is_main &&
+          (profile.permissions.can_edit_branch_content ||
+            (profile.permissions.can_create_branches &&
+              currentBranch.created_by === profile.id))))
   );
 
   const hasGridChanges =
@@ -406,38 +402,6 @@ export default function ProjectSettingsPage() {
     }
   }, []);
 
-  const handleToggleMainProtection = useCallback(async () => {
-    if (!project) return;
-
-    try {
-      const response = await fetchJson<ProjectResponse & { success: boolean }>(
-        `/api/projects/${projectId}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            mainBranchRequiresAdminApproval:
-              !project.main_branch_requires_admin_approval,
-          }),
-        }
-      );
-
-      setProject((prev) =>
-        prev
-          ? {
-              ...prev,
-              main_branch_requires_admin_approval:
-                response.project.main_branch_requires_admin_approval,
-            }
-          : prev
-      );
-      setLoadError(null);
-    } catch (error) {
-      setLoadError(
-        error instanceof Error ? error.message : "設定を更新できませんでした"
-      );
-    }
-  }, [project, projectId]);
-
   const backHref = project
     ? buildBranchPath(`/project/${projectId}`, project.active_branch_id)
     : `/project/${projectId}`;
@@ -537,20 +501,12 @@ export default function ProjectSettingsPage() {
               <div>
                 <h2 className="font-medium">main ブランチ保護</h2>
                 <p className="text-sm text-muted mt-1">
-                  ON の場合、admin 以外は `main` を直接編集できず申請が必要です。
+                  main への反映は admin 承認制です。非 admin は作業ブランチから申請してください。
                 </p>
               </div>
-              <button
-                onClick={() => void handleToggleMainProtection()}
-                disabled={!canManageAccounts}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 ${
-                  project.main_branch_requires_admin_approval
-                    ? "bg-accent text-black"
-                    : "bg-card-border text-foreground"
-                }`}
-              >
-                {project.main_branch_requires_admin_approval ? "保護中" : "保護OFF"}
-              </button>
+              <span className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-black">
+                admin 承認制
+              </span>
             </div>
           </section>
 
