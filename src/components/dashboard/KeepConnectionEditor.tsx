@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
-import { createKeepMaskGrid, normalizeKeepMaskGrid } from "@/lib/keep";
+import {
+  createKeepMaskGrid,
+  isKeepEligibleSameColorCell,
+  normalizeKeepMaskGrid,
+} from "@/lib/keep";
 
 interface KeepConnectionEditorProps {
   sourceName: string;
@@ -56,7 +60,10 @@ function drawGridWithMask(
     for (let x = 0; x < grid.width; x += 1) {
       const index = y * grid.width + x;
       const colorIdx = grid.cells[index] as ColorIndex;
-      const selectable = sourceGrid.cells[index] === targetGrid.cells[index];
+      const selectable = isKeepEligibleSameColorCell(
+        sourceGrid.cells[index],
+        targetGrid.cells[index]
+      );
 
       ctx.fillStyle = COLOR_MAP[colorIdx];
       ctx.fillRect(x * cellW, y * cellH, Math.ceil(cellW), Math.ceil(cellH));
@@ -65,15 +72,23 @@ function drawGridWithMask(
         ctx.fillStyle = "rgba(0, 0, 0, 0.38)";
         ctx.fillRect(x * cellW, y * cellH, Math.ceil(cellW), Math.ceil(cellH));
       } else if (mask.cells[index] === 1) {
-        ctx.fillStyle = "rgba(255, 215, 0, 0.42)";
+        ctx.fillStyle = "rgba(0, 229, 255, 0.30)";
         ctx.fillRect(x * cellW, y * cellH, Math.ceil(cellW), Math.ceil(cellH));
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(
+          x * cellW + 1.5,
+          y * cellH + 1.5,
+          Math.max(1, cellW - 3),
+          Math.max(1, cellH - 3)
+        );
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.96)";
         ctx.lineWidth = 1.5;
         ctx.strokeRect(
-          x * cellW + 0.75,
-          y * cellH + 0.75,
-          Math.max(1, cellW - 1.5),
-          Math.max(1, cellH - 1.5)
+          x * cellW + 3,
+          y * cellH + 3,
+          Math.max(1, cellW - 6),
+          Math.max(1, cellH - 6)
         );
       }
     }
@@ -120,7 +135,12 @@ export default function KeepConnectionEditor({
       targetGrid.cells.length
     );
     for (let index = 0; index < maxLength; index += 1) {
-      cells[index] = sourceGrid.cells[index] === targetGrid.cells[index] ? 1 : 0;
+      cells[index] = isKeepEligibleSameColorCell(
+        sourceGrid.cells[index],
+        targetGrid.cells[index]
+      )
+        ? 1
+        : 0;
     }
     return cells;
   }, [sourceGrid, targetGrid]);
