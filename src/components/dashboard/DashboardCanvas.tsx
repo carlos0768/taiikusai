@@ -1337,7 +1337,7 @@ function DashboardCanvasInner({
                 }
                 className="w-full px-4 py-2.5 text-left text-sm text-danger transition-colors hover:bg-danger/10"
               >
-                keepを全OFF
+                この間隔のkeepをOFF
               </button>
             )}
             <button

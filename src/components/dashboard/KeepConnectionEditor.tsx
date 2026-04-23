@@ -306,7 +306,7 @@ export default function KeepConnectionEditor({
                 disabled={saving}
                 className="rounded-lg border border-danger/40 px-3 py-2 text-sm text-danger hover:bg-danger/10 disabled:opacity-50"
               >
-                全OFFで保存
+                この間隔のkeepをOFF
               </button>
             )}
             <button
