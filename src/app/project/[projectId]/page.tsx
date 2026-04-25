@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { getClientErrorMessage } from "@/lib/client/errors";
-import { createClient } from "@/lib/supabase/client";
 import { fetchJson } from "@/lib/client/api";
 import DashboardCanvas from "@/components/dashboard/DashboardCanvas";
 import type { BranchContextResponse, Connection, ZentaiGamen } from "@/types";
@@ -13,7 +12,6 @@ export default function ProjectPage() {
   const searchParams = useSearchParams();
   const projectId = params.projectId as string;
   const requestedBranchId = searchParams.get("branch");
-  const supabase = useMemo(() => createClient(), []);
 
   const [context, setContext] = useState<BranchContextResponse | null>(null);
   const [zentaiGamen, setZentaiGamen] = useState<ZentaiGamen[]>([]);
@@ -26,44 +24,24 @@ export default function ProjectPage() {
     setError(null);
 
     try {
+      const contextParams = new URLSearchParams({ includeState: "1" });
+      if (requestedBranchId) {
+        contextParams.set("branch", requestedBranchId);
+      }
+
       const nextContext = await fetchJson<BranchContextResponse>(
-        `/api/projects/${projectId}/branches${
-          requestedBranchId ? `?branch=${requestedBranchId}` : ""
-        }`
+        `/api/projects/${projectId}/branches?${contextParams.toString()}`
       );
 
-      const [{ data: nextZentaiGamen, error: zentaiGamenError }, { data: nextConnections, error: connectionsError }] =
-        await Promise.all([
-          supabase
-            .from("zentai_gamen")
-            .select("*")
-            .eq("project_id", projectId)
-            .eq("branch_id", nextContext.currentBranch.id)
-            .order("created_at", { ascending: true }),
-          supabase
-            .from("connections")
-            .select("*")
-            .eq("project_id", projectId)
-            .eq("branch_id", nextContext.currentBranch.id)
-            .order("sort_order", { ascending: true }),
-        ]);
-
-      if (zentaiGamenError) {
-        throw zentaiGamenError;
-      }
-      if (connectionsError) {
-        throw connectionsError;
-      }
-
       setContext(nextContext);
-      setZentaiGamen((nextZentaiGamen ?? []) as ZentaiGamen[]);
-      setConnections((nextConnections ?? []) as Connection[]);
+      setZentaiGamen(nextContext.zentaiGamen ?? []);
+      setConnections(nextContext.connections ?? []);
     } catch (err) {
       setError(getClientErrorMessage(err, "プロジェクトを読み込めませんでした"));
     } finally {
       setLoading(false);
     }
-  }, [projectId, requestedBranchId, supabase]);
+  }, [projectId, requestedBranchId]);
 
   useEffect(() => {
     void load();

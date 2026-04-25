@@ -43,26 +43,22 @@ export default function EditorPage() {
       setError(null);
 
       try {
+        const contextParams = new URLSearchParams({ zentaiGamenId });
+        if (requestedBranchId) {
+          contextParams.set("branch", requestedBranchId);
+        }
+
         const nextContext = await fetchJson<BranchContextResponse>(
-          `/api/projects/${projectId}/branches${
-            requestedBranchId ? `?branch=${requestedBranchId}` : ""
-          }`
+          `/api/projects/${projectId}/branches?${contextParams.toString()}`
         );
+        const zg = nextContext.zentaiGamenItem;
 
-        const { data: zg, error: zentaiGamenError } = await supabase
-          .from("zentai_gamen")
-          .select("*")
-          .eq("id", zentaiGamenId)
-          .eq("project_id", projectId)
-          .eq("branch_id", nextContext.currentBranch.id)
-          .single();
-
-        if (zentaiGamenError || !zg) {
-          throw zentaiGamenError ?? new Error("対象の画面が見つかりません");
+        if (!zg) {
+          throw new Error("対象の画面が見つかりません");
         }
 
         setContext(nextContext);
-        setZentaiGamen(zg as ZentaiGamen);
+        setZentaiGamen(zg);
         setGrid(
           decodeGrid(
             zg.grid_data,
@@ -94,7 +90,7 @@ export default function EditorPage() {
     }
 
     void load();
-  }, [projectId, requestedBranchId, supabase, zentaiGamenId]);
+  }, [projectId, requestedBranchId, zentaiGamenId]);
 
   const handleSave = useCallback(
     async (payload: GridEditorSavePayload) => {

@@ -32,13 +32,11 @@ export async function proxy(request: NextRequest) {
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data } = await supabase.auth.getClaims();
 
   const isPublicPage = PUBLIC_PAGE_PATHS.has(pathname);
 
-  if (!user) {
+  if (!data?.claims?.sub) {
     if (isPublicPage) {
       return response;
     }
@@ -48,7 +46,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  if (user && isPublicPage) {
+  if (isPublicPage) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/dashboard";
     return NextResponse.redirect(redirectUrl);

@@ -22,6 +22,7 @@ import {
 } from "@/lib/server/pseudoGit";
 import { createClient } from "@/lib/supabase/server";
 import { HttpError, toErrorResponse } from "@/lib/server/errors";
+import type { ZentaiGamen } from "@/types";
 
 interface CreateBranchRequestBody {
   name: string;
@@ -50,23 +51,55 @@ export async function GET(
   context: { params: Promise<{ projectId: string }> }
 ) {
   try {
-    const { profile } = await requireAuth();
+    const { projectId } = await context.params;
+    const requestedBranchId = request.nextUrl.searchParams.get("branch");
+    const includeState = request.nextUrl.searchParams.get("includeState") === "1";
+    const zentaiGamenId = request.nextUrl.searchParams.get("zentaiGamenId");
+    const supabase = await createClient();
+    const [authResult, contextResultState] = await Promise.allSettled([
+      requireAuth(),
+      fetchProjectBranchContext(supabase, projectId, requestedBranchId),
+    ]);
+
+    if (authResult.status === "rejected") {
+      throw authResult.reason;
+    }
+
+    const { profile } = authResult.value;
     if (!profile.is_admin && !profile.permissions.can_view_projects) {
       throw new HttpError(403, "プロジェクト閲覧権限がありません");
     }
 
-    const { projectId } = await context.params;
-    const requestedBranchId = request.nextUrl.searchParams.get("branch");
-    const supabase = await createClient();
-    const contextResult = await fetchProjectBranchContext(
-      supabase,
-      projectId,
-      requestedBranchId
-    );
-    const unreadGitNotifications = await countUnreadGitNotifications(
-      profile.id,
-      projectId
-    );
+    if (contextResultState.status === "rejected") {
+      throw contextResultState.reason;
+    }
+
+    const contextResult = contextResultState.value;
+    const [unreadGitNotifications, branchState, zentaiGamenItemResult] =
+      await Promise.all([
+        countUnreadGitNotifications(profile.id, projectId),
+        includeState
+          ? fetchProjectBranchState(
+              supabase,
+              projectId,
+              contextResult.projectView,
+              contextResult.currentBranch
+            )
+          : Promise.resolve(null),
+        zentaiGamenId
+          ? supabase
+              .from("zentai_gamen")
+              .select("*")
+              .eq("id", zentaiGamenId)
+              .eq("project_id", projectId)
+              .eq("branch_id", contextResult.currentBranch.id)
+              .single<ZentaiGamen>()
+          : Promise.resolve(null),
+      ]);
+
+    if (zentaiGamenItemResult?.error || zentaiGamenItemResult?.data === null) {
+      throw new HttpError(404, "対象の画面が見つかりません");
+    }
 
     return NextResponse.json({
       project: contextResult.projectView,
@@ -86,6 +119,9 @@ export async function GET(
             contextResult.currentBranch.created_by === profile.id)),
       canViewGitRequests: canViewGit(profile),
       unreadGitNotifications,
+      zentaiGamen: branchState?.panels,
+      connections: branchState?.connections,
+      zentaiGamenItem: zentaiGamenItemResult?.data,
     });
   } catch (error) {
     return toErrorResponse(error);

@@ -8,8 +8,9 @@ import { getClientErrorMessage } from "@/lib/client/errors";
 import { prefetchRoutes } from "@/lib/client/prefetch";
 import type { AuthProfile, Project } from "@/types";
 
-interface MeResponse {
+interface ProjectsResponse {
   profile: AuthProfile;
+  projects: Project[];
 }
 
 export default function DashboardPage() {
@@ -33,29 +34,17 @@ export default function DashboardPage() {
     setError(null);
 
     try {
-      const [{ profile: me }, projectResult] = await Promise.all([
-        fetchJson<MeResponse>("/api/auth/me"),
-        supabase
-          .from("projects")
-          .select("*")
-          .order("updated_at", { ascending: false }),
-      ]);
+      const { profile: me, projects: nextProjects } =
+        await fetchJson<ProjectsResponse>("/api/projects");
 
       setProfile(me);
-      if (me.is_admin || me.permissions.can_view_projects) {
-        if (projectResult.error) {
-          throw projectResult.error;
-        }
-        setProjects((projectResult.data ?? []) as Project[]);
-      } else {
-        setProjects([]);
-      }
+      setProjects(nextProjects);
     } catch (err) {
       setError(getClientErrorMessage(err, "ダッシュボードの読み込みに失敗しました"));
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     loadProjects();
