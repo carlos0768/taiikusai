@@ -14,7 +14,10 @@ import {
 } from "@/lib/grid/types";
 import GridEditor, { type GridEditorSavePayload } from "@/components/editor/GridEditor";
 import { findPlaybackRoutes } from "@/lib/api/connections";
-import { generateScriptHtml } from "@/lib/export/generateScript";
+import {
+  generateScriptHtml,
+  getPanelScriptColumnLabel,
+} from "@/lib/export/generateScript";
 import { decodeKeepMask, filterKeepMaskBySameColor, isKeepCell } from "@/lib/keep";
 import { zentaiGamenToPlaybackFrame } from "@/lib/playback/frameBuilder";
 import type { BranchContextResponse, Connection, ZentaiGamen } from "@/types";
@@ -247,7 +250,7 @@ export default function EditorPage() {
           context.project.name
         );
 
-        zip.file(`${y + 1}列${x + 1}番.html`, html);
+        zip.file(`${getPanelScriptColumnLabel(x)}列${y + 1}番.html`, html);
       }
     }
 
