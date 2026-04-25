@@ -13,6 +13,7 @@ import {
   type Connection,
   type Node,
   type Edge,
+  type Viewport as FlowViewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useRouter } from "next/navigation";
@@ -64,6 +65,7 @@ import ProjectBranchSwitcher from "./ProjectBranchSwitcher";
 
 const nodeTypes = { zentaiGamen: ZentaiGamenNode };
 const edgeTypes = { connection: ConnectionEdge };
+const DASHBOARD_VIEWPORT_STORAGE_PREFIX = "taiikusai:dashboardViewport";
 
 interface DashboardCanvasProps {
   project: BranchScopedProject;
@@ -73,6 +75,53 @@ interface DashboardCanvasProps {
   initialConnections: DBConnection[];
   auth: AuthProfile;
   unreadGitNotifications: number;
+}
+
+function getDashboardViewportStorageKey(projectId: string, branchId: string): string {
+  return `${DASHBOARD_VIEWPORT_STORAGE_PREFIX}:${projectId}:${branchId}`;
+}
+
+function isFlowViewport(value: unknown): value is FlowViewport {
+  if (!value || typeof value !== "object") return false;
+
+  const viewport = value as Partial<FlowViewport>;
+  return (
+    typeof viewport.x === "number" &&
+    Number.isFinite(viewport.x) &&
+    typeof viewport.y === "number" &&
+    Number.isFinite(viewport.y) &&
+    typeof viewport.zoom === "number" &&
+    Number.isFinite(viewport.zoom)
+  );
+}
+
+function readStoredDashboardViewport(storageKey: string): FlowViewport | null {
+  try {
+    const rawValue = window.sessionStorage.getItem(storageKey);
+    if (!rawValue) return null;
+
+    const parsedValue: unknown = JSON.parse(rawValue);
+    if (!isFlowViewport(parsedValue)) return null;
+
+    return {
+      x: parsedValue.x,
+      y: parsedValue.y,
+      zoom: Math.max(0.1, Math.min(3, parsedValue.zoom)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredDashboardViewport(
+  storageKey: string,
+  viewport: FlowViewport
+): void {
+  try {
+    window.sessionStorage.setItem(storageKey, JSON.stringify(viewport));
+  } catch {
+    // Viewport persistence is only a convenience; ignore unavailable storage.
+  }
 }
 
 function findConnectionPath(
@@ -177,6 +226,11 @@ function DashboardCanvasInner({
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
   const reactFlowInstance = useReactFlow();
+  const viewportStorageKey = useMemo(
+    () => getDashboardViewportStorageKey(project.id, project.active_branch_id),
+    [project.active_branch_id, project.id]
+  );
+  const suppressViewportPersistenceRef = useRef(true);
 
   const canEditCurrentBranch = useMemo(() => {
     if (auth.is_admin) return true;
@@ -391,6 +445,10 @@ function DashboardCanvasInner({
         return;
       }
 
+      writeStoredDashboardViewport(
+        viewportStorageKey,
+        reactFlowInstance.getViewport()
+      );
       router.push(
         buildBranchPath(
           `/project/${project.id}/editor/${nodeId}`,
@@ -406,7 +464,9 @@ function DashboardCanvasInner({
       persistConnectionKeepMask,
       project.active_branch_id,
       project.id,
+      reactFlowInstance,
       router,
+      viewportStorageKey,
       zentaiGamenList,
     ]
   );
@@ -755,6 +815,10 @@ function DashboardCanvasInner({
       }
 
       setActionError(null);
+      writeStoredDashboardViewport(
+        viewportStorageKey,
+        reactFlowInstance.getViewport()
+      );
       router.push(
         buildBranchPath(
           `/project/${project.id}/editor/${data.id}`,
@@ -767,8 +831,10 @@ function DashboardCanvasInner({
       contextMenu,
       project.active_branch_id,
       project.id,
+      reactFlowInstance,
       router,
       supabase,
+      viewportStorageKey,
     ]
   );
 
@@ -1231,6 +1297,27 @@ function DashboardCanvasInner({
     label: item.name,
   }));
 
+  const handleReactFlowInit = useCallback(() => {
+    const storedViewport = readStoredDashboardViewport(viewportStorageKey);
+    if (!storedViewport) {
+      suppressViewportPersistenceRef.current = false;
+      return;
+    }
+
+    void reactFlowInstance.setViewport(storedViewport, { duration: 0 });
+    window.setTimeout(() => {
+      suppressViewportPersistenceRef.current = false;
+    }, 0);
+  }, [reactFlowInstance, viewportStorageKey]);
+
+  const handleMoveEnd = useCallback(
+    (_event: MouseEvent | TouchEvent | null, viewport: FlowViewport) => {
+      if (suppressViewportPersistenceRef.current) return;
+      writeStoredDashboardViewport(viewportStorageKey, viewport);
+    },
+    [viewportStorageKey]
+  );
+
   return (
     <div className="h-full w-full flex">
       <div className="flex-1 h-full relative">
@@ -1326,6 +1413,8 @@ function DashboardCanvasInner({
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onInit={handleReactFlowInit}
+            onMoveEnd={handleMoveEnd}
             onNodeDragStop={onNodeDragStop}
             onNodeContextMenu={onNodeContextMenu}
             nodeTypes={nodeTypes}
