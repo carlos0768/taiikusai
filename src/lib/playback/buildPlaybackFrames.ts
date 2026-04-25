@@ -59,7 +59,7 @@ export function buildPlaybackFrames(
     frames.push(
       hasKeep && mask ? applyKeepTransition(grid, mask) : createEmptyGrid(width, height)
     );
-    frameNames.push(hasKeep ? `${item.name} → keep` : `${item.name} → 白間隔`);
+    frameNames.push(hasKeep ? `${item.name} → keep` : `${item.name} → 灰色間隔`);
   });
 
   return { frames, frameNames };

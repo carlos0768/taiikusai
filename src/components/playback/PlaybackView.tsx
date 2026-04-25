@@ -172,7 +172,7 @@ export default function PlaybackView({ timeline, onBack }: PlaybackViewProps) {
   const headerName = isWhiteFrame
     ? timeline.gapItems[currentIndex]?.transitionKind === "keep"
       ? "（keep中）"
-      : "（折り中）"
+      : "（間隔中）"
     : currentFrame?.name ?? `Frame ${currentIndex + 1}`;
 
   return (
