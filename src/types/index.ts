@@ -252,21 +252,6 @@ export interface GitNotificationSummary {
   hasUnread: boolean;
 }
 
-export interface BranchContextResponse {
-  project: BranchScopedProject;
-  branches: ProjectBranch[];
-  currentBranch: ProjectBranch;
-  auth: AuthProfile;
-  canEditCurrentBranch: boolean;
-  canCreateBranches: boolean;
-  canRequestMerge: boolean;
-  canViewGitRequests: boolean;
-  unreadGitNotifications: number;
-  zentaiGamen?: ZentaiGamen[];
-  connections?: Connection[];
-  zentaiGamenItem?: ZentaiGamen;
-}
-
 export interface MergeRequestListItem extends MergeRequest {
   source_branch_name: string;
   target_branch_name: string;

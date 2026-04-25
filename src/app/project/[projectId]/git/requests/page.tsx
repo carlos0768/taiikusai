@@ -9,11 +9,8 @@ import { buildBranchPath } from "@/lib/projectBranches";
 import type { AuthProfile, MergeRequestListItem } from "@/types";
 
 interface RequestsResponse {
-  requests: MergeRequestListItem[];
-}
-
-interface MeResponse {
   profile: AuthProfile;
+  requests: MergeRequestListItem[];
 }
 
 export default function GitRequestsPage() {
@@ -36,15 +33,14 @@ export default function GitRequestsPage() {
     setError(null);
 
     try {
-      const [me, requestsResponse] = await Promise.all([
-        fetchJson<MeResponse>("/api/auth/me"),
-        fetchJson<RequestsResponse>(`/api/projects/${projectId}/requests`),
-      ]);
+      const requestsResponse = await fetchJson<RequestsResponse>(
+        `/api/projects/${projectId}/requests`
+      );
 
-      setProfile(me.profile);
+      setProfile(requestsResponse.profile);
       setRequests(requestsResponse.requests);
 
-      if (me.profile.is_admin) {
+      if (requestsResponse.profile.is_admin) {
         await fetchJson(`/api/notifications/unread?projectId=${projectId}`, {
           method: "PATCH",
         });
@@ -101,8 +97,6 @@ export default function GitRequestsPage() {
               {error}
             </div>
           )}
-
-          {loading && <p className="text-muted text-center py-10">読み込み中...</p>}
 
           {!loading && requests.length === 0 && (
             <div className="rounded-xl border border-card-border bg-card px-6 py-10 text-center">

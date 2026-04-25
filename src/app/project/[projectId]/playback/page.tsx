@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { fetchJson } from "@/lib/client/api";
+import { getClientErrorMessage } from "@/lib/client/errors";
 import { prefetchRoutes } from "@/lib/client/prefetch";
-import { buildBranchPath } from "@/lib/projectBranches";
+import { createClient } from "@/lib/supabase/client";
+import { buildBranchPath, fetchProjectBranchContext } from "@/lib/projectBranches";
 import { findPlaybackRoutes } from "@/lib/api/connections";
 import type {
-  BranchContextResponse,
   BranchScopedProject,
   ZentaiGamen,
   Connection,
@@ -30,6 +30,8 @@ export default function PlaybackPage() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [routes, setRoutes] = useState<string[][]>([]);
   const [selectedRoute, setSelectedRoute] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [supabase] = useState(() => createClient());
 
   const backHref = buildBranchPath(
     `/project/${projectId}`,
@@ -45,19 +47,25 @@ export default function PlaybackPage() {
       setLoading(true);
       setSelectedRoute(null);
       setRoutes([]);
+      setError(null);
       try {
-        const contextParams = new URLSearchParams({ includeState: "1" });
-        if (requestedBranchId) {
-          contextParams.set("branch", requestedBranchId);
-        }
+        const [contextResult, panelsResult, connectionsResult] = await Promise.all([
+          fetchProjectBranchContext(supabase, projectId, requestedBranchId),
+          supabase.from("zentai_gamen").select("*").eq("project_id", projectId),
+          supabase.from("connections").select("*").eq("project_id", projectId),
+        ]);
 
-        const contextResult = await fetchJson<BranchContextResponse>(
-          `/api/projects/${projectId}/branches?${contextParams.toString()}`
+        if (panelsResult.error) throw panelsResult.error;
+        if (connectionsResult.error) throw connectionsResult.error;
+
+        const zg = ((panelsResult.data ?? []) as ZentaiGamen[]).filter(
+          (panel) => panel.branch_id === contextResult.currentBranch.id
         );
-        const zg = contextResult.zentaiGamen ?? [];
-        const conns = contextResult.connections ?? [];
+        const conns = ((connectionsResult.data ?? []) as Connection[]).filter(
+          (connection) => connection.branch_id === contextResult.currentBranch.id
+        );
 
-        setProject(contextResult.project);
+        setProject(contextResult.projectView);
         setZentaiGamen(zg);
         setConnections(conns);
 
@@ -72,12 +80,14 @@ export default function PlaybackPage() {
             setSelectedRoute(0);
           }
         }
+      } catch (err) {
+        setError(getClientErrorMessage(err, "再生データを読み込めませんでした"));
       } finally {
         setLoading(false);
       }
     }
     void load();
-  }, [projectId, requestedBranchId, startId]);
+  }, [projectId, requestedBranchId, startId, supabase]);
 
   const handleBack = useCallback(() => {
     router.push(backHref);
@@ -86,7 +96,7 @@ export default function PlaybackPage() {
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
-        <p className="text-muted">読み込み中...</p>
+        {error && <p className="text-muted">{error}</p>}
       </div>
     );
   }

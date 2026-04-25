@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ProjectBranchGraph from "@/components/settings/ProjectBranchGraph";
 import { fetchJson } from "@/lib/client/api";
+import { canEditBranch } from "@/lib/client/authProfile";
 import { prefetchRoutes } from "@/lib/client/prefetch";
 import { updateProjectBranchSettings } from "@/lib/api/projects";
-import { buildBranchPath } from "@/lib/projectBranches";
+import { buildBranchPath, fetchProjectBranchContext } from "@/lib/projectBranches";
 import {
   MAX_TIMING_MS,
   MIN_TIMING_MS,
@@ -16,12 +17,15 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import type {
   AuthProfile,
-  BranchContextResponse,
   BranchScopedProject,
   ProjectBranch,
   ProjectBranchMerge,
   ZentaiGamen,
 } from "@/types";
+
+interface MeResponse {
+  profile: AuthProfile;
+}
 
 interface UsersResponse {
   users: AuthProfile[];
@@ -142,40 +146,21 @@ export default function ProjectSettingsPage() {
     setBranchGraphError(null);
 
     try {
-      const contextParams = new URLSearchParams();
-      if (requestedBranchId) {
-        contextParams.set("branch", requestedBranchId);
-      }
-
-      const contextQuery = contextParams.toString();
-      const contextResult = await fetchJson<BranchContextResponse>(
-        `/api/projects/${projectId}/branches${
-          contextQuery ? `?${contextQuery}` : ""
-        }`
-      );
-
-      const canManageAccounts =
-        contextResult.auth.is_admin ||
-        contextResult.auth.permissions.can_manage_accounts;
-
       const [
+        contextResult,
         { data: panelData, error: panelError },
         { data: mergeData, error: mergeError },
-        usersResult,
       ] = await Promise.all([
+        fetchProjectBranchContext(supabase, projectId, requestedBranchId),
         supabase
           .from("zentai_gamen")
-          .select("id,panel_type,motion_type")
-          .eq("project_id", projectId)
-          .eq("branch_id", contextResult.currentBranch.id),
+          .select("id,branch_id,panel_type,motion_type")
+          .eq("project_id", projectId),
         supabase
           .from("project_branch_merges")
           .select("*")
           .eq("project_id", projectId)
           .order("created_at", { ascending: true }),
-        canManageAccounts
-          ? fetchJson<UsersResponse>("/api/settings/users")
-          : Promise.resolve({ users: [] }),
       ]);
 
       if (panelError) {
@@ -184,27 +169,28 @@ export default function ProjectSettingsPage() {
 
       const zentaiGamen = (panelData ?? []) as Pick<
         ZentaiGamen,
-        "id" | "panel_type" | "motion_type"
+        "id" | "branch_id" | "panel_type" | "motion_type"
       >[];
+      const currentBranchPanels = zentaiGamen.filter(
+        (panel) => panel.branch_id === contextResult.currentBranch.id
+      );
 
-      setProfile(contextResult.auth);
-      setUsers(usersResult.users);
-      setProject(contextResult.project);
+      setProject(contextResult.projectView);
       setBranches(contextResult.branches);
       setCurrentBranch(contextResult.currentBranch);
-      setGridWidth(contextResult.project.grid_width);
-      setGridHeight(contextResult.project.grid_height);
-      setSavedPanelMs(contextResult.project.default_panel_duration_ms);
-      setSavedIntervalMs(contextResult.project.default_interval_ms);
+      setGridWidth(contextResult.projectView.grid_width);
+      setGridHeight(contextResult.projectView.grid_height);
+      setSavedPanelMs(contextResult.projectView.default_panel_duration_ms);
+      setSavedIntervalMs(contextResult.projectView.default_interval_ms);
       setPanelInput(
-        msToSecondsString(contextResult.project.default_panel_duration_ms)
+        msToSecondsString(contextResult.projectView.default_panel_duration_ms)
       );
       setIntervalInput(
-        msToSecondsString(contextResult.project.default_interval_ms)
+        msToSecondsString(contextResult.projectView.default_interval_ms)
       );
-      setPanelCount(zentaiGamen.length);
+      setPanelCount(currentBranchPanels.length);
       setWavePanelCount(
-        zentaiGamen.filter(
+        currentBranchPanels.filter(
           (panel) =>
             panel.panel_type === "motion" && panel.motion_type === "wave"
         ).length
@@ -227,17 +213,58 @@ export default function ProjectSettingsPage() {
     void loadSettings();
   }, [loadSettings]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadProfile() {
+      try {
+        const { profile: nextProfile } = await fetchJson<MeResponse>("/api/auth/me");
+        if (!cancelled) {
+          setProfile(nextProfile);
+        }
+      } catch {
+        if (!cancelled) {
+          router.replace("/login");
+        }
+      }
+    }
+
+    void loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadUsers() {
+      if (!profile?.is_admin && !profile?.permissions.can_manage_accounts) {
+        setUsers([]);
+        return;
+      }
+
+      try {
+        const usersResponse = await fetchJson<UsersResponse>("/api/settings/users");
+        if (!cancelled) {
+          setUsers(usersResponse.users);
+        }
+      } catch {
+        if (!cancelled) {
+          setUsers([]);
+        }
+      }
+    }
+
+    void loadUsers();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile]);
+
   const canManageAccounts =
     profile?.is_admin || profile?.permissions.can_manage_accounts || false;
-  const canEditCurrentBranch = Boolean(
-    profile &&
-      (profile.is_admin ||
-        (currentBranch &&
-          !currentBranch.is_main &&
-          currentBranch.created_by === profile.id &&
-          (profile.permissions.can_edit_branch_content ||
-            profile.permissions.can_create_branches)))
-  );
+  const canEditCurrentBranch = canEditBranch(profile, currentBranch);
 
   const hasGridChanges =
     project !== null &&
@@ -412,18 +439,10 @@ export default function ProjectSettingsPage() {
     prefetchRoutes(router, [backHref]);
   }, [backHref, router]);
 
-  if (loading) {
+  if (!project || !currentBranch) {
     return (
       <div className="h-full flex items-center justify-center">
-        <p className="text-muted">読み込み中...</p>
-      </div>
-    );
-  }
-
-  if (!profile || !project || !currentBranch) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <p className="text-muted">{loadError ?? "設定を読み込めませんでした"}</p>
+        {loadError && <p className="text-muted">{loadError}</p>}
       </div>
     );
   }
