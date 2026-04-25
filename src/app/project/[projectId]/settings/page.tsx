@@ -6,10 +6,7 @@ import ProjectBranchGraph from "@/components/settings/ProjectBranchGraph";
 import { fetchJson } from "@/lib/client/api";
 import { prefetchRoutes } from "@/lib/client/prefetch";
 import { updateProjectBranchSettings } from "@/lib/api/projects";
-import {
-  buildBranchPath,
-  fetchProjectBranchContext,
-} from "@/lib/projectBranches";
+import { buildBranchPath } from "@/lib/projectBranches";
 import {
   MAX_TIMING_MS,
   MIN_TIMING_MS,
@@ -19,6 +16,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import type {
   AuthProfile,
+  BranchContextResponse,
   BranchScopedProject,
   ProjectBranch,
   ProjectBranchMerge,
@@ -27,10 +25,6 @@ import type {
 
 interface UsersResponse {
   users: AuthProfile[];
-}
-
-interface MeResponse {
-  profile: AuthProfile;
 }
 
 interface ResizeResponse {
@@ -148,13 +142,21 @@ export default function ProjectSettingsPage() {
     setBranchGraphError(null);
 
     try {
-      const [me, contextResult] = await Promise.all([
-        fetchJson<MeResponse>("/api/auth/me"),
-        fetchProjectBranchContext(supabase, projectId, requestedBranchId),
-      ]);
+      const contextParams = new URLSearchParams();
+      if (requestedBranchId) {
+        contextParams.set("branch", requestedBranchId);
+      }
+
+      const contextQuery = contextParams.toString();
+      const contextResult = await fetchJson<BranchContextResponse>(
+        `/api/projects/${projectId}/branches${
+          contextQuery ? `?${contextQuery}` : ""
+        }`
+      );
 
       const canManageAccounts =
-        me.profile.is_admin || me.profile.permissions.can_manage_accounts;
+        contextResult.auth.is_admin ||
+        contextResult.auth.permissions.can_manage_accounts;
 
       const [
         { data: panelData, error: panelError },
@@ -185,20 +187,20 @@ export default function ProjectSettingsPage() {
         "id" | "panel_type" | "motion_type"
       >[];
 
-      setProfile(me.profile);
+      setProfile(contextResult.auth);
       setUsers(usersResult.users);
-      setProject(contextResult.projectView);
+      setProject(contextResult.project);
       setBranches(contextResult.branches);
       setCurrentBranch(contextResult.currentBranch);
-      setGridWidth(contextResult.projectView.grid_width);
-      setGridHeight(contextResult.projectView.grid_height);
-      setSavedPanelMs(contextResult.projectView.default_panel_duration_ms);
-      setSavedIntervalMs(contextResult.projectView.default_interval_ms);
+      setGridWidth(contextResult.project.grid_width);
+      setGridHeight(contextResult.project.grid_height);
+      setSavedPanelMs(contextResult.project.default_panel_duration_ms);
+      setSavedIntervalMs(contextResult.project.default_interval_ms);
       setPanelInput(
-        msToSecondsString(contextResult.projectView.default_panel_duration_ms)
+        msToSecondsString(contextResult.project.default_panel_duration_ms)
       );
       setIntervalInput(
-        msToSecondsString(contextResult.projectView.default_interval_ms)
+        msToSecondsString(contextResult.project.default_interval_ms)
       );
       setPanelCount(zentaiGamen.length);
       setWavePanelCount(

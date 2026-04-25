@@ -19,7 +19,7 @@ interface ProfileRecord extends Profile {
 }
 
 export interface AuthContext {
-  user: User;
+  user: Pick<User, "id">;
   profile: AuthProfile;
   isAdmin: boolean;
 }
@@ -91,19 +91,20 @@ export async function ensureSeedAdminAccount() {
 export async function requireAuth(): Promise<AuthContext> {
   const supabase = await createClient();
   const {
-    data: { user },
+    data,
     error,
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getClaims();
 
   if (error) {
     throw new HttpError(401, error.message);
   }
 
-  if (!user) {
+  const userId = data?.claims?.sub;
+  if (!userId) {
     throw new HttpError(401, "認証が必要です");
   }
 
-  const profile = await getProfileWithPermissions(user.id);
+  const profile = await getProfileWithPermissions(userId);
   if (!profile) {
     throw new HttpError(403, "ユーザー情報が見つかりません");
   }
@@ -115,7 +116,7 @@ export async function requireAuth(): Promise<AuthContext> {
   const hydratedProfile = hydrateAuthProfile(profile);
 
   return {
-    user,
+    user: { id: userId },
     profile: hydratedProfile,
     isAdmin: hydratedProfile.is_admin,
   };

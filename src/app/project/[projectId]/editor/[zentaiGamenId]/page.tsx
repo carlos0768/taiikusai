@@ -14,7 +14,10 @@ import {
 } from "@/lib/grid/types";
 import GridEditor, { type GridEditorSavePayload } from "@/components/editor/GridEditor";
 import { findPlaybackRoutes } from "@/lib/api/connections";
-import { generateScriptHtml } from "@/lib/export/generateScript";
+import {
+  generateScriptHtml,
+  getPanelScriptColumnLabel,
+} from "@/lib/export/generateScript";
 import { decodeKeepMask, filterKeepMaskBySameColor, isKeepCell } from "@/lib/keep";
 import { zentaiGamenToPlaybackFrame } from "@/lib/playback/frameBuilder";
 import type { BranchContextResponse, Connection, ZentaiGamen } from "@/types";
@@ -40,26 +43,22 @@ export default function EditorPage() {
       setError(null);
 
       try {
+        const contextParams = new URLSearchParams({ zentaiGamenId });
+        if (requestedBranchId) {
+          contextParams.set("branch", requestedBranchId);
+        }
+
         const nextContext = await fetchJson<BranchContextResponse>(
-          `/api/projects/${projectId}/branches${
-            requestedBranchId ? `?branch=${requestedBranchId}` : ""
-          }`
+          `/api/projects/${projectId}/branches?${contextParams.toString()}`
         );
+        const zg = nextContext.zentaiGamenItem;
 
-        const { data: zg, error: zentaiGamenError } = await supabase
-          .from("zentai_gamen")
-          .select("*")
-          .eq("id", zentaiGamenId)
-          .eq("project_id", projectId)
-          .eq("branch_id", nextContext.currentBranch.id)
-          .single();
-
-        if (zentaiGamenError || !zg) {
-          throw zentaiGamenError ?? new Error("対象の画面が見つかりません");
+        if (!zg) {
+          throw new Error("対象の画面が見つかりません");
         }
 
         setContext(nextContext);
-        setZentaiGamen(zg as ZentaiGamen);
+        setZentaiGamen(zg);
         setGrid(
           decodeGrid(
             zg.grid_data,
@@ -91,7 +90,7 @@ export default function EditorPage() {
     }
 
     void load();
-  }, [projectId, requestedBranchId, supabase, zentaiGamenId]);
+  }, [projectId, requestedBranchId, zentaiGamenId]);
 
   const handleSave = useCallback(
     async (payload: GridEditorSavePayload) => {
@@ -247,7 +246,7 @@ export default function EditorPage() {
           context.project.name
         );
 
-        zip.file(`${y + 1}列${x + 1}番.html`, html);
+        zip.file(`${getPanelScriptColumnLabel(x)}列${y + 1}番.html`, html);
       }
     }
 

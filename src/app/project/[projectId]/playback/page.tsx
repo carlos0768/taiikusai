@@ -1,12 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { fetchJson } from "@/lib/client/api";
 import { prefetchRoutes } from "@/lib/client/prefetch";
-import { createClient } from "@/lib/supabase/client";
-import { buildBranchPath, fetchProjectBranchContext } from "@/lib/projectBranches";
+import { buildBranchPath } from "@/lib/projectBranches";
 import { findPlaybackRoutes } from "@/lib/api/connections";
-import type { BranchScopedProject, ZentaiGamen, Connection } from "@/types";
+import type {
+  BranchContextResponse,
+  BranchScopedProject,
+  ZentaiGamen,
+  Connection,
+} from "@/types";
 import { buildPlaybackTimeline } from "@/lib/playback/frameBuilder";
 import PlaybackView from "@/components/playback/PlaybackView";
 import RouteSelector from "@/components/playback/RouteSelector";
@@ -26,7 +31,6 @@ export default function PlaybackPage() {
   const [routes, setRoutes] = useState<string[][]>([]);
   const [selectedRoute, setSelectedRoute] = useState<number | null>(null);
 
-  const supabase = useMemo(() => createClient(), []);
   const backHref = buildBranchPath(
     `/project/${projectId}`,
     requestedBranchId ?? project?.active_branch_id ?? ""
@@ -42,27 +46,20 @@ export default function PlaybackPage() {
       setSelectedRoute(null);
       setRoutes([]);
       try {
-        const contextResult = await fetchProjectBranchContext(
-          supabase,
-          projectId,
-          requestedBranchId
-        );
-        const [{ data: zg }, { data: conns }] = await Promise.all([
-          supabase
-            .from("zentai_gamen")
-            .select("*")
-            .eq("project_id", projectId)
-            .eq("branch_id", contextResult.currentBranch.id),
-          supabase
-            .from("connections")
-            .select("*")
-            .eq("project_id", projectId)
-            .eq("branch_id", contextResult.currentBranch.id),
-        ]);
+        const contextParams = new URLSearchParams({ includeState: "1" });
+        if (requestedBranchId) {
+          contextParams.set("branch", requestedBranchId);
+        }
 
-        setProject(contextResult.projectView);
-        setZentaiGamen(zg ?? []);
-        setConnections(conns ?? []);
+        const contextResult = await fetchJson<BranchContextResponse>(
+          `/api/projects/${projectId}/branches?${contextParams.toString()}`
+        );
+        const zg = contextResult.zentaiGamen ?? [];
+        const conns = contextResult.connections ?? [];
+
+        setProject(contextResult.project);
+        setZentaiGamen(zg);
+        setConnections(conns);
 
         if (startId && conns) {
           const foundRoutes = findPlaybackRoutes(conns, startId);
@@ -80,7 +77,7 @@ export default function PlaybackPage() {
       }
     }
     void load();
-  }, [projectId, requestedBranchId, startId, supabase]);
+  }, [projectId, requestedBranchId, startId]);
 
   const handleBack = useCallback(() => {
     router.push(backHref);

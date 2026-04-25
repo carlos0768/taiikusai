@@ -262,6 +262,9 @@ export interface BranchContextResponse {
   canRequestMerge: boolean;
   canViewGitRequests: boolean;
   unreadGitNotifications: number;
+  zentaiGamen?: ZentaiGamen[];
+  connections?: Connection[];
+  zentaiGamenItem?: ZentaiGamen;
 }
 
 export interface MergeRequestListItem extends MergeRequest {
