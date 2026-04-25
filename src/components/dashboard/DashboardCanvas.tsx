@@ -140,6 +140,31 @@ function buildConnectionEdges(
   }));
 }
 
+function countKeepCells(
+  encodedMask: string | null,
+  gridWidth: number,
+  gridHeight: number
+): number {
+  const mask = decodeKeepMask(encodedMask, gridWidth, gridHeight);
+  if (!mask) return 0;
+
+  let count = 0;
+  for (let index = 0; index < mask.cells.length; index += 1) {
+    if (mask.cells[index] === 1) count += 1;
+  }
+  return count;
+}
+
+function buildKeepRangeEdgeKeys(path: string[] | null): Set<string> {
+  const keys = new Set<string>();
+  if (!path) return keys;
+
+  for (let index = 0; index < path.length - 1; index += 1) {
+    keys.add(`${path[index]}:${path[index + 1]}`);
+  }
+  return keys;
+}
+
 function DashboardCanvasInner({
   project,
   branches,
@@ -206,6 +231,7 @@ function DashboardCanvasInner({
   );
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCurrentMusic(project.music_data ?? null);
   }, [project.music_data, project.active_branch_id]);
 
@@ -438,10 +464,13 @@ function DashboardCanvasInner({
   );
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setZentaiGamenList(initialZentaiGamen);
     setConnectionList(initialConnections);
     setNodes(buildNodes(initialZentaiGamen, initialConnections));
     setEdges(buildEdges(initialConnections));
+    // Sync only when server-provided project data changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     initialConnections,
     initialZentaiGamen,
@@ -1064,6 +1093,48 @@ function DashboardCanvasInner({
     [keepEditor, persistConnectionKeepMask]
   );
 
+  useEffect(() => {
+    const selectedEdgeKeys = buildKeepRangeEdgeKeys(keepRangePath);
+    const connectionById = new Map(
+      connectionList.map((connection) => [connection.id, connection])
+    );
+
+    setEdges((existingEdges) =>
+      existingEdges.map((edge) => {
+        const connection = connectionById.get(edge.id);
+        const keepCount = countKeepCells(
+          connection?.keep_mask_grid_data ?? null,
+          project.grid_width,
+          project.grid_height
+        );
+
+        return {
+          ...edge,
+          data: {
+            ...edge.data,
+            canEdit: canEditCurrentBranch,
+            hasKeep: keepCount > 0,
+            keepCount,
+            isKeepRangeSelected: selectedEdgeKeys.has(`${edge.source}:${edge.target}`),
+            onClick: handleEdgeClick,
+            onLongPress: handleEdgeLongPress,
+            onOpenKeepEditor: handleOpenKeepEditor,
+          },
+        };
+      })
+    );
+  }, [
+    canEditCurrentBranch,
+    connectionList,
+    handleEdgeClick,
+    handleEdgeLongPress,
+    handleOpenKeepEditor,
+    keepRangePath,
+    project.grid_height,
+    project.grid_width,
+    setEdges,
+  ]);
+
   const handleDisableConnectionKeep = useCallback(
     async (connectionId: string) => {
       if (!canEditCurrentBranch) return;
@@ -1259,6 +1330,9 @@ function DashboardCanvasInner({
             onNodeContextMenu={onNodeContextMenu}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
+            nodesDraggable={canEditCurrentBranch}
+            nodesConnectable={canEditCurrentBranch && !keepRangeStart}
+            deleteKeyCode={null}
             minZoom={0.1}
             maxZoom={3}
             fitView

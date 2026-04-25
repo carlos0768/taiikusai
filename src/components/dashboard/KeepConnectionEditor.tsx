@@ -34,6 +34,32 @@ function getCanvasCellIndex(
   return y * grid.width + x;
 }
 
+function drawDiagonalHatch(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  spacing: number,
+  color: string
+) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, width, height);
+  ctx.clip();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+
+  for (let offset = -height; offset < width; offset += spacing) {
+    ctx.beginPath();
+    ctx.moveTo(x + offset, y + height);
+    ctx.lineTo(x + offset + height, y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 function drawGridWithMask(
   canvas: HTMLCanvasElement,
   grid: GridData,
@@ -59,37 +85,71 @@ function drawGridWithMask(
   for (let y = 0; y < grid.height; y += 1) {
     for (let x = 0; x < grid.width; x += 1) {
       const index = y * grid.width + x;
+      const px = x * cellW;
+      const py = y * cellH;
       const colorIdx = grid.cells[index] as ColorIndex;
       const selectable = isKeepEligibleSameColorCell(
         sourceGrid.cells[index],
         targetGrid.cells[index]
       );
+      const selected = mask.cells[index] === 1;
 
       ctx.fillStyle = COLOR_MAP[colorIdx];
-      ctx.fillRect(x * cellW, y * cellH, Math.ceil(cellW), Math.ceil(cellH));
+      ctx.fillRect(px, py, Math.ceil(cellW), Math.ceil(cellH));
 
       if (!selectable) {
-        ctx.fillStyle = "rgba(0, 0, 0, 0.38)";
-        ctx.fillRect(x * cellW, y * cellH, Math.ceil(cellW), Math.ceil(cellH));
-      } else if (mask.cells[index] === 1) {
-        ctx.fillStyle = "rgba(0, 229, 255, 0.30)";
-        ctx.fillRect(x * cellW, y * cellH, Math.ceil(cellW), Math.ceil(cellH));
+        ctx.fillStyle = "rgba(0, 0, 0, 0.48)";
+        ctx.fillRect(px, py, Math.ceil(cellW), Math.ceil(cellH));
+        drawDiagonalHatch(
+          ctx,
+          px,
+          py,
+          cellW,
+          cellH,
+          Math.max(6, Math.min(cellW, cellH) / 2),
+          "rgba(255, 255, 255, 0.18)"
+        );
+      } else if (selected) {
+        ctx.fillStyle = "rgba(0, 229, 255, 0.34)";
+        ctx.fillRect(px, py, Math.ceil(cellW), Math.ceil(cellH));
+        drawDiagonalHatch(
+          ctx,
+          px,
+          py,
+          cellW,
+          cellH,
+          Math.max(7, Math.min(cellW, cellH) / 2),
+          "rgba(255, 255, 255, 0.52)"
+        );
         ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
         ctx.lineWidth = 3;
         ctx.strokeRect(
-          x * cellW + 1.5,
-          y * cellH + 1.5,
+          px + 1.5,
+          py + 1.5,
           Math.max(1, cellW - 3),
           Math.max(1, cellH - 3)
         );
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.96)";
+        ctx.strokeStyle = "rgba(0, 229, 255, 0.95)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+          px + 4,
+          py + 4,
+          Math.max(1, cellW - 8),
+          Math.max(1, cellH - 8)
+        );
+      } else {
+        ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+        ctx.fillRect(px, py, Math.ceil(cellW), Math.ceil(cellH));
+        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = "rgba(255, 215, 0, 0.72)";
         ctx.lineWidth = 1.5;
         ctx.strokeRect(
-          x * cellW + 3,
-          y * cellH + 3,
-          Math.max(1, cellW - 6),
-          Math.max(1, cellH - 6)
+          px + 2,
+          py + 2,
+          Math.max(1, cellW - 4),
+          Math.max(1, cellH - 4)
         );
+        ctx.setLineDash([]);
       }
     }
   }
@@ -108,6 +168,22 @@ function drawGridWithMask(
     ctx.lineTo(width, y * cellH);
     ctx.stroke();
   }
+}
+
+function LegendSwatch({ kind }: { kind: "available" | "selected" | "disabled" }) {
+  const className =
+    kind === "selected"
+      ? "border-cyan-300 bg-cyan-300/35"
+      : kind === "available"
+        ? "border-accent bg-white/10"
+        : "border-white/20 bg-black/50";
+
+  return (
+    <span
+      className={`inline-block h-4 w-4 rounded-sm border ${className}`}
+      aria-hidden="true"
+    />
+  );
 }
 
 export default function KeepConnectionEditor({
@@ -146,6 +222,7 @@ export default function KeepConnectionEditor({
   }, [sourceGrid, targetGrid]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMask(() => {
       const normalized = normalizeKeepMaskGrid(initialMask);
       for (let index = 0; index < normalized.cells.length; index += 1) {
@@ -262,12 +339,26 @@ export default function KeepConnectionEditor({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
       <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-card-border bg-card shadow-2xl">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-card-border bg-card/95 px-4 py-3 backdrop-blur">
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-card-border bg-card/95 px-4 py-3 backdrop-blur">
           <div>
             <h2 className="text-base font-semibold text-foreground">keep表示</h2>
             <p className="text-xs text-muted">
               同じ位置で同色のセルだけ、接続間隔中に source 色を保持できます
             </p>
+            <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted">
+              <span className="inline-flex items-center gap-1.5">
+                <LegendSwatch kind="available" />
+                keep可能
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <LegendSwatch kind="selected" />
+                keep ON
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <LegendSwatch kind="disabled" />
+                keep不可
+              </span>
+            </div>
           </div>
           <button
             onClick={onClose}
