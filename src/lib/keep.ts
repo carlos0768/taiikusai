@@ -1,5 +1,9 @@
 import { decodeGrid, encodeGrid } from "@/lib/grid/codec";
-import { createFilledGrid, type GridData } from "@/lib/grid/types";
+import {
+  UNDEFINED_COLOR,
+  createFilledGrid,
+  type GridData,
+} from "@/lib/grid/types";
 
 export function isKeepMaskSelected(value: number): boolean {
   return value === 1;
@@ -35,6 +39,17 @@ export function encodeKeepMask(mask: GridData): string {
   return encodeGrid(normalizeKeepMaskGrid(mask));
 }
 
+export function isKeepEligibleSameColorCell(
+  sourceColor: number,
+  targetColor: number
+): boolean {
+  return (
+    sourceColor === targetColor &&
+    sourceColor !== 0 &&
+    sourceColor !== UNDEFINED_COLOR
+  );
+}
+
 export function buildDefaultKeepMask(sourceGrid: GridData, targetGrid: GridData): GridData {
   const mask = createKeepMaskGrid(sourceGrid.width, sourceGrid.height);
   const maxLength = Math.min(
@@ -44,7 +59,12 @@ export function buildDefaultKeepMask(sourceGrid: GridData, targetGrid: GridData)
   );
 
   for (let index = 0; index < maxLength; index += 1) {
-    mask.cells[index] = sourceGrid.cells[index] === targetGrid.cells[index] ? 1 : 0;
+    mask.cells[index] = isKeepEligibleSameColorCell(
+      sourceGrid.cells[index],
+      targetGrid.cells[index]
+    )
+      ? 1
+      : 0;
   }
 
   return mask;
@@ -67,7 +87,7 @@ export function filterKeepMaskBySameColor(
   for (let index = 0; index < maxLength; index += 1) {
     filtered.cells[index] =
       normalizedMask.cells[index] === 1 &&
-      sourceGrid.cells[index] === targetGrid.cells[index]
+      isKeepEligibleSameColorCell(sourceGrid.cells[index], targetGrid.cells[index])
         ? 1
         : 0;
   }
