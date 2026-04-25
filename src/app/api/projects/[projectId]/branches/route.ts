@@ -22,7 +22,6 @@ import {
 } from "@/lib/server/pseudoGit";
 import { createClient } from "@/lib/supabase/server";
 import { HttpError, toErrorResponse } from "@/lib/server/errors";
-import type { ZentaiGamen } from "@/types";
 
 interface CreateBranchRequestBody {
   name: string;
@@ -53,8 +52,6 @@ export async function GET(
   try {
     const { projectId } = await context.params;
     const requestedBranchId = request.nextUrl.searchParams.get("branch");
-    const includeState = request.nextUrl.searchParams.get("includeState") === "1";
-    const zentaiGamenId = request.nextUrl.searchParams.get("zentaiGamenId");
     const supabase = await createClient();
     const [authResult, contextResultState] = await Promise.allSettled([
       requireAuth(),
@@ -75,31 +72,10 @@ export async function GET(
     }
 
     const contextResult = contextResultState.value;
-    const [unreadGitNotifications, branchState, zentaiGamenItemResult] =
-      await Promise.all([
-        countUnreadGitNotifications(profile.id, projectId),
-        includeState
-          ? fetchProjectBranchState(
-              supabase,
-              projectId,
-              contextResult.projectView,
-              contextResult.currentBranch
-            )
-          : Promise.resolve(null),
-        zentaiGamenId
-          ? supabase
-              .from("zentai_gamen")
-              .select("*")
-              .eq("id", zentaiGamenId)
-              .eq("project_id", projectId)
-              .eq("branch_id", contextResult.currentBranch.id)
-              .single<ZentaiGamen>()
-          : Promise.resolve(null),
-      ]);
-
-    if (zentaiGamenItemResult?.error || zentaiGamenItemResult?.data === null) {
-      throw new HttpError(404, "対象の画面が見つかりません");
-    }
+    const unreadGitNotifications = await countUnreadGitNotifications(
+      profile.id,
+      projectId
+    );
 
     return NextResponse.json({
       project: contextResult.projectView,
@@ -119,9 +95,6 @@ export async function GET(
             contextResult.currentBranch.created_by === profile.id)),
       canViewGitRequests: canViewGit(profile),
       unreadGitNotifications,
-      zentaiGamen: branchState?.panels,
-      connections: branchState?.connections,
-      zentaiGamenItem: zentaiGamenItemResult?.data,
     });
   } catch (error) {
     return toErrorResponse(error);

@@ -1,10 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/client";
 import { fetchJson } from "@/lib/client/api";
+import {
+  canCreateBranches,
+  canEditBranch,
+  canRequestMerge,
+  READONLY_AUTH_PROFILE,
+} from "@/lib/client/authProfile";
 import { decodeGrid } from "@/lib/grid/codec";
 import {
   countUndefinedCells,
@@ -20,50 +26,72 @@ import {
 } from "@/lib/export/generateScript";
 import { decodeKeepMask, filterKeepMaskBySameColor, isKeepCell } from "@/lib/keep";
 import { zentaiGamenToPlaybackFrame } from "@/lib/playback/frameBuilder";
-import type { BranchContextResponse, Connection, ZentaiGamen } from "@/types";
+import { fetchProjectBranchContext } from "@/lib/projectBranches";
+import type {
+  AuthProfile,
+  BranchScopedProject,
+  Connection,
+  GitNotificationSummary,
+  ProjectBranch,
+  ZentaiGamen,
+} from "@/types";
+
+interface MeResponse {
+  profile: AuthProfile;
+}
 
 export default function EditorPage() {
   const params = useParams();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const projectId = params.projectId as string;
   const zentaiGamenId = params.zentaiGamenId as string;
   const requestedBranchId = searchParams.get("branch");
   const supabase = useMemo(() => createClient(), []);
 
-  const [context, setContext] = useState<BranchContextResponse | null>(null);
+  const [project, setProject] = useState<BranchScopedProject | null>(null);
+  const [branches, setBranches] = useState<ProjectBranch[]>([]);
+  const [currentBranch, setCurrentBranch] = useState<ProjectBranch | null>(null);
+  const [auth, setAuth] = useState<AuthProfile>(READONLY_AUTH_PROFILE);
+  const [unreadGitNotifications, setUnreadGitNotifications] = useState(0);
   const [grid, setGrid] = useState<GridData | null>(null);
   const [afterGrid, setAfterGrid] = useState<GridData | null>(null);
   const [zentaiGamen, setZentaiGamen] = useState<ZentaiGamen | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
-      setLoading(true);
       setError(null);
 
       try {
-        const contextParams = new URLSearchParams({ zentaiGamenId });
-        if (requestedBranchId) {
-          contextParams.set("branch", requestedBranchId);
+        const [context, zentaiGamenResult] = await Promise.all([
+          fetchProjectBranchContext(supabase, projectId, requestedBranchId),
+          supabase
+            .from("zentai_gamen")
+            .select("*")
+            .eq("id", zentaiGamenId)
+            .eq("project_id", projectId)
+            .single(),
+        ]);
+        const { data: zg, error: zentaiGamenError } = zentaiGamenResult;
+
+        if (
+          zentaiGamenError ||
+          !zg ||
+          zg.branch_id !== context.currentBranch.id
+        ) {
+          throw zentaiGamenError ?? new Error("対象の画面が見つかりません");
         }
 
-        const nextContext = await fetchJson<BranchContextResponse>(
-          `/api/projects/${projectId}/branches?${contextParams.toString()}`
-        );
-        const zg = nextContext.zentaiGamenItem;
-
-        if (!zg) {
-          throw new Error("対象の画面が見つかりません");
-        }
-
-        setContext(nextContext);
-        setZentaiGamen(zg);
+        setProject(context.projectView);
+        setBranches(context.branches);
+        setCurrentBranch(context.currentBranch);
+        setZentaiGamen(zg as ZentaiGamen);
         setGrid(
           decodeGrid(
             zg.grid_data,
-            nextContext.project.grid_width,
-            nextContext.project.grid_height
+            context.projectView.grid_width,
+            context.projectView.grid_height
           )
         );
 
@@ -75,8 +103,8 @@ export default function EditorPage() {
           setAfterGrid(
             decodeGrid(
               zg.motion_data.after_grid_data,
-              nextContext.project.grid_width,
-              nextContext.project.grid_height
+              context.projectView.grid_width,
+              context.projectView.grid_height
             )
           );
         } else {
@@ -84,17 +112,42 @@ export default function EditorPage() {
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "エディタを読み込めませんでした");
-      } finally {
-        setLoading(false);
       }
     }
 
     void load();
-  }, [projectId, requestedBranchId, zentaiGamenId]);
+  }, [projectId, requestedBranchId, supabase, zentaiGamenId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAuth() {
+      try {
+        const [{ profile }, notifications] = await Promise.all([
+          fetchJson<MeResponse>("/api/auth/me"),
+          fetchJson<GitNotificationSummary>(
+            `/api/notifications/unread?projectId=${projectId}`
+          ).catch(() => ({ unreadCount: 0, hasUnread: false })),
+        ]);
+        if (cancelled) return;
+        setAuth(profile);
+        setUnreadGitNotifications(notifications.unreadCount);
+      } catch {
+        if (!cancelled) {
+          router.replace("/login");
+        }
+      }
+    }
+
+    void loadAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, router]);
 
   const handleSave = useCallback(
     async (payload: GridEditorSavePayload) => {
-      if (!context) return;
+      if (!currentBranch) return;
 
       const update: Record<string, unknown> = {
         grid_data: payload.gridData,
@@ -111,17 +164,17 @@ export default function EditorPage() {
         .update(update)
         .eq("id", zentaiGamenId)
         .eq("project_id", projectId)
-        .eq("branch_id", context.currentBranch.id);
+        .eq("branch_id", currentBranch.id);
 
       if (updateError) {
         throw updateError;
       }
     },
-    [context, projectId, supabase, zentaiGamenId]
+    [currentBranch, projectId, supabase, zentaiGamenId]
   );
 
   const handleExport = useCallback(async () => {
-    if (!context) return;
+    if (!project || !currentBranch) return;
 
     const [{ data: allZg, error: zentaiGamenError }, { data: allConns, error: connectionsError }] =
       await Promise.all([
@@ -129,12 +182,12 @@ export default function EditorPage() {
           .from("zentai_gamen")
           .select("*")
           .eq("project_id", projectId)
-          .eq("branch_id", context.currentBranch.id),
+          .eq("branch_id", currentBranch.id),
         supabase
           .from("connections")
           .select("*")
           .eq("project_id", projectId)
-          .eq("branch_id", context.currentBranch.id),
+          .eq("branch_id", currentBranch.id),
       ]);
 
     if (zentaiGamenError || connectionsError || !allZg || !allConns) {
@@ -150,8 +203,8 @@ export default function EditorPage() {
     const zentaiGamenMap = new Map(
       (allZg as ZentaiGamen[]).map((item) => [item.id, item])
     );
-    const width = context.project.grid_width;
-    const height = context.project.grid_height;
+    const width = project.grid_width;
+    const height = project.grid_height;
     const connectionMap = new Map(
       (allConns as Connection[]).map((connection) => [
         `${connection.source_id}:${connection.target_id}`,
@@ -174,7 +227,7 @@ export default function EditorPage() {
         zentaiGamen: item,
         gridWidth: width,
         gridHeight: height,
-        defaultPanelDurationMs: context.project.default_panel_duration_ms,
+        defaultPanelDurationMs: project.default_panel_duration_ms,
       });
       const grid = getPlaybackFrameFinalGrid(frame);
       const previousNodeId = route[index - 1];
@@ -243,7 +296,7 @@ export default function EditorPage() {
           x,
           y,
           cellScenes,
-          context.project.name
+          project.name
         );
 
         zip.file(`${getPanelScriptColumnLabel(x)}列${y + 1}番.html`, html);
@@ -254,23 +307,15 @@ export default function EditorPage() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${context.project.name}_パネル台本.zip`;
+    anchor.download = `${project.name}_パネル台本.zip`;
     anchor.click();
     URL.revokeObjectURL(url);
-  }, [context, projectId, supabase, zentaiGamenId]);
+  }, [currentBranch, project, projectId, supabase, zentaiGamenId]);
 
-  if (loading) {
+  if (error || !project || !currentBranch || !grid || !zentaiGamen) {
     return (
       <div className="h-full flex items-center justify-center">
-        <p className="text-muted">読み込み中...</p>
-      </div>
-    );
-  }
-
-  if (error || !context || !grid || !zentaiGamen) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <p className="text-muted">{error ?? "データが見つかりません"}</p>
+        {error && <p className="text-muted">{error}</p>}
       </div>
     );
   }
@@ -284,18 +329,18 @@ export default function EditorPage() {
       initialMotionData={zentaiGamen.motion_data ?? null}
       zentaiGamenId={zentaiGamenId}
       projectId={projectId}
-      branchId={context.currentBranch.id}
+      branchId={currentBranch.id}
       initialName={zentaiGamen.name}
       initialMemo={zentaiGamen.memo || ""}
       onSave={handleSave}
       onExport={handleExport}
-      auth={context.auth}
-      currentBranch={context.currentBranch}
-      branches={context.branches}
-      unreadGitNotifications={context.unreadGitNotifications}
-      canEditCurrentBranch={context.canEditCurrentBranch}
-      canCreateBranches={context.canCreateBranches}
-      canRequestMerge={context.canRequestMerge}
+      auth={auth}
+      currentBranch={currentBranch}
+      branches={branches}
+      unreadGitNotifications={unreadGitNotifications}
+      canEditCurrentBranch={canEditBranch(auth, currentBranch)}
+      canCreateBranches={canCreateBranches(auth)}
+      canRequestMerge={canRequestMerge(auth, currentBranch)}
     />
   );
 }

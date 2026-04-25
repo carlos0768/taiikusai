@@ -19,7 +19,7 @@ export async function GET(
     const { profile } = await requireAuth();
     const { projectId } = await params;
     const requests = await listMergeRequests(projectId, profile.id, profile.is_admin);
-    return NextResponse.json({ requests });
+    return NextResponse.json({ profile, requests });
   } catch (error) {
     return toErrorResponse(error);
   }

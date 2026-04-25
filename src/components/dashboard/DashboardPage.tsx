@@ -8,9 +8,8 @@ import { getClientErrorMessage } from "@/lib/client/errors";
 import { prefetchRoutes } from "@/lib/client/prefetch";
 import type { AuthProfile, Project } from "@/types";
 
-interface ProjectsResponse {
+interface MeResponse {
   profile: AuthProfile;
-  projects: Project[];
 }
 
 export default function DashboardPage() {
@@ -34,21 +33,46 @@ export default function DashboardPage() {
     setError(null);
 
     try {
-      const { profile: me, projects: nextProjects } =
-        await fetchJson<ProjectsResponse>("/api/projects");
-
-      setProfile(me);
-      setProjects(nextProjects);
+      const { data, error: projectsError } = await supabase
+        .from("projects")
+        .select("*")
+        .order("updated_at", { ascending: false });
+      if (projectsError) {
+        throw projectsError;
+      }
+      setProjects((data ?? []) as Project[]);
     } catch (err) {
       setError(getClientErrorMessage(err, "ダッシュボードの読み込みに失敗しました"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [supabase]);
 
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadProfile() {
+      try {
+        const { profile: me } = await fetchJson<MeResponse>("/api/auth/me");
+        if (!cancelled) {
+          setProfile(me);
+        }
+      } catch {
+        if (!cancelled) {
+          router.replace("/login");
+        }
+      }
+    }
+
+    void loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   useEffect(() => {
     prefetchRoutes(
@@ -225,8 +249,6 @@ export default function DashboardPage() {
               </div>
             </form>
           )}
-
-          {loading && <p className="text-muted text-center py-12">読み込み中...</p>}
 
           {!loading && projects.length === 0 && profile && (profile.is_admin || profile.permissions.can_view_projects) && (
             <div className="text-center py-12">
