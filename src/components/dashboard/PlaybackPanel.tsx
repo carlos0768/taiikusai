@@ -335,6 +335,7 @@ export default function PlaybackPanel({
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFrameItems(timeline.frameItems);
     setGapItems(timeline.gapItems);
   }, [timeline]);
@@ -607,7 +608,7 @@ export default function PlaybackPanel({
           {isWhiteFrame
             ? gapItems[currentIndex]?.transitionKind === "keep"
               ? "（keep中）"
-              : "（折り中）"
+              : "（間隔中）"
             : frames[currentIndex]?.name ?? `Frame ${currentIndex + 1}`}
           {frames[currentIndex]?.kind === "wave" && !isWhiteFrame && (
             <span className="ml-1 text-[10px] text-accent">〜WAVE</span>

@@ -1,5 +1,6 @@
 import { decodeGrid } from "@/lib/grid/codec";
 import {
+  createEmptyGrid,
   getFrameTotalMs,
   getPlaybackFrameFinalGrid,
   type GridData,
@@ -29,7 +30,7 @@ export interface PlaybackFrameItem {
 export interface PlaybackGapItem {
   connectionId: string | null;
   intervalMs: number;
-  transitionKind: "white" | "keep";
+  transitionKind: "gray" | "keep";
   transitionGrid: GridData | null;
   isIntervalOverride: boolean;
   isIntervalEditable: boolean;
@@ -160,7 +161,8 @@ export function buildPlaybackTimeline(params: {
       gridWidth,
       gridHeight
     );
-    let transitionGrid: GridData | null = null;
+    let transitionGrid: GridData | null = createEmptyGrid(gridWidth, gridHeight);
+    let transitionKind: PlaybackGapItem["transitionKind"] = "gray";
 
     if (connection && nextZentaiGamen && rawMask) {
       const nextFrame = zentaiGamenToPlaybackFrame({
@@ -175,6 +177,7 @@ export function buildPlaybackTimeline(params: {
 
       if (hasKeepCells(keepMask)) {
         transitionGrid = applyKeepTransition(sourceGrid, keepMask);
+        transitionKind = "keep";
       }
     }
 
@@ -183,7 +186,7 @@ export function buildPlaybackTimeline(params: {
       intervalMs: connection
         ? getIntervalDurationMs(connection, defaultIntervalMs)
         : defaultIntervalMs,
-      transitionKind: transitionGrid ? "keep" : "white",
+      transitionKind,
       transitionGrid,
       isIntervalOverride: connection?.interval_override_ms !== null,
       isIntervalEditable: Boolean(connection),
