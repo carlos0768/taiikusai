@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   COLOR_MAP,
+  UNDEFINED_COLOR,
   type ColorIndex,
   type GridData,
   type PlaybackFrame,
@@ -574,7 +575,7 @@ export default function PlaybackPanel({
     for (let y = 0; y < baseGrid.height; y++) {
       for (let x = 0; x < baseGrid.width; x++) {
         if (isWhiteFrame && !activeTransitionGrid) {
-          ctx.fillStyle = "#FFFFFF";
+          ctx.fillStyle = COLOR_MAP[UNDEFINED_COLOR];
         } else {
           const g = displayGridFor(x);
           ctx.fillStyle = COLOR_MAP[g.cells[y * g.width + x] as ColorIndex];

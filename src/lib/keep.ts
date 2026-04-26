@@ -96,7 +96,11 @@ export function filterKeepMaskBySameColor(
 }
 
 export function applyKeepTransition(sourceGrid: GridData, mask: GridData): GridData {
-  const transitionGrid = createFilledGrid(sourceGrid.width, sourceGrid.height, 0);
+  const transitionGrid = createFilledGrid(
+    sourceGrid.width,
+    sourceGrid.height,
+    UNDEFINED_COLOR
+  );
   const normalizedMask = normalizeKeepMaskGrid(mask);
   const maxLength = Math.min(
     transitionGrid.cells.length,
