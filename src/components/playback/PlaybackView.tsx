@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import {
   COLOR_MAP,
+  UNDEFINED_COLOR,
   type ColorIndex,
   type GridData,
   type PlaybackFrame,
@@ -154,7 +155,7 @@ export default function PlaybackView({ timeline, onBack }: PlaybackViewProps) {
     }
 
     if (isWhiteFrame) {
-      ctx.fillStyle = "#FFFFFF";
+      ctx.fillStyle = COLOR_MAP[UNDEFINED_COLOR];
       ctx.fillRect(0, 0, canvasW, canvasH);
       return;
     }
