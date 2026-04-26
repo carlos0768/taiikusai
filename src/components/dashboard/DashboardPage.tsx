@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { fetchJson } from "@/lib/client/api";
+import { getClientErrorMessage } from "@/lib/client/errors";
+import { prefetchRoutes } from "@/lib/client/prefetch";
 import type { AuthProfile, Project } from "@/types";
 
 interface MeResponse {
@@ -31,27 +33,16 @@ export default function DashboardPage() {
     setError(null);
 
     try {
-      const [{ profile: me }, projectResult] = await Promise.all([
-        fetchJson<MeResponse>("/api/auth/me"),
-        supabase
-          .from("projects")
-          .select("*")
-          .order("updated_at", { ascending: false }),
-      ]);
-
-      setProfile(me);
-      if (me.is_admin || me.permissions.can_view_projects) {
-        if (projectResult.error) {
-          throw projectResult.error;
-        }
-        setProjects((projectResult.data ?? []) as Project[]);
-      } else {
-        setProjects([]);
+      const { data, error: projectsError } = await supabase
+        .from("projects")
+        .select("*")
+        .order("updated_at", { ascending: false });
+      if (projectsError) {
+        throw projectsError;
       }
+      setProjects((data ?? []) as Project[]);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "ダッシュボードの読み込みに失敗しました";
-      setError(message);
+      setError(getClientErrorMessage(err, "ダッシュボードの読み込みに失敗しました"));
     } finally {
       setLoading(false);
     }
@@ -60,6 +51,35 @@ export default function DashboardPage() {
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadProfile() {
+      try {
+        const { profile: me } = await fetchJson<MeResponse>("/api/auth/me");
+        if (!cancelled) {
+          setProfile(me);
+        }
+      } catch {
+        if (!cancelled) {
+          router.replace("/login");
+        }
+      }
+    }
+
+    void loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
+  useEffect(() => {
+    prefetchRoutes(
+      router,
+      projects.map((project) => `/project/${project.id}`)
+    );
+  }, [projects, router]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -96,7 +116,7 @@ export default function DashboardPage() {
 
       router.push(`/project/${data.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "プロジェクトを作成できませんでした");
+      setError(getClientErrorMessage(err, "プロジェクトを作成できませんでした"));
     } finally {
       setCreating(false);
     }
@@ -113,7 +133,7 @@ export default function DashboardPage() {
       }
       setProjects((prev) => prev.filter((project) => project.id !== id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "削除に失敗しました");
+      setError(getClientErrorMessage(err, "削除に失敗しました"));
     }
   }
 
@@ -229,8 +249,6 @@ export default function DashboardPage() {
               </div>
             </form>
           )}
-
-          {loading && <p className="text-muted text-center py-12">読み込み中...</p>}
 
           {!loading && projects.length === 0 && profile && (profile.is_admin || profile.permissions.can_view_projects) && (
             <div className="text-center py-12">

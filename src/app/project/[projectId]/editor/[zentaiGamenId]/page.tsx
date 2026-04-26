@@ -1,144 +1,255 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import JSZip from "jszip";
-import GridEditor from "@/components/editor/GridEditor";
-import { fetchJson } from "@/lib/client/api";
 import { createClient } from "@/lib/supabase/client";
-import { findPlaybackRoutes } from "@/lib/api/connections";
+import { fetchJson } from "@/lib/client/api";
+import {
+  canCreateBranches,
+  canEditBranch,
+  canRequestMerge,
+  READONLY_AUTH_PROFILE,
+} from "@/lib/client/authProfile";
 import { decodeGrid } from "@/lib/grid/codec";
-import { generateScriptHtml } from "@/lib/export/generateScript";
-import type { GridData, ColorIndex } from "@/lib/grid/types";
+import {
+  countUndefinedCells,
+  getPlaybackFrameFinalGrid,
+  type ColorIndex,
+  type GridData,
+} from "@/lib/grid/types";
+import GridEditor, { type GridEditorSavePayload } from "@/components/editor/GridEditor";
+import { findPlaybackRoutes } from "@/lib/api/connections";
+import {
+  generateScriptHtml,
+  getPanelScriptColumnLabel,
+} from "@/lib/export/generateScript";
+import { decodeKeepMask, filterKeepMaskBySameColor, isKeepCell } from "@/lib/keep";
+import { zentaiGamenToPlaybackFrame } from "@/lib/playback/frameBuilder";
+import { fetchProjectBranchContext } from "@/lib/projectBranches";
 import type {
-  BranchContextResponse,
+  AuthProfile,
+  BranchScopedProject,
   Connection,
+  GitNotificationSummary,
+  ProjectBranch,
   ZentaiGamen,
 } from "@/types";
 
-interface EditorState {
-  context: BranchContextResponse;
-  zentaiGamen: ZentaiGamen;
+interface MeResponse {
+  profile: AuthProfile;
 }
 
 export default function EditorPage() {
   const params = useParams();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const projectId = params.projectId as string;
   const zentaiGamenId = params.zentaiGamenId as string;
-  const branchName = searchParams.get("branch") ?? "main";
-  const [supabase] = useState(() => createClient());
-  const [state, setState] = useState<EditorState | null>(null);
+  const requestedBranchId = searchParams.get("branch");
+  const supabase = useMemo(() => createClient(), []);
+
+  const [project, setProject] = useState<BranchScopedProject | null>(null);
+  const [branches, setBranches] = useState<ProjectBranch[]>([]);
+  const [currentBranch, setCurrentBranch] = useState<ProjectBranch | null>(null);
+  const [auth, setAuth] = useState<AuthProfile>(READONLY_AUTH_PROFILE);
+  const [unreadGitNotifications, setUnreadGitNotifications] = useState(0);
   const [grid, setGrid] = useState<GridData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [afterGrid, setAfterGrid] = useState<GridData | null>(null);
+  const [zentaiGamen, setZentaiGamen] = useState<ZentaiGamen | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
-      setLoading(true);
       setError(null);
 
       try {
-        const context = await fetchJson<BranchContextResponse>(
-          `/api/projects/${projectId}/branches?branch=${branchName}`
-        );
+        const [context, zentaiGamenResult] = await Promise.all([
+          fetchProjectBranchContext(supabase, projectId, requestedBranchId),
+          supabase
+            .from("zentai_gamen")
+            .select("*")
+            .eq("id", zentaiGamenId)
+            .eq("project_id", projectId)
+            .single(),
+        ]);
+        const { data: zg, error: zentaiGamenError } = zentaiGamenResult;
 
-        const { data: zentaiGamen, error: zentaiGamenError } = await supabase
-          .from("zentai_gamen")
-          .select("*")
-          .eq("id", zentaiGamenId)
-          .eq("branch_id", context.currentBranch.id)
-          .single();
-
-        if (zentaiGamenError || !zentaiGamen) {
+        if (
+          zentaiGamenError ||
+          !zg ||
+          zg.branch_id !== context.currentBranch.id
+        ) {
           throw zentaiGamenError ?? new Error("対象の画面が見つかりません");
         }
 
-        setState({
-          context,
-          zentaiGamen: zentaiGamen as ZentaiGamen,
-        });
+        setProject(context.projectView);
+        setBranches(context.branches);
+        setCurrentBranch(context.currentBranch);
+        setZentaiGamen(zg as ZentaiGamen);
         setGrid(
           decodeGrid(
-            (zentaiGamen as ZentaiGamen).grid_data,
-            context.project.grid_width,
-            context.project.grid_height
+            zg.grid_data,
+            context.projectView.grid_width,
+            context.projectView.grid_height
           )
         );
+
+        if (
+          zg.panel_type === "motion" &&
+          zg.motion_type === "wave" &&
+          zg.motion_data
+        ) {
+          setAfterGrid(
+            decodeGrid(
+              zg.motion_data.after_grid_data,
+              context.projectView.grid_width,
+              context.projectView.grid_height
+            )
+          );
+        } else {
+          setAfterGrid(null);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "エディタを読み込めませんでした");
-      } finally {
-        setLoading(false);
       }
     }
 
-    load();
-  }, [branchName, projectId, supabase, zentaiGamenId]);
+    void load();
+  }, [projectId, requestedBranchId, supabase, zentaiGamenId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAuth() {
+      try {
+        const [{ profile }, notifications] = await Promise.all([
+          fetchJson<MeResponse>("/api/auth/me"),
+          fetchJson<GitNotificationSummary>(
+            `/api/notifications/unread?projectId=${projectId}`
+          ).catch(() => ({ unreadCount: 0, hasUnread: false })),
+        ]);
+        if (cancelled) return;
+        setAuth(profile);
+        setUnreadGitNotifications(notifications.unreadCount);
+      } catch {
+        if (!cancelled) {
+          router.replace("/login");
+        }
+      }
+    }
+
+    void loadAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, router]);
 
   const handleSave = useCallback(
-    async (gridData: string, name: string, memo: string) => {
+    async (payload: GridEditorSavePayload) => {
+      if (!currentBranch) return;
+
+      const update: Record<string, unknown> = {
+        grid_data: payload.gridData,
+        name: payload.name,
+        memo: payload.memo,
+        updated_at: new Date().toISOString(),
+      };
+      if (payload.motionData !== undefined) {
+        update.motion_data = payload.motionData;
+      }
+
       const { error: updateError } = await supabase
         .from("zentai_gamen")
-        .update({
-          grid_data: gridData,
-          name,
-          memo,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", zentaiGamenId);
+        .update(update)
+        .eq("id", zentaiGamenId)
+        .eq("project_id", projectId)
+        .eq("branch_id", currentBranch.id);
 
       if (updateError) {
         throw updateError;
       }
     },
-    [supabase, zentaiGamenId]
+    [currentBranch, projectId, supabase, zentaiGamenId]
   );
 
   const handleExport = useCallback(async () => {
-    if (!state) return;
+    if (!project || !currentBranch) return;
 
-    const [{ data: allZentaiGamen, error: zentaiGamenError }, { data: allConnections, error: connectionsError }] =
+    const [{ data: allZg, error: zentaiGamenError }, { data: allConns, error: connectionsError }] =
       await Promise.all([
         supabase
           .from("zentai_gamen")
           .select("*")
           .eq("project_id", projectId)
-          .eq("branch_id", state.context.currentBranch.id),
+          .eq("branch_id", currentBranch.id),
         supabase
           .from("connections")
           .select("*")
           .eq("project_id", projectId)
-          .eq("branch_id", state.context.currentBranch.id),
+          .eq("branch_id", currentBranch.id),
       ]);
 
-    if (zentaiGamenError || connectionsError || !allZentaiGamen || !allConnections) {
+    if (zentaiGamenError || connectionsError || !allZg || !allConns) {
       throw new Error("データの取得に失敗しました");
     }
 
-    const routes = findPlaybackRoutes(
-      allConnections as Connection[],
-      zentaiGamenId
-    );
+    const routes = findPlaybackRoutes(allConns as Connection[], zentaiGamenId);
     const route = routes[0];
     if (!route || route.length === 0) {
       throw new Error("連結された全体画面がありません");
     }
 
     const zentaiGamenMap = new Map(
-      (allZentaiGamen as ZentaiGamen[]).map((item) => [item.id, item])
+      (allZg as ZentaiGamen[]).map((item) => [item.id, item])
     );
-    const scenes: { grid: GridData; memo: string }[] = [];
+    const width = project.grid_width;
+    const height = project.grid_height;
+    const connectionMap = new Map(
+      (allConns as Connection[]).map((connection) => [
+        `${connection.source_id}:${connection.target_id}`,
+        connection,
+      ])
+    );
+    const scenes: {
+      name: string;
+      grid: GridData;
+      beforeGrid: GridData | null;
+      keepMask: GridData | null;
+      memo: string;
+    }[] = [];
 
-    route.forEach((nodeId) => {
+    route.forEach((nodeId, index) => {
       const item = zentaiGamenMap.get(nodeId);
       if (!item) return;
 
+      const frame = zentaiGamenToPlaybackFrame({
+        zentaiGamen: item,
+        gridWidth: width,
+        gridHeight: height,
+        defaultPanelDurationMs: project.default_panel_duration_ms,
+      });
+      const grid = getPlaybackFrameFinalGrid(frame);
+      const previousNodeId = route[index - 1];
+      const previousConnection = previousNodeId
+        ? connectionMap.get(`${previousNodeId}:${nodeId}`)
+        : null;
+      const previousScene = scenes[scenes.length - 1];
+      const rawKeepMask = decodeKeepMask(
+        previousConnection?.keep_mask_grid_data,
+        width,
+        height
+      );
+      const keepMask =
+        rawKeepMask && previousScene
+          ? filterKeepMaskBySameColor(previousScene.grid, grid, rawKeepMask)
+          : null;
+
       scenes.push({
-        grid: decodeGrid(
-          item.grid_data,
-          state.context.project.grid_width,
-          state.context.project.grid_height
-        ),
+        name: item.name,
+        grid,
+        beforeGrid: frame.kind === "wave" ? frame.before : null,
+        keepMask,
         memo: item.memo || "",
       });
     });
@@ -147,15 +258,37 @@ export default function EditorPage() {
       throw new Error("シーンデータがありません");
     }
 
+    const undefinedReport: { name: string; count: number }[] = [];
+    for (const scene of scenes) {
+      const count =
+        countUndefinedCells(scene.grid) +
+        (scene.beforeGrid ? countUndefinedCells(scene.beforeGrid) : 0);
+      if (count > 0) {
+        undefinedReport.push({ name: scene.name, count });
+      }
+    }
+
+    if (undefinedReport.length > 0) {
+      const lines = undefinedReport
+        .map((r) => `・${r.name}（${r.count}セル）`)
+        .join("\n");
+      const ok = window.confirm(
+        `連結されたパネルに未塗りのセルが残っています。\n\n${lines}\n\nこのまま出力しますか？`
+      );
+      if (!ok) return;
+    }
+
     const zip = new JSZip();
-    const width = state.context.project.grid_width;
-    const height = state.context.project.grid_height;
 
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
+        const cellIndex = y * width + x;
         const cellScenes = scenes.map((scene, index) => ({
           sceneNumber: index + 1,
-          colorIndex: scene.grid.cells[y * width + x] as ColorIndex,
+          action: isKeepCell(scene.keepMask, cellIndex)
+            ? ("keep" as const)
+            : ("color" as const),
+          colorIndex: scene.grid.cells[cellIndex] as ColorIndex,
           memo: scene.memo,
         }));
 
@@ -163,10 +296,10 @@ export default function EditorPage() {
           x,
           y,
           cellScenes,
-          state.context.project.name
+          project.name
         );
 
-        zip.file(`${y + 1}列${x + 1}番.html`, html);
+        zip.file(`${getPanelScriptColumnLabel(x)}列${y + 1}番.html`, html);
       }
     }
 
@@ -174,23 +307,15 @@ export default function EditorPage() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${state.context.project.name}_パネル台本.zip`;
+    anchor.download = `${project.name}_パネル台本.zip`;
     anchor.click();
     URL.revokeObjectURL(url);
-  }, [projectId, state, supabase, zentaiGamenId]);
+  }, [currentBranch, project, projectId, supabase, zentaiGamenId]);
 
-  if (loading) {
+  if (error || !project || !currentBranch || !grid || !zentaiGamen) {
     return (
       <div className="h-full flex items-center justify-center">
-        <p className="text-muted">読み込み中...</p>
-      </div>
-    );
-  }
-
-  if (!state || !grid) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <p className="text-muted">{error ?? "データが見つかりません"}</p>
+        {error && <p className="text-muted">{error}</p>}
       </div>
     );
   }
@@ -198,20 +323,24 @@ export default function EditorPage() {
   return (
     <GridEditor
       initialGrid={grid}
+      initialAfterGrid={afterGrid}
+      panelType={zentaiGamen.panel_type ?? "general"}
+      motionType={zentaiGamen.motion_type ?? null}
+      initialMotionData={zentaiGamen.motion_data ?? null}
       zentaiGamenId={zentaiGamenId}
       projectId={projectId}
-      initialName={state.zentaiGamen.name}
-      initialMemo={state.zentaiGamen.memo || ""}
+      branchId={currentBranch.id}
+      initialName={zentaiGamen.name}
+      initialMemo={zentaiGamen.memo || ""}
       onSave={handleSave}
       onExport={handleExport}
-      auth={state.context.auth}
-      project={state.context.project}
-      currentBranch={state.context.currentBranch}
-      branches={state.context.branches}
-      unreadGitNotifications={state.context.unreadGitNotifications}
-      canEditCurrentBranch={state.context.canEditCurrentBranch}
-      canCreateBranches={state.context.canCreateBranches}
-      canRequestMerge={state.context.canRequestMerge}
+      auth={auth}
+      currentBranch={currentBranch}
+      branches={branches}
+      unreadGitNotifications={unreadGitNotifications}
+      canEditCurrentBranch={canEditBranch(auth, currentBranch)}
+      canCreateBranches={canCreateBranches(auth)}
+      canRequestMerge={canRequestMerge(auth, currentBranch)}
     />
   );
 }

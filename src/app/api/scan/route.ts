@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
-import { requirePermission, requireAuth } from "@/lib/server/auth";
-import { toErrorResponse } from "@/lib/server/errors";
+import { requireAuth } from "@/lib/server/auth";
+import { HttpError, toErrorResponse } from "@/lib/server/errors";
 
 export async function POST(request: Request) {
   try {
     const { profile } = await requireAuth();
-    requirePermission(profile, "can_edit_branch_content");
+    if (
+      !profile.is_admin &&
+      !profile.permissions.can_edit_branch_content &&
+      !profile.permissions.can_create_branches
+    ) {
+      throw new HttpError(403, "ブランチを編集する権限がありません");
+    }
 
     const { image, gridWidth, gridHeight } = await request.json();
 

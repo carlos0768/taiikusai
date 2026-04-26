@@ -2,9 +2,15 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_PAGE_PATHS = new Set(["/login"]);
-const PUBLIC_API_PATHS = new Set(["/api/login", "/api/logout"]);
 
 export async function proxy(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  const isApiRoute = pathname.startsWith("/api/");
+
+  if (isApiRoute) {
+    return NextResponse.next({ request });
+  }
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -26,17 +32,12 @@ export async function proxy(request: NextRequest) {
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data } = await supabase.auth.getClaims();
 
-  const pathname = request.nextUrl.pathname;
-  const isApiRoute = pathname.startsWith("/api/");
   const isPublicPage = PUBLIC_PAGE_PATHS.has(pathname);
-  const isPublicApi = PUBLIC_API_PATHS.has(pathname);
 
-  if (!user) {
-    if (isPublicPage || isPublicApi || isApiRoute) {
+  if (!data?.claims?.sub) {
+    if (isPublicPage) {
       return response;
     }
 
@@ -45,7 +46,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  if (user && isPublicPage) {
+  if (isPublicPage) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/dashboard";
     return NextResponse.redirect(redirectUrl);

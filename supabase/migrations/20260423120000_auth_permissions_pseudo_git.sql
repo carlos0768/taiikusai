@@ -63,6 +63,9 @@ create table if not exists public.project_branches (
   unique (project_id, name)
 );
 
+alter table public.project_branches
+  add column if not exists created_by uuid references public.profiles (id) on delete set null;
+
 create table if not exists public.merge_requests (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects (id) on delete cascade,
@@ -96,11 +99,43 @@ alter table public.zentai_gamen
 alter table public.connections
   add column if not exists branch_id uuid;
 
-insert into public.project_branches (project_id, name, is_main, created_by)
-select p.id, 'main', true, p.owner_id
+insert into public.project_branches (
+  project_id,
+  name,
+  is_main,
+  source_branch_id,
+  grid_width,
+  grid_height,
+  colors,
+  default_panel_duration_ms,
+  default_interval_ms,
+  music_data,
+  created_by
+)
+select
+  p.id,
+  'main',
+  true,
+  null,
+  p.grid_width,
+  p.grid_height,
+  p.colors,
+  coalesce(p.default_panel_duration_ms, 2000),
+  coalesce(p.default_interval_ms, 1000),
+  p.music_data,
+  case
+    when exists (
+      select 1
+      from public.profiles owner_profiles
+      where owner_profiles.id = p.owner_id
+    ) then p.owner_id
+    else null
+  end
 from public.projects p
 on conflict (project_id, name) do update
-set is_main = excluded.is_main;
+set
+  is_main = excluded.is_main,
+  created_by = coalesce(public.project_branches.created_by, excluded.created_by);
 
 update public.zentai_gamen zg
 set branch_id = pb.id

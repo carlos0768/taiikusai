@@ -1,5 +1,10 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Domain Notes
+
+- パネル台本出力の `~列~番` だけは、縦に並んでいる方向を「列」として扱う。列は左から `A`, `B`, `C` ... `Z`, `AA` の英字表記、番は上から `1`, `2`, `3` ... の数字表記にする。
+- 開発時の grid 座標やコード上の呼称は通常どおり `x` / column が横方向、`y` / row が縦方向。
+
 ## Getting Started
 
 First, run the development server:

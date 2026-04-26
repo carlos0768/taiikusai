@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { fetchProjectBranchContext } from "@/lib/projectBranches";
 import { requireAuth } from "@/lib/server/auth";
 import { HttpError, toErrorResponse } from "@/lib/server/errors";
-import { getBranchContext } from "@/lib/server/pseudoGit";
+import { canEditBranch } from "@/lib/server/pseudoGit";
+import { createClient } from "@/lib/supabase/server";
 import { normalizePanelDsl } from "@/lib/textToPanel/types";
 
 interface ChatMessage {
@@ -160,10 +162,15 @@ export async function POST(
   try {
     const { projectId } = await params;
     const { profile } = await requireAuth();
-    const branchName = request.nextUrl.searchParams.get("branch") ?? undefined;
-    const context = await getBranchContext(projectId, branchName, profile);
+    const requestedBranchId = request.nextUrl.searchParams.get("branch");
+    const supabase = await createClient();
+    const { project, projectView, currentBranch } = await fetchProjectBranchContext(
+      supabase,
+      projectId,
+      requestedBranchId
+    );
 
-    if (!context.canEditCurrentBranch) {
+    if (!canEditBranch(project, currentBranch, profile)) {
       throw new HttpError(403, "このブランチは編集できません");
     }
 
@@ -187,9 +194,9 @@ export async function POST(
         model,
         max_tokens: 4096,
         system: buildSystemPrompt(
-          context.project.name,
-          context.project.grid_width,
-          context.project.grid_height
+          project.name,
+          projectView.grid_width,
+          projectView.grid_height
         ),
         messages,
         tools: [

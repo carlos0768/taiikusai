@@ -19,7 +19,7 @@ interface ProfileRecord extends Profile {
 }
 
 export interface AuthContext {
-  user: User;
+  user: Pick<User, "id">;
   profile: AuthProfile;
   isAdmin: boolean;
 }
@@ -65,7 +65,7 @@ export async function ensureSeedAdminAccount() {
 
   const { error: upsertProfileError } = await admin.from("profiles").upsert({
     id: userId,
-    login_id: loginId,
+    ...buildProfileIdentityFields(loginId),
     display_name: DEFAULT_ADMIN_DISPLAY_NAME,
     is_admin: true,
     status: "active",
@@ -91,19 +91,20 @@ export async function ensureSeedAdminAccount() {
 export async function requireAuth(): Promise<AuthContext> {
   const supabase = await createClient();
   const {
-    data: { user },
+    data,
     error,
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getClaims();
 
   if (error) {
     throw new HttpError(401, error.message);
   }
 
-  if (!user) {
+  const userId = data?.claims?.sub;
+  if (!userId) {
     throw new HttpError(401, "認証が必要です");
   }
 
-  const profile = await getProfileWithPermissions(user.id);
+  const profile = await getProfileWithPermissions(userId);
   if (!profile) {
     throw new HttpError(403, "ユーザー情報が見つかりません");
   }
@@ -115,7 +116,7 @@ export async function requireAuth(): Promise<AuthContext> {
   const hydratedProfile = hydrateAuthProfile(profile);
 
   return {
-    user,
+    user: { id: userId },
     profile: hydratedProfile,
     isAdmin: hydratedProfile.is_admin,
   };
@@ -157,6 +158,14 @@ export function assertLoginId(input: string) {
 
 export function normalizeStatus(input?: string): "active" | "disabled" {
   return input === "disabled" ? "disabled" : "active";
+}
+
+export function buildProfileIdentityFields(loginId: string) {
+  const normalized = normalizeLoginId(loginId);
+  return {
+    login_id: normalized,
+    username: normalized,
+  };
 }
 
 export function buildPermissionRecord(userId: string, isAdmin: boolean = false) {
