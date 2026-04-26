@@ -42,6 +42,10 @@ export default function Sidebar({
   const navItems = [
     { label: "ダッシュボード", href: `/project/${projectId}${query}` },
     { label: "テンプレ", href: `/project/${projectId}/templates` },
+    {
+      label: "生成テスト",
+      href: `/project/${projectId}/text-to-panel${query}`,
+    },
     ...(showGit
       ? [
           {
