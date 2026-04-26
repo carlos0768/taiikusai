@@ -14,8 +14,14 @@ interface AnthropicTextBlock {
   text?: string;
 }
 
+interface AnthropicToolUseBlock {
+  type?: string;
+  name?: string;
+  input?: unknown;
+}
+
 interface AnthropicResponse {
-  content?: AnthropicTextBlock[];
+  content?: Array<AnthropicTextBlock | AnthropicToolUseBlock>;
   model?: string;
   stop_reason?: string;
   usage?: unknown;
@@ -40,6 +46,8 @@ const PANEL_DSL_SCHEMA = {
           box: {
             type: "array",
             items: { type: "number" },
+            minItems: 4,
+            maxItems: 4,
           },
           strokeWidth: { type: "number" },
           text: { type: "string" },
@@ -48,6 +56,8 @@ const PANEL_DSL_SCHEMA = {
             items: {
               type: "array",
               items: { type: "number" },
+              minItems: 2,
+              maxItems: 2,
             },
           },
         },
@@ -164,7 +174,7 @@ export async function POST(
 
     const { messages: rawMessages } = await request.json();
     const messages = normalizeMessages(rawMessages);
-    const model = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
+    const model = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-20250514";
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -182,11 +192,17 @@ export async function POST(
           context.project.grid_height
         ),
         messages,
-        output_config: {
-          format: {
-            type: "json_schema",
-            schema: PANEL_DSL_SCHEMA,
+        tools: [
+          {
+            name: "create_panel_dsl",
+            description:
+              "Create a structured DSL for rendering a low-resolution sports festival panel.",
+            input_schema: PANEL_DSL_SCHEMA,
           },
+        ],
+        tool_choice: {
+          type: "tool",
+          name: "create_panel_dsl",
         },
       }),
     });
@@ -204,13 +220,19 @@ export async function POST(
       throw new HttpError(500, "モデル出力が途中で切れました");
     }
 
-    const textBlock = result.content?.find((block) => block.type === "text");
-    if (!textBlock?.text) {
+    const toolBlock = result.content?.find(
+      (block) => block.type === "tool_use" && "name" in block && block.name === "create_panel_dsl"
+    ) as AnthropicToolUseBlock | undefined;
+    const textBlock = result.content?.find(
+      (block) => block.type === "text" && "text" in block
+    ) as AnthropicTextBlock | undefined;
+    const rawDsl = toolBlock?.input ?? (textBlock?.text ? JSON.parse(textBlock.text) : null);
+
+    if (!rawDsl) {
       throw new HttpError(500, "モデルからDSLを取得できませんでした");
     }
 
-    const parsed = JSON.parse(textBlock.text);
-    const { dsl, warnings } = normalizePanelDsl(parsed);
+    const { dsl, warnings } = normalizePanelDsl(rawDsl);
 
     return NextResponse.json({
       dsl,
