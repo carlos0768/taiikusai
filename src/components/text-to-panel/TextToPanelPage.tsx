@@ -13,7 +13,23 @@ import {
 } from "@/lib/grid/types";
 import { renderPanelDslToGrid } from "@/lib/textToPanel/render";
 import type { PanelDsl } from "@/lib/textToPanel/types";
-import type { BranchContextResponse } from "@/types";
+import type {
+  AuthProfile,
+  BranchScopedProject,
+  ProjectBranch,
+} from "@/types";
+
+interface BranchContextResponse {
+  project: BranchScopedProject;
+  branches: ProjectBranch[];
+  currentBranch: ProjectBranch;
+  auth: AuthProfile;
+  canEditCurrentBranch: boolean;
+  canCreateBranches: boolean;
+  canRequestMerge: boolean;
+  canViewGitRequests: boolean;
+  unreadGitNotifications: number;
+}
 
 interface ChatMessage {
   role: "user" | "assistant";
