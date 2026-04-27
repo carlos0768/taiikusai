@@ -18,12 +18,17 @@ import {
   msToSecondsString,
 } from "@/lib/playback/timing";
 import {
+  buildSegments,
   type PlaybackFrameItem,
   type PlaybackGapItem,
   type PlaybackTimeline,
 } from "@/lib/playback/frameBuilder";
 import { usePlayback } from "@/components/playback/usePlayback";
-import MusicTrack from "./MusicTrack";
+import {
+  createMasterClock,
+  type MasterClock,
+} from "@/components/playback/masterClock";
+import MusicTrack, { type MusicTrackHandle } from "./MusicTrack";
 
 const PX_PER_SECOND = 30;
 
@@ -325,6 +330,7 @@ export default function PlaybackPanel({
   const mainCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const frameRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const musicHandleRef = useRef<MusicTrackHandle | null>(null);
   const [panelSize, setPanelSize] = useState<PanelSize>("side");
   const [fixedSize, setFixedSize] = useState<{ w: number; h: number } | null>(
     null
@@ -334,6 +340,9 @@ export default function PlaybackPanel({
   );
   const [gapItems, setGapItems] = useState<PlaybackGapItem[]>(timeline.gapItems);
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  // 波形キャレット表示用 (再生中の親 rAF で更新)。state 経由でもズレない
+  // — 真実は MusicTrackHandle.getCurrentTimeSec() であり、これは表示用の鏡。
+  const [musicCurrentSec, setMusicCurrentSec] = useState(0);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -341,17 +350,38 @@ export default function PlaybackPanel({
     setGapItems(timeline.gapItems);
   }, [timeline]);
 
-  const frames = useMemo(
-    () => frameItems.map((item) => item.frame),
-    [frameItems]
-  );
-  const durations = useMemo(
-    () => frameItems.map((item) => item.durationMs),
-    [frameItems]
-  );
-  const intervals = useMemo(
-    () => gapItems.map((item) => item.intervalMs),
-    [gapItems]
+  // frame/gap の override 変更で長さが変わるので timeline (segments含む) を派生
+  const playbackTimeline = useMemo<PlaybackTimeline>(() => {
+    const { segments, totalMs } = buildSegments(frameItems, gapItems);
+    return {
+      frameItems,
+      gapItems,
+      defaultPanelDurationMs: timeline.defaultPanelDurationMs,
+      defaultIntervalMs: timeline.defaultIntervalMs,
+      segments,
+      totalMs,
+    };
+  }, [
+    frameItems,
+    gapItems,
+    timeline.defaultPanelDurationMs,
+    timeline.defaultIntervalMs,
+  ]);
+
+  // マスタークロック (1 つのインスタンスをコンポーネント生存期間中安定保持)。
+  // getAudioTimeMs は now() 呼び出し時 (= rAF tick / イベント時) に遅延評価される。
+  // render 中に ref を読まないので react-hooks/refs の警告は false positive。
+  const clock = useMemo<MasterClock>(
+    () =>
+      // eslint-disable-next-line react-hooks/refs
+      createMasterClock({
+        getAudioTimeMs: () => {
+          const m = musicHandleRef.current;
+          if (!m || !m.isLoaded()) return null;
+          return (m.getCurrentTimeSec() - m.getStartSec()) * 1000;
+        },
+      }),
+    []
   );
 
   const {
@@ -362,17 +392,80 @@ export default function PlaybackPanel({
     play,
     pause,
     stop,
-    next,
-    prev,
     goTo,
-  } = usePlayback({ frames, durations, intervals });
+  } = usePlayback({ timeline: playbackTimeline, clock });
 
-  const handleMusicStateChange = useCallback(
-    (playing: boolean) => {
-      if (!playing) pause();
+  const handlePlay = useCallback(() => {
+    // 終端から再生 → 頭に戻して始める。
+    // 先に clock を頭にリセットしておくと、音楽 seek 計算も 0 起点でできる。
+    if (clock.now() >= playbackTimeline.totalMs) {
+      clock.reset();
+    }
+    const m = musicHandleRef.current;
+    if (m?.isLoaded()) {
+      m.seek(m.getStartSec() + clock.now() / 1000);
+      void m.play();
+    }
+    play();
+  }, [clock, play, playbackTimeline.totalMs]);
+
+  const handlePause = useCallback(() => {
+    musicHandleRef.current?.pause();
+    pause();
+  }, [pause]);
+
+  const handleStop = useCallback(() => {
+    const m = musicHandleRef.current;
+    if (m?.isLoaded()) {
+      m.pause();
+      m.seek(m.getStartSec());
+    }
+    stop();
+    setMusicCurrentSec(m?.getStartSec() ?? 0);
+  }, [stop]);
+
+  const handleGoTo = useCallback(
+    (idx: number) => {
+      // usePlayback の goTo が clock を seek する。その後 clock.now() で最新位置が読める。
+      goTo(idx);
+      const m = musicHandleRef.current;
+      if (m?.isLoaded()) {
+        m.seek(m.getStartSec() + clock.now() / 1000);
+        if (!isPlaying) setMusicCurrentSec(m.getCurrentTimeSec());
+      }
     },
-    [pause]
+    [goTo, clock, isPlaying]
   );
+
+  const handleNext = useCallback(() => {
+    handleGoTo(currentIndex + 1);
+  }, [handleGoTo, currentIndex]);
+
+  const handlePrev = useCallback(() => {
+    handleGoTo(currentIndex - 1);
+  }, [handleGoTo, currentIndex]);
+
+  // 親 rAF: 音楽キャレット表示の更新 + 音楽 endTime 検知。
+  // usePlayback の rAF と同じ clock を見ているので結果は一致する (構造的にズレない)。
+  useEffect(() => {
+    if (!isPlaying) return;
+    let raf: number;
+    const tick = () => {
+      const m = musicHandleRef.current;
+      if (m?.isLoaded()) {
+        const cur = m.getCurrentTimeSec();
+        setMusicCurrentSec(cur);
+        const end = m.getEndSec();
+        if (end > 0 && cur >= end) {
+          handlePause();
+          return;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying, handlePause]);
 
   const persistFrameDuration = useCallback(
     async (index: number, durationMs: number | null) => {
@@ -484,6 +577,11 @@ export default function PlaybackPanel({
       });
     }
   }, [currentIndex]);
+
+  const frames = useMemo(
+    () => playbackTimeline.frameItems.map((item) => item.frame),
+    [playbackTimeline]
+  );
 
   useEffect(() => {
     if (fixedSize) return;
@@ -654,12 +752,13 @@ export default function PlaybackPanel({
         </div>
 
         <MusicTrack
-          isPlaying={isPlaying}
-          onPlayStateChange={handleMusicStateChange}
+          ref={musicHandleRef}
           pxPerSecond={PX_PER_SECOND}
           projectId={projectId}
           initialMusic={initialMusic}
           onMusicChange={onMusicChange}
+          currentTimeSec={musicCurrentSec}
+          isPlaying={isPlaying}
         />
 
         <div className="flex items-end gap-0 px-3 pb-1">
@@ -671,8 +770,8 @@ export default function PlaybackPanel({
                 durationMs={frameItem.durationMs}
                 widthPx={(frameItem.timelineWidthMs / 1000) * PX_PER_SECOND}
                 onTap={() => {
-                  pause();
-                  goTo(idx);
+                  handlePause();
+                  handleGoTo(idx);
                 }}
                 onDurationChange={(ms) => persistFrameDuration(idx, ms)}
                 onDurationReset={() => persistFrameDuration(idx, null)}
@@ -706,25 +805,25 @@ export default function PlaybackPanel({
       <div className="px-3 py-3 border-t border-card-border shrink-0">
         <div className="flex items-center justify-center gap-3">
           <button
-            onClick={stop}
+            onClick={handleStop}
             className="text-muted hover:text-foreground text-sm px-1"
           >
             ⏹
           </button>
           <button
-            onClick={prev}
+            onClick={handlePrev}
             className="text-muted hover:text-foreground text-sm px-1"
           >
             ⏮
           </button>
           <button
-            onClick={isPlaying ? pause : play}
+            onClick={isPlaying ? handlePause : handlePlay}
             className="w-10 h-10 flex items-center justify-center bg-accent text-black rounded-full text-lg hover:opacity-90"
           >
             {isPlaying ? "⏸" : "▶"}
           </button>
           <button
-            onClick={next}
+            onClick={handleNext}
             className="text-muted hover:text-foreground text-sm px-1"
           >
             ⏭

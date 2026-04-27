@@ -13,6 +13,7 @@ import {
 import type { PlaybackTimeline } from "@/lib/playback/frameBuilder";
 import { msToSecondsString } from "@/lib/playback/timing";
 import { usePlayback } from "./usePlayback";
+import { createMasterClock } from "./masterClock";
 
 interface PlaybackViewProps {
   timeline: PlaybackTimeline;
@@ -98,13 +99,11 @@ export default function PlaybackView({ timeline, onBack }: PlaybackViewProps) {
     () => timeline.frameItems.map((item) => item.frame),
     [timeline.frameItems]
   );
-  const durations = useMemo(
-    () => timeline.frameItems.map((item) => item.durationMs),
-    [timeline.frameItems]
-  );
-  const intervals = useMemo(
-    () => timeline.gapItems.map((item) => item.intervalMs),
-    [timeline.gapItems]
+
+  // 音楽を持たない再生ビュー: getAudioTimeMs は常に null → perf.now() ベースで進む
+  const clock = useMemo(
+    () => createMasterClock({ getAudioTimeMs: () => null }),
+    []
   );
 
   const {
@@ -117,7 +116,7 @@ export default function PlaybackView({ timeline, onBack }: PlaybackViewProps) {
     stop,
     next,
     prev,
-  } = usePlayback({ frames, durations, intervals });
+  } = usePlayback({ timeline, clock });
 
   // Render current frame
   useEffect(() => {
