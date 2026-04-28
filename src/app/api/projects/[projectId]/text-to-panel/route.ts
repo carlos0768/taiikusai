@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/server/auth";
 import { HttpError, toErrorResponse } from "@/lib/server/errors";
 import { canEditBranch } from "@/lib/server/pseudoGit";
 import { createClient } from "@/lib/supabase/server";
-import { normalizePanelDsl } from "@/lib/textToPanel/types";
+import { normalizePanelDsl, type PanelDsl } from "@/lib/textToPanel/types";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -28,6 +28,19 @@ interface AnthropicResponse {
   stop_reason?: string;
   usage?: unknown;
 }
+
+interface TextToPanelSessionRow {
+  messages: unknown;
+  last_dsl: unknown;
+  last_model: string | null;
+  last_usage: unknown;
+  last_warnings: string[] | null;
+  updated_at: string;
+}
+
+type TextToPanelRouteContext = {
+  params: Promise<{ projectId: string }>;
+};
 
 const PANEL_DSL_SCHEMA = {
   type: "object",
@@ -120,6 +133,80 @@ function normalizeMessages(value: unknown): ChatMessage[] {
   return compacted;
 }
 
+function coerceStoredMessages(value: unknown): ChatMessage[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    if (
+      typeof item !== "object" ||
+      item === null ||
+      !("role" in item) ||
+      !("content" in item)
+    ) {
+      return [];
+    }
+
+    const role =
+      item.role === "assistant" ? "assistant" : item.role === "user" ? "user" : null;
+    if (!role) {
+      return [];
+    }
+
+    const content = typeof item.content === "string" ? item.content.trim() : "";
+    if (!content) return [];
+
+    return [{ role, content } satisfies ChatMessage];
+  });
+}
+
+function coerceStoredWarnings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((warning) =>
+    typeof warning === "string" && warning.trim() ? [warning.trim()] : []
+  );
+}
+
+function buildSessionResponse(row: TextToPanelSessionRow | null): {
+  messages: ChatMessage[];
+  lastResult: {
+    dsl: PanelDsl;
+    model: string;
+    usage?: unknown;
+    warnings: string[];
+    createdAt: string;
+  } | null;
+} {
+  if (!row) {
+    return {
+      messages: [],
+      lastResult: null,
+    };
+  }
+
+  const messages = coerceStoredMessages(row.messages);
+  if (!row.last_dsl) {
+    return {
+      messages,
+      lastResult: null,
+    };
+  }
+
+  const { dsl, warnings } = normalizePanelDsl(row.last_dsl);
+  return {
+    messages,
+    lastResult: {
+      dsl,
+      model: row.last_model ?? "",
+      usage: row.last_usage ?? undefined,
+      warnings: Array.from(
+        new Set([...coerceStoredWarnings(row.last_warnings), ...warnings])
+      ),
+      createdAt: row.updated_at,
+    },
+  };
+}
+
 function buildSystemPrompt(projectName: string, width: number, height: number) {
   return `あなたは体育祭パネル競技用の低解像度パネル設計者です。
 
@@ -155,20 +242,69 @@ function buildSystemPrompt(projectName: string, width: number, height: number) {
 対象プロジェクト: ${projectName}`;
 }
 
-export async function POST(
+async function getRouteContext(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  params: TextToPanelRouteContext["params"]
+) {
+  const { projectId } = await params;
+  const { profile } = await requireAuth();
+  const requestedBranchId = request.nextUrl.searchParams.get("branch");
+  const supabase = await createClient();
+  const branchContext = await fetchProjectBranchContext(
+    supabase,
+    projectId,
+    requestedBranchId
+  );
+
+  return {
+    ...branchContext,
+    projectId,
+    profile,
+    supabase,
+  };
+}
+
+export async function GET(
+  request: NextRequest,
+  { params }: TextToPanelRouteContext
 ) {
   try {
-    const { projectId } = await params;
-    const { profile } = await requireAuth();
-    const requestedBranchId = request.nextUrl.searchParams.get("branch");
-    const supabase = await createClient();
-    const { project, projectView, currentBranch } = await fetchProjectBranchContext(
-      supabase,
-      projectId,
-      requestedBranchId
+    const { projectId, profile, currentBranch, supabase } = await getRouteContext(
+      request,
+      params
     );
+
+    const { data, error } = await supabase
+      .from("text_to_panel_sessions")
+      .select("messages,last_dsl,last_model,last_usage,last_warnings,updated_at")
+      .eq("project_id", projectId)
+      .eq("branch_id", currentBranch.id)
+      .eq("user_id", profile.id)
+      .maybeSingle<TextToPanelSessionRow>();
+
+    if (error) {
+      throw error;
+    }
+
+    return NextResponse.json(buildSessionResponse(data ?? null));
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: TextToPanelRouteContext
+) {
+  try {
+    const {
+      projectId,
+      profile,
+      supabase,
+      project,
+      projectView,
+      currentBranch,
+    } = await getRouteContext(request, params);
 
     if (!canEditBranch(project, currentBranch, profile)) {
       throw new HttpError(403, "このブランチは編集できません");
@@ -228,25 +364,93 @@ export async function POST(
     }
 
     const toolBlock = result.content?.find(
-      (block) => block.type === "tool_use" && "name" in block && block.name === "create_panel_dsl"
+      (block) =>
+        block.type === "tool_use" &&
+        "name" in block &&
+        block.name === "create_panel_dsl"
     ) as AnthropicToolUseBlock | undefined;
     const textBlock = result.content?.find(
       (block) => block.type === "text" && "text" in block
     ) as AnthropicTextBlock | undefined;
-    const rawDsl = toolBlock?.input ?? (textBlock?.text ? JSON.parse(textBlock.text) : null);
+    const rawDsl =
+      toolBlock?.input ?? (textBlock?.text ? JSON.parse(textBlock.text) : null);
 
     if (!rawDsl) {
       throw new HttpError(500, "モデルからDSLを取得できませんでした");
     }
 
     const { dsl, warnings } = normalizePanelDsl(rawDsl);
+    const savedMessages: ChatMessage[] = [
+      ...messages,
+      {
+        role: "assistant",
+        content: dsl.assistantMessage,
+      },
+    ];
+    const savedModel = result.model ?? model;
+
+    const { data: savedSession, error: saveError } = await supabase
+      .from("text_to_panel_sessions")
+      .upsert(
+        {
+          project_id: projectId,
+          branch_id: currentBranch.id,
+          user_id: profile.id,
+          messages: savedMessages,
+          last_dsl: dsl,
+          last_model: savedModel,
+          last_usage: result.usage ?? null,
+          last_warnings: warnings,
+        },
+        {
+          onConflict: "project_id,branch_id,user_id",
+        }
+      )
+      .select("messages,last_dsl,last_model,last_usage,last_warnings,updated_at")
+      .single<TextToPanelSessionRow>();
+
+    if (saveError || !savedSession) {
+      throw saveError ?? new Error("会話履歴を保存できませんでした");
+    }
+
+    const saved = buildSessionResponse(savedSession);
+    const savedResult = saved.lastResult;
 
     return NextResponse.json({
-      dsl,
-      model: result.model ?? model,
-      usage: result.usage,
-      warnings,
+      dsl: savedResult?.dsl ?? dsl,
+      model: savedResult?.model || savedModel,
+      usage: savedResult?.usage ?? result.usage,
+      warnings: savedResult?.warnings ?? warnings,
+      messages: saved.messages,
+      savedAt: savedSession.updated_at,
     });
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: TextToPanelRouteContext
+) {
+  try {
+    const { projectId, profile, currentBranch, supabase } = await getRouteContext(
+      request,
+      params
+    );
+
+    const { error } = await supabase
+      .from("text_to_panel_sessions")
+      .delete()
+      .eq("project_id", projectId)
+      .eq("branch_id", currentBranch.id)
+      .eq("user_id", profile.id);
+
+    if (error) {
+      throw error;
+    }
+
+    return NextResponse.json({ ok: true });
   } catch (error) {
     return toErrorResponse(error);
   }

@@ -41,6 +41,19 @@ interface TextToPanelResponse {
   model: string;
   usage?: unknown;
   warnings?: string[];
+  messages: ChatMessage[];
+  savedAt: string;
+}
+
+interface TextToPanelHistoryResponse {
+  messages: ChatMessage[];
+  lastResult: {
+    dsl: PanelDsl;
+    model: string;
+    usage?: unknown;
+    warnings: string[];
+    createdAt: string;
+  } | null;
 }
 
 interface GenerationResult {
@@ -62,6 +75,15 @@ const COLOR_ORDER: ColorIndex[] = [0, 1, 2, 3, 4];
 
 function branchQuery(branchName: string) {
   return branchName === "main" ? "" : `?branch=${encodeURIComponent(branchName)}`;
+}
+
+function formatResultTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return new Date().toLocaleTimeString("ja-JP");
+  }
+
+  return date.toLocaleTimeString("ja-JP");
 }
 
 function GridPreviewCanvas({ grid }: { grid: GridData | null }) {
@@ -167,6 +189,7 @@ export default function TextToPanelPage() {
   const [input, setInput] = useState(EXAMPLE_PROMPTS[0]);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [lastResult, setLastResult] = useState<GenerationResult | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -175,10 +198,36 @@ export default function TextToPanelPage() {
     setLoadError(null);
 
     try {
-      const nextContext = await fetchJson<BranchContextResponse>(
-        `/api/projects/${projectId}/branches?branch=${encodeURIComponent(branchName)}`
-      );
+      const [nextContext, history] = await Promise.all([
+        fetchJson<BranchContextResponse>(
+          `/api/projects/${projectId}/branches?branch=${encodeURIComponent(branchName)}`
+        ),
+        fetchJson<TextToPanelHistoryResponse>(
+          `/api/projects/${projectId}/text-to-panel?branch=${encodeURIComponent(branchName)}`
+        ),
+      ]);
       setContext(nextContext);
+      setMessages(history.messages);
+
+      if (history.lastResult) {
+        const rendered = renderPanelDslToGrid(
+          history.lastResult.dsl,
+          nextContext.project.grid_width,
+          nextContext.project.grid_height
+        );
+        setLastResult({
+          dsl: history.lastResult.dsl,
+          grid: rendered.grid,
+          model: history.lastResult.model,
+          usage: history.lastResult.usage,
+          warnings: Array.from(
+            new Set([...history.lastResult.warnings, ...rendered.warnings])
+          ),
+          createdAt: formatResultTime(history.lastResult.createdAt),
+        });
+      } else {
+        setLastResult(null);
+      }
     } catch (error) {
       setLoadError(
         error instanceof Error ? error.message : "プロジェクトを読み込めませんでした"
@@ -239,16 +288,12 @@ export default function TextToPanelPage() {
           model: response.model,
           usage: response.usage,
           warnings,
-          createdAt: new Date().toLocaleTimeString("ja-JP"),
+          createdAt: formatResultTime(response.savedAt),
         });
-        setMessages([
-          ...nextMessages,
-          {
-            role: "assistant",
-            content: response.dsl.assistantMessage,
-          },
-        ]);
+        setMessages(response.messages);
       } catch (error) {
+        setMessages(messages);
+        setInput(prompt);
         setActionError(error instanceof Error ? error.message : "生成に失敗しました");
       } finally {
         setGenerating(false);
@@ -256,6 +301,30 @@ export default function TextToPanelPage() {
     },
     [branchName, context, input, messages, projectId]
   );
+
+  const handleClearHistory = useCallback(async () => {
+    if (!context) return;
+
+    setClearing(true);
+    setActionError(null);
+
+    try {
+      await fetchJson<{ ok: true }>(
+        `/api/projects/${projectId}/text-to-panel?branch=${encodeURIComponent(branchName)}`,
+        {
+          method: "DELETE",
+        }
+      );
+      setMessages([]);
+      setLastResult(null);
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "履歴をクリアできませんでした"
+      );
+    } finally {
+      setClearing(false);
+    }
+  }, [branchName, context, projectId]);
 
   const handleSave = useCallback(async () => {
     if (!context || !lastResult || !context.canEditCurrentBranch) return;
@@ -316,7 +385,7 @@ export default function TextToPanelPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between gap-3 border-b border-card-border px-4 py-3">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-card-border px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
           <button
             onClick={() => router.push(`/project/${projectId}${projectQuery}`)}
@@ -332,13 +401,24 @@ export default function TextToPanelPage() {
             </p>
           </div>
         </div>
-        <button
-          onClick={handleSave}
-          disabled={!lastResult || saving || !canEdit}
-          className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-40"
-        >
-          {saving ? "作成中..." : "パネルとして作成"}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={handleClearHistory}
+            disabled={
+              clearing || generating || saving || (!lastResult && messages.length === 0)
+            }
+            className="rounded-lg border border-card-border bg-card px-4 py-2 text-sm font-medium text-foreground transition-colors hover:border-accent/50 disabled:opacity-40"
+          >
+            {clearing ? "クリア中..." : "履歴クリア"}
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={!lastResult || saving || !canEdit}
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-black transition-opacity hover:opacity-90 disabled:opacity-40"
+          >
+            {saving ? "作成中..." : "パネルとして作成"}
+          </button>
+        </div>
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(320px,420px)_1fr]">
