@@ -16,7 +16,8 @@ import {
   type Viewport as FlowViewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useRouter } from "next/navigation";
+import { MessageCircle } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { decodeGrid, encodeGrid } from "@/lib/grid/codec";
 import { buildBranchPath } from "@/lib/projectBranches";
@@ -64,6 +65,7 @@ import NodeDeleteMenu from "./NodeDeleteMenu";
 import Sidebar from "./Sidebar";
 import PlaybackPanel from "./PlaybackPanel";
 import ProjectBranchSwitcher from "./ProjectBranchSwitcher";
+import TextToPanelChat from "@/components/text-to-panel/TextToPanelChat";
 
 interface CollapsedGroup {
   id: string;
@@ -267,6 +269,8 @@ function DashboardCanvasInner({
   unreadGitNotifications,
 }: DashboardCanvasProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const supabase = useMemo(() => createClient(), []);
   const reactFlowInstance = useReactFlow();
   const viewportStorageKey = useMemo(
@@ -310,6 +314,7 @@ function DashboardCanvasInner({
   const showGitBadge = canViewGit && unreadGitNotifications > 0;
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [aiChatOpen, setAiChatOpen] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [zentaiGamenList, setZentaiGamenList] =
     useState<ZentaiGamen[]>(initialZentaiGamen);
@@ -386,6 +391,31 @@ function DashboardCanvasInner({
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get("ai") === "1") {
+      setAiChatOpen(true);
+    }
+  }, [searchParams]);
+
+  const setAiChatOpenWithQuery = useCallback(
+    (open: boolean) => {
+      setAiChatOpen(open);
+
+      const nextSearchParams = new URLSearchParams(searchParams.toString());
+      if (open) {
+        nextSearchParams.set("ai", "1");
+      } else {
+        nextSearchParams.delete("ai");
+      }
+
+      const search = nextSearchParams.toString();
+      router.replace(`${pathname}${search ? `?${search}` : ""}`, {
+        scroll: false,
+      });
+    },
+    [pathname, router, searchParams]
+  );
 
   useEffect(() => {
     supabase
@@ -1625,6 +1655,56 @@ function DashboardCanvasInner({
     [viewportStorageKey]
   );
 
+  const handleCreateAiPanel = useCallback(
+    async ({ name, gridData }: { name: string; gridData: string }) => {
+      if (!canEditCurrentBranch) {
+        throw new Error("このブランチは編集できません");
+      }
+
+      const position = reactFlowInstance.screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      });
+
+      const { data, error } = await supabase
+        .from("zentai_gamen")
+        .insert({
+          project_id: project.id,
+          branch_id: project.active_branch_id,
+          name,
+          grid_data: gridData,
+          position_x: position.x,
+          position_y: position.y,
+          panel_type: "general",
+          motion_type: null,
+          motion_data: null,
+        })
+        .select()
+        .single();
+
+      if (error || !data) {
+        throw error ?? new Error("パネルを作成できませんでした");
+      }
+
+      const panel = data as ZentaiGamen;
+      setActionError(null);
+      setZentaiGamenList((current) => [...current, panel]);
+      setNodes((current) => [...current, buildNodes([panel], connectionList)[0]]);
+
+      return panel;
+    },
+    [
+      buildNodes,
+      canEditCurrentBranch,
+      connectionList,
+      project.active_branch_id,
+      project.id,
+      reactFlowInstance,
+      setNodes,
+      supabase,
+    ]
+  );
+
   return (
     <div className="h-full w-full flex">
       <div className="flex-1 h-full relative">
@@ -1649,6 +1729,21 @@ function DashboardCanvasInner({
           )}
         </button>
 
+        <button
+          type="button"
+          onClick={() => {
+            setContextMenu(null);
+            setNodeMenu(null);
+            setEdgeMenu(null);
+            setAiChatOpenWithQuery(true);
+          }}
+          className="absolute right-4 top-4 z-30 flex h-10 w-10 items-center justify-center rounded-lg border border-card-border bg-card text-foreground shadow-sm transition-colors hover:border-accent/50"
+          aria-label="AI生成"
+          title="AI生成"
+        >
+          <MessageCircle size={19} />
+        </button>
+
         <ProjectBranchSwitcher
           projectId={project.id}
           branches={branches}
@@ -1670,7 +1765,7 @@ function DashboardCanvasInner({
         )}
 
         {actionError && (
-          <div className="absolute top-4 right-4 z-30 max-w-sm rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger shadow-sm">
+          <div className="absolute top-16 right-4 z-30 max-w-sm rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger shadow-sm">
             {actionError}
           </div>
         )}
@@ -1857,6 +1952,18 @@ function DashboardCanvasInner({
           showGitBadge={showGitBadge}
           showGit={canViewGit}
         />
+
+        {aiChatOpen && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 px-4 backdrop-blur-sm">
+            <TextToPanelChat
+              project={project}
+              currentBranch={currentBranch}
+              canEditCurrentBranch={canEditCurrentBranch}
+              onClose={() => setAiChatOpenWithQuery(false)}
+              onCreatePanel={handleCreateAiPanel}
+            />
+          </div>
+        )}
       </div>
 
       {playbackData && (
