@@ -6,9 +6,18 @@ import { canEditBranch } from "@/lib/server/pseudoGit";
 import { createClient } from "@/lib/supabase/server";
 import { normalizePanelDsl, type PanelDsl } from "@/lib/textToPanel/types";
 
+interface PanelMessageResult {
+  dsl: PanelDsl;
+  model: string;
+  usage?: unknown;
+  warnings: string[];
+  createdAt: string;
+}
+
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  panelResult?: PanelMessageResult;
 }
 
 interface AnthropicTextBlock {
@@ -133,6 +142,65 @@ function normalizeMessages(value: unknown): ChatMessage[] {
   return compacted;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function coercePanelResult(value: unknown): PanelMessageResult | null {
+  if (!isRecord(value) || !("dsl" in value)) return null;
+
+  const { dsl, warnings } = normalizePanelDsl(value.dsl);
+  const storedWarnings = coerceStoredWarnings(value.warnings);
+  const createdAt =
+    typeof value.createdAt === "string" && value.createdAt
+      ? value.createdAt
+      : new Date().toISOString();
+
+  return {
+    dsl,
+    model: typeof value.model === "string" ? value.model : "",
+    usage: value.usage,
+    warnings: Array.from(new Set([...storedWarnings, ...warnings])),
+    createdAt,
+  };
+}
+
+function normalizeDisplayMessages(value: unknown): ChatMessage[] {
+  if (!Array.isArray(value)) {
+    throw new HttpError(400, "messages が不正です");
+  }
+
+  const messages = value.flatMap((item) => {
+    if (!isRecord(item) || !("role" in item) || !("content" in item)) {
+      return [];
+    }
+
+    const role =
+      item.role === "assistant" ? "assistant" : item.role === "user" ? "user" : null;
+    if (!role) return [];
+
+    const content = typeof item.content === "string" ? item.content.trim() : "";
+    if (!content) return [];
+
+    const message: ChatMessage = {
+      role,
+      content: content.slice(0, 4000),
+    };
+    const panelResult = coercePanelResult(item.panelResult);
+    if (role === "assistant" && panelResult) {
+      message.panelResult = panelResult;
+    }
+
+    return [message];
+  });
+
+  if (!messages.some((message) => message.role === "user")) {
+    throw new HttpError(400, "ユーザー入力がありません");
+  }
+
+  return messages.slice(-32);
+}
+
 function coerceStoredMessages(value: unknown): ChatMessage[] {
   if (!Array.isArray(value)) return [];
 
@@ -155,7 +223,13 @@ function coerceStoredMessages(value: unknown): ChatMessage[] {
     const content = typeof item.content === "string" ? item.content.trim() : "";
     if (!content) return [];
 
-    return [{ role, content } satisfies ChatMessage];
+    const message: ChatMessage = { role, content };
+    const panelResult = coercePanelResult(item.panelResult);
+    if (role === "assistant" && panelResult) {
+      message.panelResult = panelResult;
+    }
+
+    return [message];
   });
 }
 
@@ -193,17 +267,32 @@ function buildSessionResponse(row: TextToPanelSessionRow | null): {
   }
 
   const { dsl, warnings } = normalizePanelDsl(row.last_dsl);
+  const lastResult = {
+    dsl,
+    model: row.last_model ?? "",
+    usage: row.last_usage ?? undefined,
+    warnings: Array.from(
+      new Set([...coerceStoredWarnings(row.last_warnings), ...warnings])
+    ),
+    createdAt: row.updated_at,
+  };
+  const lastAssistantIndex = messages.findLastIndex(
+    (message) => message.role === "assistant"
+  );
+  const hydratedMessages = [...messages];
+  if (
+    lastAssistantIndex >= 0 &&
+    !hydratedMessages[lastAssistantIndex].panelResult
+  ) {
+    hydratedMessages[lastAssistantIndex] = {
+      ...hydratedMessages[lastAssistantIndex],
+      panelResult: lastResult,
+    };
+  }
+
   return {
-    messages,
-    lastResult: {
-      dsl,
-      model: row.last_model ?? "",
-      usage: row.last_usage ?? undefined,
-      warnings: Array.from(
-        new Set([...coerceStoredWarnings(row.last_warnings), ...warnings])
-      ),
-      createdAt: row.updated_at,
-    },
+    messages: hydratedMessages,
+    lastResult,
   };
 }
 
@@ -316,6 +405,7 @@ export async function POST(
     }
 
     const { messages: rawMessages } = await request.json();
+    const displayMessages = normalizeDisplayMessages(rawMessages);
     const messages = normalizeMessages(rawMessages);
     const model = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-20250514";
 
@@ -380,14 +470,22 @@ export async function POST(
     }
 
     const { dsl, warnings } = normalizePanelDsl(rawDsl);
+    const savedModel = result.model ?? model;
+    const panelResult: PanelMessageResult = {
+      dsl,
+      model: savedModel,
+      usage: result.usage,
+      warnings,
+      createdAt: new Date().toISOString(),
+    };
     const savedMessages: ChatMessage[] = [
-      ...messages,
+      ...displayMessages,
       {
         role: "assistant",
         content: dsl.assistantMessage,
+        panelResult,
       },
     ];
-    const savedModel = result.model ?? model;
 
     const { data: savedSession, error: saveError } = await supabase
       .from("text_to_panel_sessions")
