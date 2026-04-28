@@ -1,13 +1,16 @@
 import {
   COLOR_MAP,
+  UNDEFINED_COLOR,
   type ColorIndex,
   type GridData,
 } from "@/lib/grid/types";
 import type { PanelDsl, PanelDslElement } from "./types";
 
 const RENDER_SCALE = 12;
+const PANEL_COLOR_INDEXES = [0, 1, 2, 3, 4] as const;
+type PanelColorIndex = (typeof PANEL_COLOR_INDEXES)[number];
 
-const PALETTE_RGB: Record<ColorIndex, [number, number, number]> = {
+const PALETTE_RGB: Record<PanelColorIndex, [number, number, number]> = {
   0: [255, 255, 255],
   1: [255, 215, 0],
   2: [255, 0, 0],
@@ -15,15 +18,16 @@ const PALETTE_RGB: Record<ColorIndex, [number, number, number]> = {
   4: [0, 0, 255],
 };
 
-function nearestColorIndex(r: number, g: number, b: number): ColorIndex {
-  let best: ColorIndex = 0;
+function nearestColorIndex(r: number, g: number, b: number): PanelColorIndex {
+  let best: PanelColorIndex = 0;
   let bestDistance = Infinity;
 
-  for (const [key, [cr, cg, cb]] of Object.entries(PALETTE_RGB)) {
+  for (const key of PANEL_COLOR_INDEXES) {
+    const [cr, cg, cb] = PALETTE_RGB[key];
     const distance = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
     if (distance < bestDistance) {
       bestDistance = distance;
-      best = Number(key) as ColorIndex;
+      best = key;
     }
   }
 
@@ -157,7 +161,8 @@ export function renderPanelDslToGrid(
         }
       }
 
-      let bestColor = dsl.background;
+      let bestColor: ColorIndex =
+        dsl.background === UNDEFINED_COLOR ? 0 : dsl.background;
       let bestCount = -1;
       counts.forEach((count, colorIndex) => {
         if (count > bestCount) {
