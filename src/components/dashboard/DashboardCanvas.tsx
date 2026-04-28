@@ -222,6 +222,16 @@ function buildKeepRangeEdgeKeys(path: string[] | null): Set<string> {
   return keys;
 }
 
+function isReactFlowItemEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+
+  return Boolean(
+    target.closest(
+      ".react-flow__node, .react-flow__edge, .react-flow__handle, .react-flow__controls"
+    )
+  );
+}
+
 function DashboardCanvasInner({
   project,
   branches,
@@ -888,6 +898,10 @@ function DashboardCanvasInner({
 
   const onPanePointerDown = useCallback(
     (event: React.PointerEvent) => {
+      if (isReactFlowItemEventTarget(event.target)) {
+        return;
+      }
+
       if (multiSelectMode) {
         setMultiSelectMode(false);
         setSelectedNodeIds(new Set());
