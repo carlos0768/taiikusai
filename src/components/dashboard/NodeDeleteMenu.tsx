@@ -10,6 +10,7 @@ interface NodeDeleteMenuProps {
   onRename: (newName: string) => void;
   onPlay: () => void;
   onKeep: () => void;
+  onMultiSelect: () => void;
   onClose: () => void;
   canEdit: boolean;
 }
@@ -22,6 +23,7 @@ export default function NodeDeleteMenu({
   onRename,
   onPlay,
   onKeep,
+  onMultiSelect,
   onClose,
   canEdit,
 }: NodeDeleteMenuProps) {
@@ -96,6 +98,12 @@ export default function NodeDeleteMenu({
         className="w-full px-4 py-2.5 text-sm text-accent hover:bg-accent/10 transition-colors text-left"
       >
         ▶ 再生
+      </button>
+      <button
+        onClick={onMultiSelect}
+        className="w-full px-4 py-2.5 text-sm text-foreground hover:bg-accent/10 transition-colors text-left"
+      >
+        複数選択
       </button>
       {canEdit && (
         <button
