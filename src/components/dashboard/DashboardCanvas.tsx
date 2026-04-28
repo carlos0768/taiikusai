@@ -55,6 +55,7 @@ import { resizeGrid } from "@/lib/grid/resize";
 import { DEFAULT_WAVE_MOTION_DATA } from "@/types";
 import CameraCapture from "@/components/scan/CameraCapture";
 import ZentaiGamenNode from "./ZentaiGamenNode";
+import GroupNode, { type GroupNodeData } from "./GroupNode";
 import ConnectionEdge from "./ConnectionEdge";
 import ContextMenu, { type SubMenuItem } from "./ContextMenu";
 import KeepConnectionEditor from "./KeepConnectionEditor";
@@ -63,7 +64,14 @@ import Sidebar from "./Sidebar";
 import PlaybackPanel from "./PlaybackPanel";
 import ProjectBranchSwitcher from "./ProjectBranchSwitcher";
 
-const nodeTypes = { zentaiGamen: ZentaiGamenNode };
+interface CollapsedGroup {
+  id: string;
+  nodeIds: string[];
+  position: { x: number; y: number };
+  name: string;
+}
+
+const nodeTypes = { zentaiGamen: ZentaiGamenNode, groupNode: GroupNode };
 const edgeTypes = { connection: ConnectionEdge };
 const DASHBOARD_VIEWPORT_STORAGE_PREFIX = "taiikusai:dashboardViewport";
 
@@ -319,6 +327,10 @@ function DashboardCanvasInner({
     y: number;
     connectionId: string;
   } | null>(null);
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<CollapsedGroup[]>([]);
+
   const [keepRangeStart, setKeepRangeStart] = useState<{
     nodeId: string;
     nodeName: string;
@@ -474,47 +486,176 @@ function DashboardCanvasInner({
   const handleNodeLongPress = useCallback(
     (nodeId: string, nodeName: string, x: number, y: number) => {
       if (keepRangeStart) return;
+      if (multiSelectMode) return;
       setContextMenu(null);
       setEdgeMenu(null);
       setNodeMenu({ x, y, nodeId, nodeName });
     },
-    [keepRangeStart]
+    [keepRangeStart, multiSelectMode]
   );
+
+  const handleNodeSelect = useCallback((nodeId: string) => {
+    setSelectedNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleGroupExpand = useCallback((groupId: string) => {
+    setCollapsedGroups((prev) => prev.filter((g) => g.id !== groupId));
+  }, []);
+
+  const handleEnterMultiSelect = useCallback(() => {
+    if (!nodeMenu) return;
+    setMultiSelectMode(true);
+    setSelectedNodeIds(new Set([nodeMenu.nodeId]));
+    setNodeMenu(null);
+  }, [nodeMenu]);
+
+  const handleCollapseSelected = useCallback(() => {
+    if (selectedNodeIds.size < 1) return;
+    const ids = Array.from(selectedNodeIds);
+
+    // Compute centroid position from current node positions
+    let sumX = 0;
+    let sumY = 0;
+    let count = 0;
+    ids.forEach((nid) => {
+      const zg = zentaiGamenList.find((item) => item.id === nid);
+      if (zg) {
+        sumX += zg.position_x;
+        sumY += zg.position_y;
+        count += 1;
+      }
+    });
+    const position = count > 0
+      ? { x: sumX / count, y: sumY / count }
+      : { x: 0, y: 0 };
+
+    const firstZg = zentaiGamenList.find((item) => item.id === ids[0]);
+    const name = firstZg
+      ? ids.length > 1
+        ? `${firstZg.name} 他${ids.length - 1}枚`
+        : firstZg.name
+      : `${ids.length}枚のパネル`;
+
+    const groupId = `group-${Date.now()}`;
+    setCollapsedGroups((prev) => [...prev, { id: groupId, nodeIds: ids, position, name }]);
+    setMultiSelectMode(false);
+    setSelectedNodeIds(new Set());
+  }, [selectedNodeIds, zentaiGamenList]);
 
   const buildNodes = useCallback(
     (nextZentaiGamen: ZentaiGamen[], nextConnections: DBConnection[]): Node[] => {
+      const groupedNodeIds = new Set(collapsedGroups.flatMap((g) => g.nodeIds));
+      const nodeIdToGroup = new Map<string, CollapsedGroup>();
+      collapsedGroups.forEach((g) => g.nodeIds.forEach((nid) => nodeIdToGroup.set(nid, g)));
+
       const sourceIds = new Set(nextConnections.map((connection) => connection.source_id));
-      return nextZentaiGamen.map((item) => ({
-        id: item.id,
-        type: "zentaiGamen",
-        position: { x: item.position_x, y: item.position_y },
-        data: {
-          name: item.name,
-          gridData: item.grid_data,
+
+      // Regular (non-grouped) zentai-gamen nodes
+      const regularNodes: Node[] = nextZentaiGamen
+        .filter((item) => !groupedNodeIds.has(item.id))
+        .map((item) => ({
+          id: item.id,
+          type: "zentaiGamen",
+          position: { x: item.position_x, y: item.position_y },
+          data: {
+            name: item.name,
+            gridData: item.grid_data,
+            gridWidth: project.grid_width,
+            gridHeight: project.grid_height,
+            hasOutgoingEdge: sourceIds.has(item.id),
+            isWave: item.panel_type === "motion" && item.motion_type === "wave",
+            isKeepRangeSelected: keepRangePath?.includes(item.id) ?? false,
+            isKeepRangeStart: keepRangeStart?.nodeId === item.id,
+            isMultiSelectMode: multiSelectMode,
+            isSelected: selectedNodeIds.has(item.id),
+            onDoubleClick: handleNodeDoubleClick,
+            onLongPress: handleNodeLongPress,
+            onSelect: handleNodeSelect,
+          },
+        }));
+
+      // Group nodes for collapsed groups
+      const groupNodes: Node[] = collapsedGroups.map((group) => {
+        const firstZg = nextZentaiGamen.find((zg) => group.nodeIds.includes(zg.id));
+        const hasOutgoingEdge = nextConnections.some(
+          (conn) =>
+            group.nodeIds.includes(conn.source_id) &&
+            !group.nodeIds.includes(conn.target_id)
+        );
+        const groupData: GroupNodeData = {
+          name: group.name,
+          nodeCount: group.nodeIds.length,
+          gridData: firstZg?.grid_data ?? "",
           gridWidth: project.grid_width,
           gridHeight: project.grid_height,
-          hasOutgoingEdge: sourceIds.has(item.id),
-          isWave: item.panel_type === "motion" && item.motion_type === "wave",
-          isKeepRangeSelected: keepRangePath?.includes(item.id) ?? false,
-          isKeepRangeStart: keepRangeStart?.nodeId === item.id,
-          onDoubleClick: handleNodeDoubleClick,
-          onLongPress: handleNodeLongPress,
-        },
-      }));
+          hasOutgoingEdge,
+          onExpand: handleGroupExpand,
+        };
+        return {
+          id: group.id,
+          type: "groupNode",
+          position: group.position,
+          data: groupData,
+        };
+      });
+
+      return [...regularNodes, ...groupNodes];
     },
     [
+      collapsedGroups,
       handleNodeDoubleClick,
       handleNodeLongPress,
+      handleNodeSelect,
+      handleGroupExpand,
       keepRangePath,
       keepRangeStart,
+      multiSelectMode,
+      selectedNodeIds,
       project.grid_height,
       project.grid_width,
     ]
   );
 
-  const buildEdges = useCallback((nextConnections: DBConnection[]): Edge[] => {
-    return buildConnectionEdges(nextConnections);
-  }, []);
+  const buildEdges = useCallback(
+    (nextConnections: DBConnection[]): Edge[] => {
+      if (collapsedGroups.length === 0) {
+        return buildConnectionEdges(nextConnections);
+      }
+
+      const nodeIdToGroup = new Map<string, CollapsedGroup>();
+      collapsedGroups.forEach((g) => g.nodeIds.forEach((nid) => nodeIdToGroup.set(nid, g)));
+
+      const getVirtualId = (realId: string) => nodeIdToGroup.get(realId)?.id ?? realId;
+      const edgeMap = new Map<string, Edge>();
+
+      nextConnections.forEach((conn) => {
+        const srcId = getVirtualId(conn.source_id);
+        const tgtId = getVirtualId(conn.target_id);
+        if (srcId === tgtId) return; // intra-group connection — hide it
+        const key = `${srcId}:${tgtId}`;
+        if (edgeMap.has(key)) return; // deduplicate parallel virtual edges
+        edgeMap.set(key, {
+          id: `${conn.id}-v`,
+          source: srcId,
+          target: tgtId,
+          type: "connection",
+          markerEnd: undefined,
+          data: {},
+        });
+      });
+
+      return Array.from(edgeMap.values());
+    },
+    [collapsedGroups]
+  );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(
     buildNodes(initialZentaiGamen, initialConnections)
@@ -539,29 +680,52 @@ function DashboardCanvasInner({
   ]);
 
   useEffect(() => {
-    const selectedIds = new Set(
+    const selectedRangeIds = new Set(
       keepRangePath ?? (keepRangeStart ? [keepRangeStart.nodeId] : [])
     );
     const startId = keepRangeStart?.nodeId ?? null;
 
     setNodes((existingNodes) =>
-      existingNodes.map((node) => ({
-        ...node,
-        data: {
-          ...node.data,
-          isKeepRangeSelected: selectedIds.has(node.id),
-          isKeepRangeStart: node.id === startId,
-          onDoubleClick: handleNodeDoubleClick,
-          onLongPress: handleNodeLongPress,
-        },
-      }))
+      existingNodes.map((node) => {
+        if (node.type === "groupNode") return node;
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            isKeepRangeSelected: selectedRangeIds.has(node.id),
+            isKeepRangeStart: node.id === startId,
+            isMultiSelectMode: multiSelectMode,
+            isSelected: selectedNodeIds.has(node.id),
+            onDoubleClick: handleNodeDoubleClick,
+            onLongPress: handleNodeLongPress,
+            onSelect: handleNodeSelect,
+          },
+        };
+      })
     );
   }, [
     handleNodeDoubleClick,
     handleNodeLongPress,
+    handleNodeSelect,
     keepRangePath,
     keepRangeStart,
+    multiSelectMode,
+    selectedNodeIds,
     setNodes,
+  ]);
+
+  // Rebuild nodes/edges whenever collapsed groups change
+  useEffect(() => {
+    setNodes(buildNodes(zentaiGamenList, connectionList));
+    setEdges(buildEdges(connectionList));
+  }, [
+    collapsedGroups,
+    buildNodes,
+    buildEdges,
+    zentaiGamenList,
+    connectionList,
+    setNodes,
+    setEdges,
   ]);
 
   const onConnect = useCallback(
@@ -689,6 +853,14 @@ function DashboardCanvasInner({
 
   const onNodeDragStop = useCallback(
     async (_event: unknown, node: Node) => {
+      // Group nodes are ephemeral — just update local state
+      if (node.type === "groupNode") {
+        setCollapsedGroups((prev) =>
+          prev.map((g) => (g.id === node.id ? { ...g, position: node.position } : g))
+        );
+        return;
+      }
+
       if (!canEditCurrentBranch) return;
 
       const { error } = await supabase
@@ -716,6 +888,11 @@ function DashboardCanvasInner({
 
   const onPanePointerDown = useCallback(
     (event: React.PointerEvent) => {
+      if (multiSelectMode) {
+        setMultiSelectMode(false);
+        setSelectedNodeIds(new Set());
+        return;
+      }
       if (!canEditCurrentBranch) return;
       if (keepRangeStart) return;
 
@@ -736,7 +913,7 @@ function DashboardCanvasInner({
         });
       }, 500);
     },
-    [canEditCurrentBranch, keepRangeStart, reactFlowInstance]
+    [canEditCurrentBranch, keepRangeStart, multiSelectMode, reactFlowInstance]
   );
 
   const onPanePointerMove = useCallback((event: React.PointerEvent) => {
@@ -1401,6 +1578,39 @@ function DashboardCanvasInner({
           </div>
         )}
 
+        {multiSelectMode && (
+          <div className="absolute left-16 right-4 top-36 z-30 rounded-xl border border-accent/50 bg-card/95 px-4 py-3 shadow-xl backdrop-blur-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  複数選択中: {selectedNodeIds.size}枚選択済み
+                </p>
+                <p className="text-xs text-muted">
+                  パネルをタップして選択・解除できます
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCollapseSelected}
+                  disabled={selectedNodeIds.size < 1}
+                  className="rounded-lg border border-accent/50 bg-accent/10 px-3 py-2 text-sm text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  折りたたむ
+                </button>
+                <button
+                  onClick={() => {
+                    setMultiSelectMode(false);
+                    setSelectedNodeIds(new Set());
+                  }}
+                  className="rounded-lg border border-card-border px-3 py-2 text-sm text-muted hover:text-foreground"
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div
           className="h-full w-full"
           onPointerDown={onPanePointerDown}
@@ -1419,7 +1629,7 @@ function DashboardCanvasInner({
             onNodeContextMenu={onNodeContextMenu}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            nodesDraggable={canEditCurrentBranch}
+            nodesDraggable={canEditCurrentBranch || collapsedGroups.length > 0}
             nodesConnectable={canEditCurrentBranch && !keepRangeStart}
             deleteKeyCode={null}
             minZoom={0.1}
@@ -1465,6 +1675,7 @@ function DashboardCanvasInner({
             onRename={handleRenameNode}
             onPlay={handlePlayFromNode}
             onKeep={handleStartKeepRange}
+            onMultiSelect={handleEnterMultiSelect}
             onClose={() => setNodeMenu(null)}
             canEdit={canEditCurrentBranch}
           />
