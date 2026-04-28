@@ -1,7 +1,20 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import TextToPanelPage from "@/components/text-to-panel/TextToPanelPage";
+export default async function Page({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ projectId: string }>;
+  searchParams: Promise<{ branch?: string }>;
+}) {
+  const { projectId } = await params;
+  const { branch } = await searchParams;
+  const nextSearchParams = new URLSearchParams();
 
-export default function Page() {
-  return <TextToPanelPage />;
+  if (branch) {
+    nextSearchParams.set("branch", branch);
+  }
+  nextSearchParams.set("ai", "1");
+
+  redirect(`/project/${projectId}?${nextSearchParams.toString()}`);
 }
