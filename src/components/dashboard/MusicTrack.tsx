@@ -6,6 +6,9 @@ import {
   deleteProjectAudio,
   uploadProjectAudio,
 } from "@/lib/api/projectAudio";
+import MusicWaveform from "./MusicWaveform";
+
+const WAVEFORM_HEIGHT = 56;
 
 // YouTube IFrame API types
 declare global {
@@ -93,6 +96,13 @@ export default function MusicTrack({
   const [duration, setDuration] = useState(initialMusic?.duration ?? 0);
   const [currentTime, setCurrentTime] = useState(0);
   const [offsetSec, setOffsetSec] = useState(initialMusic?.offset_sec ?? 0);
+  const [bpm, setBpm] = useState<number | null>(initialMusic?.bpm ?? null);
+  const [bpmOffsetSec, setBpmOffsetSec] = useState<number>(
+    initialMusic?.bpm_offset_sec ?? 0
+  );
+  const [bpmInputValue, setBpmInputValue] = useState<string>(
+    initialMusic?.bpm ? String(initialMusic.bpm) : ""
+  );
   const [showInput, setShowInput] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -236,6 +246,8 @@ export default function MusicTrack({
           end_sec: endTime,
           offset_sec: offsetSec,
           duration,
+          bpm: bpm ?? null,
+          bpm_offset_sec: bpmOffsetSec,
         };
       } else if (sourceType === "file" && fileUrl) {
         data = {
@@ -247,6 +259,8 @@ export default function MusicTrack({
           end_sec: endTime,
           offset_sec: offsetSec,
           duration,
+          bpm: bpm ?? null,
+          bpm_offset_sec: bpmOffsetSec,
         };
       }
       void Promise.resolve(onMusicChangeRef.current(data)).catch(() => {
@@ -266,6 +280,8 @@ export default function MusicTrack({
     endTime,
     offsetSec,
     duration,
+    bpm,
+    bpmOffsetSec,
   ]);
 
   // Refs to keep trim values accessible without re-triggering the effect
@@ -373,6 +389,9 @@ export default function MusicTrack({
     setDuration(0);
     setCurrentTime(0);
     setOffsetSec(0);
+    setBpm(null);
+    setBpmOffsetSec(0);
+    setBpmInputValue("");
     setUploadError(null);
   }, [url]);
 
@@ -433,6 +452,9 @@ export default function MusicTrack({
         setDuration(0);
         setCurrentTime(0);
         setOffsetSec(0);
+        setBpm(null);
+        setBpmOffsetSec(0);
+        setBpmInputValue("");
       } catch (err) {
         console.error(err);
         setUploadError("アップロードに失敗しました");
@@ -468,6 +490,9 @@ export default function MusicTrack({
     setDuration(0);
     setCurrentTime(0);
     setOffsetSec(0);
+    setBpm(null);
+    setBpmOffsetSec(0);
+    setBpmInputValue("");
     setUploadError(null);
   }, []);
 
@@ -541,6 +566,36 @@ export default function MusicTrack({
   const handleTrimPointerUp = useCallback(() => {
     draggingRef.current = null;
   }, []);
+
+  const handleBpmChange = useCallback((value: string) => {
+    setBpmInputValue(value);
+    if (value.trim() === "") {
+      setBpm(null);
+      return;
+    }
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    if (n <= 0) {
+      setBpm(null);
+      return;
+    }
+    setBpm(Math.min(400, Math.max(20, n)));
+  }, []);
+
+  const nudgeBpmOffset = useCallback(
+    (deltaSec: number) => {
+      if (!bpm || bpm <= 0) return;
+      const beatIntervalSec = 60 / bpm;
+      setBpmOffsetSec((prev) => {
+        let next = prev + deltaSec;
+        // Keep offset within [0, beatIntervalSec) since shifting by a full
+        // beat produces an identical grid.
+        next = ((next % beatIntervalSec) + beatIntervalSec) % beatIntervalSec;
+        return Math.round(next * 1000) / 1000;
+      });
+    },
+    [bpm]
+  );
 
   const barWidth = Math.max(100, duration * pxPerSecond);
 
@@ -625,6 +680,45 @@ export default function MusicTrack({
           {" / "}
           {Math.floor((endTime || duration) / 60)}:{String(Math.floor((endTime || duration) % 60)).padStart(2, "0")}
         </span>
+        <span className="text-[9px] text-muted/70">·</span>
+        <label className="flex items-center gap-1 text-[9px] text-muted">
+          BPM
+          <input
+            type="number"
+            inputMode="decimal"
+            min={20}
+            max={400}
+            step="0.1"
+            value={bpmInputValue}
+            onChange={(e) => handleBpmChange(e.target.value)}
+            placeholder="—"
+            className="w-12 px-1 py-0.5 bg-background border border-card-border rounded text-[10px] text-foreground focus:outline-none focus:border-accent"
+          />
+        </label>
+        {bpm && bpm > 0 && (
+          <span className="flex items-center gap-0.5 text-[9px] text-muted">
+            <span>位相</span>
+            <button
+              type="button"
+              onClick={() => nudgeBpmOffset(-0.01)}
+              className="px-1 hover:text-foreground"
+              aria-label="ビートグリッドを左にずらす"
+            >
+              ◀
+            </button>
+            <span className="tabular-nums w-9 text-center text-foreground/70">
+              {bpmOffsetSec.toFixed(2)}s
+            </span>
+            <button
+              type="button"
+              onClick={() => nudgeBpmOffset(0.01)}
+              className="px-1 hover:text-foreground"
+              aria-label="ビートグリッドを右にずらす"
+            >
+              ▶
+            </button>
+          </span>
+        )}
         <button
           onClick={handleRemove}
           className="text-[9px] text-muted hover:text-danger"
@@ -633,27 +727,42 @@ export default function MusicTrack({
         </button>
       </div>
 
-      {/* Time-proportional bar */}
+      {/* Time-proportional bar with waveform + beat grid */}
       <div
         ref={barRef}
-        className="h-7 bg-card-border/30 rounded relative select-none touch-none"
-        style={{ width: barWidth, marginLeft: 12 + offsetSec * pxPerSecond }}
+        className="bg-black/40 rounded relative select-none touch-none overflow-hidden"
+        style={{
+          width: barWidth,
+          height: WAVEFORM_HEIGHT,
+          marginLeft: 12 + offsetSec * pxPerSecond,
+        }}
         onPointerMove={handleTrimPointerMove}
         onPointerUp={handleTrimPointerUp}
       >
+        {/* Waveform + beat-grid canvas (DJ-software style) */}
+        <MusicWaveform
+          audioUrl={sourceType === "file" ? fileUrl : null}
+          duration={duration}
+          pxPerSecond={pxPerSecond}
+          width={barWidth}
+          height={WAVEFORM_HEIGHT}
+          bpm={bpm}
+          bpmOffsetSec={bpmOffsetSec}
+        />
+
         {/* Dimmed regions outside trim */}
         <div
-          className="absolute top-0 bottom-0 left-0 bg-black/30 rounded-l"
+          className="absolute top-0 bottom-0 left-0 bg-black/55 rounded-l"
           style={{ width: startTime * pxPerSecond }}
         />
         <div
-          className="absolute top-0 bottom-0 right-0 bg-black/30 rounded-r"
+          className="absolute top-0 bottom-0 right-0 bg-black/55 rounded-r"
           style={{ width: (duration - (endTime || duration)) * pxPerSecond }}
         />
 
         {/* Trim region (draggable to move) */}
         <div
-          className="absolute top-0 bottom-0 bg-accent/20 cursor-grab active:cursor-grabbing z-[5]"
+          className="absolute top-0 bottom-0 bg-accent/10 cursor-grab active:cursor-grabbing z-[5]"
           style={{
             left: startTime * pxPerSecond,
             width: ((endTime || duration) - startTime) * pxPerSecond,
@@ -667,7 +776,7 @@ export default function MusicTrack({
           style={{ left: startTime * pxPerSecond - 6 }}
           onPointerDown={(e) => handleTrimPointerDown("start", e)}
         >
-          <div className="w-0.5 h-3.5 bg-accent rounded-full" />
+          <div className="w-0.5 h-7 bg-accent rounded-full" />
         </div>
 
         {/* End handle */}
@@ -676,7 +785,7 @@ export default function MusicTrack({
           style={{ left: (endTime || duration) * pxPerSecond - 6 }}
           onPointerDown={(e) => handleTrimPointerDown("end", e)}
         >
-          <div className="w-0.5 h-3.5 bg-accent rounded-full" />
+          <div className="w-0.5 h-7 bg-accent rounded-full" />
         </div>
 
         {/* Playhead */}
