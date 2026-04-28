@@ -11,6 +11,7 @@ import DashboardCanvas from "@/components/dashboard/DashboardCanvas";
 import type {
   AuthProfile,
   BranchScopedProject,
+  CollapsedPanelGroup,
   Connection,
   GitNotificationSummary,
   ProjectBranch,
@@ -34,6 +35,9 @@ export default function ProjectPage() {
   const [currentBranch, setCurrentBranch] = useState<ProjectBranch | null>(null);
   const [zentaiGamen, setZentaiGamen] = useState<ZentaiGamen[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
+  const [collapsedGroups, setCollapsedGroups] = useState<CollapsedPanelGroup[]>(
+    []
+  );
   const [auth, setAuth] = useState<AuthProfile>(READONLY_AUTH_PROFILE);
   const [unreadGitNotifications, setUnreadGitNotifications] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -42,22 +46,29 @@ export default function ProjectPage() {
     setError(null);
 
     try {
-      const [context, panelsResult, connectionsResult] = await Promise.all([
-        fetchProjectBranchContext(supabase, projectId, requestedBranchId),
-        supabase
-          .from("zentai_gamen")
-          .select("*")
-          .eq("project_id", projectId)
-          .order("created_at", { ascending: true }),
-        supabase
-          .from("connections")
-          .select("*")
-          .eq("project_id", projectId)
-          .order("sort_order", { ascending: true }),
-      ]);
+      const [context, panelsResult, connectionsResult, collapsedGroupsResult] =
+        await Promise.all([
+          fetchProjectBranchContext(supabase, projectId, requestedBranchId),
+          supabase
+            .from("zentai_gamen")
+            .select("*")
+            .eq("project_id", projectId)
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("connections")
+            .select("*")
+            .eq("project_id", projectId)
+            .order("sort_order", { ascending: true }),
+          supabase
+            .from("collapsed_panel_groups")
+            .select("*")
+            .eq("project_id", projectId)
+            .order("created_at", { ascending: true }),
+        ]);
 
       if (panelsResult.error) throw panelsResult.error;
       if (connectionsResult.error) throw connectionsResult.error;
+      if (collapsedGroupsResult.error) throw collapsedGroupsResult.error;
 
       setProject(context.projectView);
       setBranches(context.branches);
@@ -70,6 +81,11 @@ export default function ProjectPage() {
       setConnections(
         ((connectionsResult.data ?? []) as Connection[]).filter(
           (connection) => connection.branch_id === context.currentBranch.id
+        )
+      );
+      setCollapsedGroups(
+        ((collapsedGroupsResult.data ?? []) as CollapsedPanelGroup[]).filter(
+          (group) => group.branch_id === context.currentBranch.id
         )
       );
     } catch (err) {
@@ -123,6 +139,7 @@ export default function ProjectPage() {
       currentBranch={currentBranch}
       initialZentaiGamen={zentaiGamen}
       initialConnections={connections}
+      initialCollapsedGroups={collapsedGroups}
       auth={auth}
       unreadGitNotifications={unreadGitNotifications}
     />

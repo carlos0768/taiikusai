@@ -129,6 +129,18 @@ export interface Connection {
   created_at: string;
 }
 
+export interface CollapsedPanelGroup {
+  id: string;
+  project_id: string;
+  branch_id: string;
+  name: string;
+  node_ids: string[];
+  position_x: number;
+  position_y: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Template {
   id: string;
   owner_id: string;
