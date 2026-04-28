@@ -99,12 +99,14 @@ export default function NodeDeleteMenu({
       >
         ▶ 再生
       </button>
-      <button
-        onClick={onMultiSelect}
-        className="w-full px-4 py-2.5 text-sm text-foreground hover:bg-accent/10 transition-colors text-left"
-      >
-        複数選択
-      </button>
+      {canEdit && (
+        <button
+          onClick={onMultiSelect}
+          className="w-full px-4 py-2.5 text-sm text-foreground hover:bg-accent/10 transition-colors text-left"
+        >
+          複数選択
+        </button>
+      )}
       {canEdit && (
         <button
           onClick={onKeep}
