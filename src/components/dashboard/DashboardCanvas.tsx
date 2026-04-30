@@ -1422,6 +1422,51 @@ function DashboardCanvasInner({
     [canEditCurrentBranch, nodeMenu, project.active_branch_id, setNodes, supabase]
   );
 
+  const handleDuplicateNode = useCallback(async () => {
+    if (!nodeMenu || !canEditCurrentBranch) return;
+
+    const original = zentaiGamenList.find((item) => item.id === nodeMenu.nodeId);
+    if (!original) return;
+
+    const { data, error } = await supabase
+      .from("zentai_gamen")
+      .insert({
+        project_id: project.id,
+        branch_id: project.active_branch_id,
+        name: `${original.name} (コピー)`,
+        grid_data: original.grid_data,
+        position_x: original.position_x + 50,
+        position_y: original.position_y + 50,
+        panel_type: original.panel_type,
+        motion_type: original.motion_type,
+        motion_data: original.motion_data,
+        panel_duration_override_ms: original.panel_duration_override_ms,
+      })
+      .select()
+      .single();
+
+    setNodeMenu(null);
+    if (error || !data) {
+      setActionError(error?.message ?? "複製できませんでした");
+      return;
+    }
+
+    const panel = data as ZentaiGamen;
+    setActionError(null);
+    setZentaiGamenList((current) => [...current, panel]);
+    setNodes((current) => [...current, buildNodes([panel], connectionList)[0]]);
+  }, [
+    buildNodes,
+    canEditCurrentBranch,
+    connectionList,
+    nodeMenu,
+    project.active_branch_id,
+    project.id,
+    setNodes,
+    supabase,
+    zentaiGamenList,
+  ]);
+
   const handleStartKeepRange = useCallback(() => {
     if (!nodeMenu || !canEditCurrentBranch) return;
 
@@ -1898,6 +1943,7 @@ function DashboardCanvasInner({
             nodeName={nodeMenu.nodeName}
             onDelete={handleDeleteNode}
             onRename={handleRenameNode}
+            onDuplicate={() => void handleDuplicateNode()}
             onPlay={handlePlayFromNode}
             onKeep={handleStartKeepRange}
             onMultiSelect={handleEnterMultiSelect}
