@@ -17,6 +17,7 @@ import {
   getTimingPersistenceErrorMessage,
   msToSecondsString,
 } from "@/lib/playback/timing";
+import { frameStartMs } from "@/lib/playback/resolvePosition";
 import {
   buildSegments,
   type PlaybackFrameItem,
@@ -338,7 +339,7 @@ export default function PlaybackPanel({
   const supabase = useMemo(() => createClient(), []);
   const mainCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const frameRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const timelineViewportRef = useRef<HTMLDivElement>(null);
   const musicHandleRef = useRef<MusicTrackHandle | null>(null);
   const [panelSize, setPanelSize] = useState<PanelSize>("side");
   const [fixedSize, setFixedSize] = useState<{ w: number; h: number } | null>(
@@ -352,9 +353,10 @@ export default function PlaybackPanel({
   const [pxPerSecond, setPxPerSecond] = useState(() =>
     normalizeTimelinePxPerSecond(initialMusic?.timeline_px_per_second)
   );
-  // 波形キャレット表示用 (再生中の親 rAF で更新)。state 経由でもズレない
-  // — 真実は MusicTrackHandle.getCurrentTimeSec() であり、これは表示用の鏡。
+  // 音楽の現在時刻表示用。真実は MusicTrackHandle.getCurrentTimeSec()。
   const [musicCurrentSec, setMusicCurrentSec] = useState(0);
+  const [timelineElapsedMs, setTimelineElapsedMs] = useState(0);
+  const [timelineViewportWidth, setTimelineViewportWidth] = useState(0);
 
   useEffect(() => {
     setFrameItems(timeline.frameItems);
@@ -366,6 +368,30 @@ export default function PlaybackPanel({
       normalizeTimelinePxPerSecond(initialMusic?.timeline_px_per_second)
     );
   }, [initialMusic]);
+
+  useEffect(() => {
+    const viewport = timelineViewportRef.current;
+    if (!viewport) return;
+
+    let frame: number | null = null;
+    const updateWidth = () => {
+      setTimelineViewportWidth(viewport.getBoundingClientRect().width);
+      frame = null;
+    };
+    const scheduleUpdate = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(updateWidth);
+    };
+
+    scheduleUpdate();
+    const resizeObserver = new ResizeObserver(scheduleUpdate);
+    resizeObserver.observe(viewport);
+
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+    };
+  }, []);
 
   // frame/gap の override 変更で長さが変わるので timeline (segments含む) を派生
   const playbackTimeline = useMemo<PlaybackTimeline>(() => {
@@ -417,6 +443,7 @@ export default function PlaybackPanel({
     // 先に clock を頭にリセットしておくと、音楽 seek 計算も 0 起点でできる。
     if (clock.now() >= playbackTimeline.totalMs) {
       clock.reset();
+      setTimelineElapsedMs(0);
     }
     const m = musicHandleRef.current;
     if (m?.isLoaded()) {
@@ -424,12 +451,14 @@ export default function PlaybackPanel({
       void m.play();
     }
     play();
+    setTimelineElapsedMs(clock.now());
   }, [clock, play, playbackTimeline.totalMs]);
 
   const handlePause = useCallback(() => {
     musicHandleRef.current?.pause();
     pause();
-  }, [pause]);
+    setTimelineElapsedMs(clock.now());
+  }, [pause, clock]);
 
   const handleStop = useCallback(() => {
     const m = musicHandleRef.current;
@@ -439,19 +468,28 @@ export default function PlaybackPanel({
     }
     stop();
     setMusicCurrentSec(m?.getStartSec() ?? 0);
+    setTimelineElapsedMs(0);
   }, [stop]);
 
   const handleGoTo = useCallback(
     (idx: number) => {
-      // usePlayback の goTo が clock を seek する。その後 clock.now() で最新位置が読める。
-      goTo(idx);
+      if (playbackTimeline.frameItems.length === 0) return;
+      const clamped = Math.max(
+        0,
+        Math.min(idx, playbackTimeline.frameItems.length - 1)
+      );
+      const targetMs = frameStartMs(playbackTimeline, clamped);
+      // 固定キャレットの座標と音楽 seek 先を同じフレーム開始時刻にそろえる。
+      goTo(clamped);
       const m = musicHandleRef.current;
       if (m?.isLoaded()) {
-        m.seek(m.getStartSec() + clock.now() / 1000);
-        if (!isPlaying) setMusicCurrentSec(m.getCurrentTimeSec());
+        const nextMusicSec = m.getStartSec() + targetMs / 1000;
+        m.seek(nextMusicSec);
+        setMusicCurrentSec(nextMusicSec);
       }
+      setTimelineElapsedMs(targetMs);
     },
-    [goTo, clock, isPlaying]
+    [goTo, playbackTimeline]
   );
 
   const handleNext = useCallback(() => {
@@ -468,6 +506,7 @@ export default function PlaybackPanel({
     if (!isPlaying) return;
     let raf: number;
     const tick = () => {
+      setTimelineElapsedMs(clock.now());
       const m = musicHandleRef.current;
       if (m?.isLoaded()) {
         const cur = m.getCurrentTimeSec();
@@ -482,7 +521,7 @@ export default function PlaybackPanel({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [isPlaying, handlePause]);
+  }, [isPlaying, handlePause, clock]);
 
   const persistFrameDuration = useCallback(
     async (index: number, durationMs: number | null) => {
@@ -584,21 +623,16 @@ export default function PlaybackPanel({
     [branchId, gapItems, projectId, savingKey, supabase, timeline.defaultIntervalMs]
   );
 
-  useEffect(() => {
-    const el = frameRefs.current[currentIndex];
-    if (el) {
-      el.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-        inline: "center",
-      });
-    }
-  }, [currentIndex]);
-
   const frames = useMemo(
     () => playbackTimeline.frameItems.map((item) => item.frame),
     [playbackTimeline]
   );
+
+  const timelineCenterPx = timelineViewportWidth / 2;
+  const timelineCurrentSec =
+    Math.min(timelineElapsedMs, playbackTimeline.totalMs) / 1000;
+  const timelineElapsedPx = timelineCurrentSec * pxPerSecond;
+  const panelTimelineTranslateX = timelineCenterPx - 12 - timelineElapsedPx;
 
   useEffect(() => {
     if (fixedSize) return;
@@ -761,62 +795,82 @@ export default function PlaybackPanel({
         <canvas ref={mainCanvasRef} style={{ imageRendering: "pixelated" }} />
       </div>
 
-      <div className="overflow-x-auto border-t border-card-border shrink-0 py-2">
+      <div className="overflow-hidden border-t border-card-border shrink-0 py-2">
         <div className="px-3 pb-2">
           <p className="text-[10px] text-muted">
             個別設定していない表示時間と折り時間は、プロジェクト設定の基本時間に追従します。
           </p>
         </div>
 
-        <MusicTrack
-          ref={musicHandleRef}
-          pxPerSecond={pxPerSecond}
-          onPxPerSecondChange={setPxPerSecond}
-          projectId={projectId}
-          initialMusic={initialMusic}
-          onMusicChange={onMusicChange}
-          currentTimeSec={musicCurrentSec}
-          isPlaying={isPlaying}
-        />
+        <div ref={timelineViewportRef} className="relative overflow-hidden">
+          <MusicTrack
+            ref={musicHandleRef}
+            pxPerSecond={pxPerSecond}
+            onPxPerSecondChange={setPxPerSecond}
+            projectId={projectId}
+            initialMusic={initialMusic}
+            onMusicChange={onMusicChange}
+            currentTimeSec={musicCurrentSec}
+            timelineCurrentSec={timelineCurrentSec}
+            isPlaying={isPlaying}
+            centerOffsetPx={timelineCenterPx}
+          />
 
-        <div className="flex items-end gap-0 px-3 pb-1">
-          {frameItems.map((frameItem, idx) => (
-            <div key={frameItem.zentaiGamenId} className="flex items-center shrink-0">
-              <FrameThumb
-                grid={frameThumbnailGrid(frameItem.frame)}
-                isActive={currentIndex === idx && !isWhiteFrame}
-                durationMs={frameItem.durationMs}
-                widthPx={(frameItem.timelineWidthMs / 1000) * pxPerSecond}
-                onTap={() => {
-                  handlePause();
-                  handleGoTo(idx);
-                }}
-                onDurationChange={(ms) => persistFrameDuration(idx, ms)}
-                onDurationReset={() => persistFrameDuration(idx, null)}
-                thumbRef={(el) => {
-                  frameRefs.current[idx] = el;
-                }}
-                isWave={frameItem.frame.kind === "wave"}
-                isKeep={frameItem.frame.kind === "keep"}
-                isOverride={frameItem.isDurationOverride}
-                isSaving={savingKey === `frame:${frameItem.zentaiGamenId}`}
-              />
-              {idx < gapItems.length && (
-                <GapButton
-                  intervalMs={gapItems[idx].intervalMs}
-                  widthPx={(gapItems[idx].intervalMs / 1000) * pxPerSecond}
-                  isActive={isWhiteFrame && currentIndex === idx}
-                  isOverride={gapItems[idx].isIntervalOverride}
-                  isSaving={
-                    gapItems[idx].connectionId !== null &&
-                    savingKey === `gap:${gapItems[idx].connectionId}`
-                  }
-                  onChange={(ms) => persistGapDuration(idx, ms)}
-                  onReset={() => persistGapDuration(idx, null)}
+          <div
+            className="flex items-end gap-0 px-3 pb-1"
+            style={{
+              transform: `translate3d(${panelTimelineTranslateX}px, 0, 0)`,
+              willChange: "transform",
+            }}
+          >
+            {frameItems.map((frameItem, idx) => (
+              <div
+                key={frameItem.zentaiGamenId}
+                className="flex items-center shrink-0"
+              >
+                <FrameThumb
+                  grid={frameThumbnailGrid(frameItem.frame)}
+                  isActive={currentIndex === idx && !isWhiteFrame}
+                  durationMs={frameItem.durationMs}
+                  widthPx={(frameItem.timelineWidthMs / 1000) * pxPerSecond}
+                  onTap={() => {
+                    handlePause();
+                    handleGoTo(idx);
+                  }}
+                  onDurationChange={(ms) => persistFrameDuration(idx, ms)}
+                  onDurationReset={() => persistFrameDuration(idx, null)}
+                  isWave={frameItem.frame.kind === "wave"}
+                  isKeep={frameItem.frame.kind === "keep"}
+                  isOverride={frameItem.isDurationOverride}
+                  isSaving={savingKey === `frame:${frameItem.zentaiGamenId}`}
                 />
-              )}
-            </div>
-          ))}
+                {idx < gapItems.length && (
+                  <GapButton
+                    intervalMs={gapItems[idx].intervalMs}
+                    widthPx={(gapItems[idx].intervalMs / 1000) * pxPerSecond}
+                    isActive={isWhiteFrame && currentIndex === idx}
+                    isOverride={gapItems[idx].isIntervalOverride}
+                    isSaving={
+                      gapItems[idx].connectionId !== null &&
+                      savingKey === `gap:${gapItems[idx].connectionId}`
+                    }
+                    onChange={(ms) => persistGapDuration(idx, ms)}
+                    onReset={() => persistGapDuration(idx, null)}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div
+            className="pointer-events-none absolute top-0 bottom-0 z-30"
+            style={{ left: timelineCenterPx || "50%" }}
+            aria-hidden
+          >
+            <div className="absolute top-0 bottom-0 w-0.5 -translate-x-1/2 bg-white shadow-[0_0_10px_rgba(255,255,255,0.75)]" />
+            <div className="absolute top-0 h-2 w-2 -translate-x-1/2 border-l-4 border-r-4 border-t-4 border-l-transparent border-r-transparent border-t-accent" />
+            <div className="absolute bottom-0 h-2 w-2 -translate-x-1/2 border-b-4 border-l-4 border-r-4 border-b-accent border-l-transparent border-r-transparent" />
+          </div>
         </div>
       </div>
 

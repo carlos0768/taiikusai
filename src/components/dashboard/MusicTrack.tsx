@@ -80,9 +80,12 @@ interface MusicTrackProps {
   onMusicChange: (data: MusicData | null) => Promise<void> | void;
   /** 親から流れる現在の再生位置 (秒)。波形キャレット・残時間表示に使う。 */
   currentTimeSec: number;
+  /** 親タイムラインの現在位置 (秒)。固定キャレット下へ音源帯を流す基準。 */
+  timelineCurrentSec: number;
   /** 親が再生中かどうか。trim ハンドル操作の無効化に使う。 */
   isPlaying: boolean;
   onPxPerSecondChange: (value: number) => void;
+  centerOffsetPx: number;
 }
 
 function extractVideoId(url: string): string | null {
@@ -106,8 +109,10 @@ function MusicTrack(
     initialMusic,
     onMusicChange,
     currentTimeSec,
+    timelineCurrentSec,
     isPlaying,
     onPxPerSecondChange,
+    centerOffsetPx,
   }: MusicTrackProps,
   ref: React.ForwardedRef<MusicTrackHandle>
 ) {
@@ -620,7 +625,9 @@ function MusicTrack(
   );
 
   const barWidth = Math.max(100, duration * pxPerSecond);
-  const playheadSec = Math.max(0, currentTimeSec);
+  const barOriginPx = 12 + (offsetSec - startTime) * pxPerSecond;
+  const trackTranslateX =
+    centerOffsetPx - 12 - timelineCurrentSec * pxPerSecond;
   const displayCurrentSec = Math.max(0, currentTimeSec);
 
   if (!sourceType) {
@@ -776,7 +783,9 @@ function MusicTrack(
         style={{
           width: barWidth,
           height: WAVEFORM_HEIGHT,
-          marginLeft: 12 + offsetSec * pxPerSecond,
+          marginLeft: barOriginPx,
+          transform: `translate3d(${trackTranslateX}px, 0, 0)`,
+          willChange: "transform",
         }}
         onPointerMove={handleTrimPointerMove}
         onPointerUp={handleTrimPointerUp}
@@ -835,12 +844,6 @@ function MusicTrack(
         >
           <div className="w-0.5 h-7 bg-accent rounded-full" />
         </div>
-
-        {/* Playhead */}
-        <div
-          className="absolute top-0 bottom-0 w-0.5 bg-white z-20 pointer-events-none"
-          style={{ left: playheadSec * pxPerSecond }}
-        />
 
         {/* Time labels */}
         <div className="absolute bottom-0 text-[8px] text-muted/60 leading-none pointer-events-none"
