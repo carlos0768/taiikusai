@@ -39,6 +39,7 @@ export interface MusicData {
   duration: number;
   bpm?: number | null;
   bpm_offset_sec?: number | null;
+  timeline_px_per_second?: number | null;
 }
 
 export interface ProjectBranchSettings {
@@ -129,6 +130,18 @@ export interface Connection {
   interval_override_ms: number | null;
   keep_mask_grid_data: string | null;
   created_at: string;
+}
+
+export interface CollapsedPanelGroup {
+  id: string;
+  project_id: string;
+  branch_id: string;
+  name: string;
+  node_ids: string[];
+  position_x: number;
+  position_y: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Template {

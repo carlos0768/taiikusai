@@ -36,11 +36,28 @@ export interface PlaybackGapItem {
   isIntervalEditable: boolean;
 }
 
+export interface PlaybackSegment {
+  /** kind に応じて frameItems / gapItems のインデックスを指す */
+  index: number;
+  kind: "frame" | "gap";
+  /** 再生開始 (elapsedMs=0) からの累積開始時刻 */
+  startMs: number;
+  /** 区間の終端。次セグメントの startMs と一致する (totalMs まで連続) */
+  endMs: number;
+}
+
 export interface PlaybackTimeline {
   frameItems: PlaybackFrameItem[];
   gapItems: PlaybackGapItem[];
   defaultPanelDurationMs: number;
   defaultIntervalMs: number;
+  /**
+   * frame, gap, frame, gap, ..., frame の順で並ぶ累積タイムライン。
+   * 単一マスタークロックから現在位置を派生させるために使う。
+   */
+  segments: PlaybackSegment[];
+  /** タイムライン全体の長さ (ms)。最終 frame の endMs と一致 */
+  totalMs: number;
 }
 
 export function getPanelDurationMs(
@@ -193,10 +210,48 @@ export function buildPlaybackTimeline(params: {
     });
   });
 
+  const { segments, totalMs } = buildSegments(frameItems, gapItems);
+
   return {
     frameItems,
     gapItems,
     defaultPanelDurationMs,
     defaultIntervalMs,
+    segments,
+    totalMs,
   };
+}
+
+/**
+ * frame/gap の長さから累積セグメントを再構築する。
+ * frame duration / gap interval の override 変更時に PlaybackPanel 側で再計算するために
+ * 公開する。
+ */
+export function buildSegments(
+  frameItems: PlaybackFrameItem[],
+  gapItems: PlaybackGapItem[]
+): { segments: PlaybackSegment[]; totalMs: number } {
+  const segments: PlaybackSegment[] = [];
+  let cursor = 0;
+  for (let i = 0; i < frameItems.length; i++) {
+    const frameMs = frameItems[i].timelineWidthMs;
+    segments.push({
+      index: i,
+      kind: "frame",
+      startMs: cursor,
+      endMs: cursor + frameMs,
+    });
+    cursor += frameMs;
+    if (i < gapItems.length) {
+      const gapMs = gapItems[i].intervalMs;
+      segments.push({
+        index: i,
+        kind: "gap",
+        startMs: cursor,
+        endMs: cursor + gapMs,
+      });
+      cursor += gapMs;
+    }
+  }
+  return { segments, totalMs: cursor };
 }

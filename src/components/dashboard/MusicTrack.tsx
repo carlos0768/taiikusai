@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import type { MusicData } from "@/types";
 import {
   deleteProjectAudio,
@@ -9,6 +16,7 @@ import {
 import MusicWaveform from "./MusicWaveform";
 
 const WAVEFORM_HEIGHT = 56;
+const TIMELINE_PX_OPTIONS = [30, 60, 90] as const;
 
 // YouTube IFrame API types
 declare global {
@@ -47,13 +55,34 @@ interface YTPlayer {
   destroy: () => void;
 }
 
+/**
+ * 親 (PlaybackPanel) がマスタークロック・パネル進行と同期して呼び出すハンドル。
+ * 「音楽プレイヤーを直接操作する」窓口で、内部の React state を経由しないので
+ * 1 tick の遅延も生まれない。
+ */
+export interface MusicTrackHandle {
+  isLoaded(): boolean;
+  /** 現在の再生位置 (秒)。未ロード時は 0。 */
+  getCurrentTimeSec(): number;
+  /** トリミング開始位置 (秒)。 */
+  getStartSec(): number;
+  /** トリミング終了位置 (秒)。0 なら全長を意味する。 */
+  getEndSec(): number;
+  play(): Promise<void>;
+  pause(): void;
+  seek(timeSec: number): void;
+}
+
 interface MusicTrackProps {
-  isPlaying: boolean;
-  onPlayStateChange: (playing: boolean) => void;
   pxPerSecond: number;
   projectId: string;
   initialMusic: MusicData | null;
   onMusicChange: (data: MusicData | null) => Promise<void> | void;
+  /** 親から流れる現在の再生位置 (秒)。波形キャレット・残時間表示に使う。 */
+  currentTimeSec: number;
+  /** 親が再生中かどうか。trim ハンドル操作の無効化に使う。 */
+  isPlaying: boolean;
+  onPxPerSecondChange: (value: number) => void;
 }
 
 function extractVideoId(url: string): string | null {
@@ -70,14 +99,18 @@ function extractVideoId(url: string): string | null {
   return null;
 }
 
-export default function MusicTrack({
-  isPlaying,
-  onPlayStateChange,
-  pxPerSecond,
-  projectId,
-  initialMusic,
-  onMusicChange,
-}: MusicTrackProps) {
+function MusicTrack(
+  {
+    pxPerSecond,
+    projectId,
+    initialMusic,
+    onMusicChange,
+    currentTimeSec,
+    isPlaying,
+    onPxPerSecondChange,
+  }: MusicTrackProps,
+  ref: React.ForwardedRef<MusicTrackHandle>
+) {
   const [url, setUrl] = useState("");
   const [sourceType, setSourceType] = useState<"youtube" | "file" | null>(
     initialMusic?.source_type ?? null
@@ -94,7 +127,6 @@ export default function MusicTrack({
   const [startTime, setStartTime] = useState(initialMusic?.start_sec ?? 0);
   const [endTime, setEndTime] = useState(initialMusic?.end_sec ?? 0);
   const [duration, setDuration] = useState(initialMusic?.duration ?? 0);
-  const [currentTime, setCurrentTime] = useState(0);
   const [offsetSec, setOffsetSec] = useState(initialMusic?.offset_sec ?? 0);
   const [bpm, setBpm] = useState<number | null>(initialMusic?.bpm ?? null);
   const [bpmOffsetSec, setBpmOffsetSec] = useState<number>(
@@ -108,7 +140,6 @@ export default function MusicTrack({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const apiLoadedRef = useRef(false);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const ytContainerRef = useRef<HTMLDivElement | null>(null);
   const playerReadyRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -117,6 +148,12 @@ export default function MusicTrack({
   );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sourceTypeRef = useRef(sourceType);
+  sourceTypeRef.current = sourceType;
+  const startTimeRef = useRef(startTime);
+  const endTimeRef = useRef(endTime);
+  startTimeRef.current = startTime;
+  endTimeRef.current = endTime;
   // Skip the first auto-save effect run (triggered by hydration itself)
   const hydratedRef = useRef(false);
 
@@ -176,7 +213,7 @@ export default function MusicTrack({
             playerReadyRef.current = true;
             const dur = event.target.getDuration();
             setDuration(dur);
-            if (endTime === 0) setEndTime(dur);
+            setEndTime((prev) => (prev === 0 ? dur : prev));
           },
         },
       });
@@ -248,6 +285,7 @@ export default function MusicTrack({
           duration,
           bpm: bpm ?? null,
           bpm_offset_sec: bpmOffsetSec,
+          timeline_px_per_second: pxPerSecond,
         };
       } else if (sourceType === "file" && fileUrl) {
         data = {
@@ -261,6 +299,7 @@ export default function MusicTrack({
           duration,
           bpm: bpm ?? null,
           bpm_offset_sec: bpmOffsetSec,
+          timeline_px_per_second: pxPerSecond,
         };
       }
       void Promise.resolve(onMusicChangeRef.current(data)).catch(() => {
@@ -282,87 +321,70 @@ export default function MusicTrack({
     duration,
     bpm,
     bpmOffsetSec,
+    pxPerSecond,
   ]);
 
-  // Refs to keep trim values accessible without re-triggering the effect
-  const startTimeRef = useRef(startTime);
-  const endTimeRef = useRef(endTime);
-  startTimeRef.current = startTime;
-  endTimeRef.current = endTime;
-
-  // Sync play/pause with panel playback (handles both YouTube and file sources)
-  const wasPlayingRef = useRef(false);
-  useEffect(() => {
-    if (!sourceType) return;
-
-    const ready =
-      sourceType === "youtube"
-        ? !!playerRef.current && playerReadyRef.current
-        : !!audioRef.current;
-    if (!ready) return;
-
-    const play = () => {
-      if (sourceType === "youtube") {
-        playerRef.current?.playVideo();
-      } else {
-        audioRef.current?.play().catch(() => {});
-      }
-    };
-    const pause = () => {
-      if (sourceType === "youtube") {
-        playerRef.current?.pauseVideo();
-      } else {
-        audioRef.current?.pause();
-      }
-    };
-    const seek = (t: number) => {
-      if (sourceType === "youtube") {
-        playerRef.current?.seekTo(t, true);
-      } else if (audioRef.current) {
-        audioRef.current.currentTime = t;
-      }
-    };
-    const getTime = () => {
-      if (sourceType === "youtube") {
-        return playerRef.current?.getCurrentTime() ?? 0;
-      }
-      return audioRef.current?.currentTime ?? 0;
-    };
-
-    if (isPlaying) {
-      // Only seek to start when playback begins (false → true)
-      if (!wasPlayingRef.current) {
-        seek(startTimeRef.current);
-      }
-      wasPlayingRef.current = true;
-      play();
-
-      // Track current time
-      timerRef.current = setInterval(() => {
-        const t = getTime();
-        setCurrentTime(t);
-        const end = endTimeRef.current;
-        if (end > 0 && t >= end) {
-          pause();
-          onPlayStateChange(false);
+  useImperativeHandle(
+    ref,
+    (): MusicTrackHandle => ({
+      isLoaded() {
+        const t = sourceTypeRef.current;
+        if (t === "youtube") {
+          return !!playerRef.current && playerReadyRef.current;
         }
-      }, 100);
-    } else {
-      wasPlayingRef.current = false;
-      pause();
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    }
-
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    };
-  }, [isPlaying, sourceType, videoId, onPlayStateChange]);
+        if (t === "file") {
+          return !!audioRef.current;
+        }
+        return false;
+      },
+      getCurrentTimeSec() {
+        const t = sourceTypeRef.current;
+        if (t === "youtube") {
+          return playerRef.current?.getCurrentTime() ?? 0;
+        }
+        if (t === "file") {
+          return audioRef.current?.currentTime ?? 0;
+        }
+        return 0;
+      },
+      getStartSec() {
+        return startTimeRef.current;
+      },
+      getEndSec() {
+        return endTimeRef.current;
+      },
+      async play() {
+        const t = sourceTypeRef.current;
+        if (t === "youtube") {
+          playerRef.current?.playVideo();
+        } else if (t === "file") {
+          try {
+            await audioRef.current?.play();
+          } catch {
+            // ユーザー操作起点でない自動再生がブロックされる場合があるので無視
+          }
+        }
+      },
+      pause() {
+        const t = sourceTypeRef.current;
+        if (t === "youtube") {
+          playerRef.current?.pauseVideo();
+        } else if (t === "file") {
+          audioRef.current?.pause();
+        }
+      },
+      seek(timeSec: number) {
+        const safe = Math.max(0, timeSec);
+        const t = sourceTypeRef.current;
+        if (t === "youtube") {
+          playerRef.current?.seekTo(safe, true);
+        } else if (t === "file" && audioRef.current) {
+          audioRef.current.currentTime = safe;
+        }
+      },
+    }),
+    []
+  );
 
   const handleUrlSubmit = useCallback(() => {
     const id = extractVideoId(url);
@@ -387,7 +409,6 @@ export default function MusicTrack({
     setStartTime(0);
     setEndTime(0);
     setDuration(0);
-    setCurrentTime(0);
     setOffsetSec(0);
     setBpm(null);
     setBpmOffsetSec(0);
@@ -450,7 +471,6 @@ export default function MusicTrack({
         setStartTime(0);
         setEndTime(0);
         setDuration(0);
-        setCurrentTime(0);
         setOffsetSec(0);
         setBpm(null);
         setBpmOffsetSec(0);
@@ -488,7 +508,6 @@ export default function MusicTrack({
     setStartTime(0);
     setEndTime(0);
     setDuration(0);
-    setCurrentTime(0);
     setOffsetSec(0);
     setBpm(null);
     setBpmOffsetSec(0);
@@ -524,18 +543,21 @@ export default function MusicTrack({
     [pxPerSecond, duration]
   );
 
+  // 再生中は trim 操作を無効化 (本番中の誤操作防止)
   const handleTrimPointerDown = useCallback(
     (edge: "start" | "end", e: React.PointerEvent) => {
+      if (isPlaying) return;
       e.stopPropagation();
       e.preventDefault();
       draggingRef.current = edge;
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
     },
-    []
+    [isPlaying]
   );
 
   const handleMovePointerDown = useCallback(
     (e: React.PointerEvent) => {
+      if (isPlaying) return;
       e.stopPropagation();
       e.preventDefault();
       draggingRef.current = "move";
@@ -543,7 +565,7 @@ export default function MusicTrack({
       moveStartOffsetRef.current = offsetSec;
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
     },
-    [offsetSec]
+    [offsetSec, isPlaying]
   );
 
   const handleTrimPointerMove = useCallback(
@@ -598,6 +620,8 @@ export default function MusicTrack({
   );
 
   const barWidth = Math.max(100, duration * pxPerSecond);
+  const playheadSec = Math.max(0, currentTimeSec);
+  const displayCurrentSec = Math.max(0, currentTimeSec);
 
   if (!sourceType) {
     return (
@@ -676,7 +700,7 @@ export default function MusicTrack({
           </span>
         )}
         <span className="text-[9px] text-muted">
-          {Math.floor(currentTime / 60)}:{String(Math.floor(currentTime % 60)).padStart(2, "0")}
+          {Math.floor(displayCurrentSec / 60)}:{String(Math.floor(displayCurrentSec % 60)).padStart(2, "0")}
           {" / "}
           {Math.floor((endTime || duration) / 60)}:{String(Math.floor((endTime || duration) % 60)).padStart(2, "0")}
         </span>
@@ -719,6 +743,24 @@ export default function MusicTrack({
             </button>
           </span>
         )}
+        <span className="flex items-center gap-0.5 rounded border border-card-border/70 bg-background/70 p-0.5 text-[9px] text-muted">
+          {TIMELINE_PX_OPTIONS.map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => onPxPerSecondChange(option)}
+              className={`rounded px-1.5 py-0.5 tabular-nums transition-colors ${
+                pxPerSecond === option
+                  ? "bg-accent text-black"
+                  : "hover:bg-card-border hover:text-foreground"
+              }`}
+              aria-pressed={pxPerSecond === option}
+            >
+              {option}
+            </button>
+          ))}
+          <span className="px-0.5">px/s</span>
+        </span>
         <button
           onClick={handleRemove}
           className="text-[9px] text-muted hover:text-danger"
@@ -762,7 +804,9 @@ export default function MusicTrack({
 
         {/* Trim region (draggable to move) */}
         <div
-          className="absolute top-0 bottom-0 bg-accent/10 cursor-grab active:cursor-grabbing z-[5]"
+          className={`absolute top-0 bottom-0 bg-accent/20 z-[5] ${
+            isPlaying ? "cursor-default" : "cursor-grab active:cursor-grabbing"
+          }`}
           style={{
             left: startTime * pxPerSecond,
             width: ((endTime || duration) - startTime) * pxPerSecond,
@@ -772,7 +816,9 @@ export default function MusicTrack({
 
         {/* Start handle */}
         <div
-          className="absolute top-0 bottom-0 w-3 cursor-col-resize z-10 flex items-center justify-center"
+          className={`absolute top-0 bottom-0 w-3 z-10 flex items-center justify-center ${
+            isPlaying ? "cursor-default opacity-50" : "cursor-col-resize"
+          }`}
           style={{ left: startTime * pxPerSecond - 6 }}
           onPointerDown={(e) => handleTrimPointerDown("start", e)}
         >
@@ -781,7 +827,9 @@ export default function MusicTrack({
 
         {/* End handle */}
         <div
-          className="absolute top-0 bottom-0 w-3 cursor-col-resize z-10 flex items-center justify-center"
+          className={`absolute top-0 bottom-0 w-3 z-10 flex items-center justify-center ${
+            isPlaying ? "cursor-default opacity-50" : "cursor-col-resize"
+          }`}
           style={{ left: (endTime || duration) * pxPerSecond - 6 }}
           onPointerDown={(e) => handleTrimPointerDown("end", e)}
         >
@@ -791,7 +839,7 @@ export default function MusicTrack({
         {/* Playhead */}
         <div
           className="absolute top-0 bottom-0 w-0.5 bg-white z-20 pointer-events-none"
-          style={{ left: currentTime * pxPerSecond }}
+          style={{ left: playheadSec * pxPerSecond }}
         />
 
         {/* Time labels */}
@@ -807,3 +855,5 @@ export default function MusicTrack({
     </div>
   );
 }
+
+export default forwardRef<MusicTrackHandle, MusicTrackProps>(MusicTrack);

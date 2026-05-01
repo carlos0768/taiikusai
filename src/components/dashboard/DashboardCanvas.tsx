@@ -16,13 +16,15 @@ import {
   type Viewport as FlowViewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useRouter } from "next/navigation";
+import { MessageCircle } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { decodeGrid, encodeGrid } from "@/lib/grid/codec";
 import { buildBranchPath } from "@/lib/projectBranches";
 import type {
   AuthProfile,
   BranchScopedProject,
+  CollapsedPanelGroup,
   MusicData,
   MotionType,
   PanelType,
@@ -55,6 +57,7 @@ import { resizeGrid } from "@/lib/grid/resize";
 import { DEFAULT_WAVE_MOTION_DATA } from "@/types";
 import CameraCapture from "@/components/scan/CameraCapture";
 import ZentaiGamenNode from "./ZentaiGamenNode";
+import GroupNode, { type GroupNodeData } from "./GroupNode";
 import ConnectionEdge from "./ConnectionEdge";
 import ContextMenu, { type SubMenuItem } from "./ContextMenu";
 import KeepConnectionEditor from "./KeepConnectionEditor";
@@ -62,8 +65,16 @@ import NodeDeleteMenu from "./NodeDeleteMenu";
 import Sidebar from "./Sidebar";
 import PlaybackPanel from "./PlaybackPanel";
 import ProjectBranchSwitcher from "./ProjectBranchSwitcher";
+import TextToPanelChat from "@/components/text-to-panel/TextToPanelChat";
 
-const nodeTypes = { zentaiGamen: ZentaiGamenNode };
+interface CollapsedGroup {
+  id: string;
+  nodeIds: string[];
+  position: { x: number; y: number };
+  name: string;
+}
+
+const nodeTypes = { zentaiGamen: ZentaiGamenNode, groupNode: GroupNode };
 const edgeTypes = { connection: ConnectionEdge };
 const DASHBOARD_VIEWPORT_STORAGE_PREFIX = "taiikusai:dashboardViewport";
 
@@ -73,6 +84,7 @@ interface DashboardCanvasProps {
   currentBranch: ProjectBranch;
   initialZentaiGamen: ZentaiGamen[];
   initialConnections: DBConnection[];
+  initialCollapsedGroups: CollapsedPanelGroup[];
   auth: AuthProfile;
   unreadGitNotifications: number;
 }
@@ -214,16 +226,51 @@ function buildKeepRangeEdgeKeys(path: string[] | null): Set<string> {
   return keys;
 }
 
+function isReactFlowItemEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+
+  return Boolean(
+    target.closest(
+      ".react-flow__node, .react-flow__edge, .react-flow__handle, .react-flow__controls"
+    )
+  );
+}
+
+function groupRowToCollapsedGroup(group: CollapsedPanelGroup): CollapsedGroup {
+  return {
+    id: group.id,
+    nodeIds: group.node_ids,
+    position: { x: group.position_x, y: group.position_y },
+    name: group.name,
+  };
+}
+
+function normalizeCollapsedGroups(
+  groups: CollapsedGroup[],
+  panels: ZentaiGamen[]
+): CollapsedGroup[] {
+  const panelIds = new Set(panels.map((panel) => panel.id));
+  return groups
+    .map((group) => ({
+      ...group,
+      nodeIds: group.nodeIds.filter((nodeId) => panelIds.has(nodeId)),
+    }))
+    .filter((group) => group.nodeIds.length > 0);
+}
+
 function DashboardCanvasInner({
   project,
   branches,
   currentBranch,
   initialZentaiGamen,
   initialConnections,
+  initialCollapsedGroups,
   auth,
   unreadGitNotifications,
 }: DashboardCanvasProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const supabase = useMemo(() => createClient(), []);
   const reactFlowInstance = useReactFlow();
   const viewportStorageKey = useMemo(
@@ -267,6 +314,7 @@ function DashboardCanvasInner({
   const showGitBadge = canViewGit && unreadGitNotifications > 0;
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [aiChatOpen, setAiChatOpen] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [zentaiGamenList, setZentaiGamenList] =
     useState<ZentaiGamen[]>(initialZentaiGamen);
@@ -285,7 +333,6 @@ function DashboardCanvasInner({
   );
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCurrentMusic(project.music_data ?? null);
   }, [project.music_data, project.active_branch_id]);
 
@@ -319,6 +366,15 @@ function DashboardCanvasInner({
     y: number;
     connectionId: string;
   } | null>(null);
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<CollapsedGroup[]>(() =>
+    normalizeCollapsedGroups(
+      initialCollapsedGroups.map(groupRowToCollapsedGroup),
+      initialZentaiGamen
+    )
+  );
+
   const [keepRangeStart, setKeepRangeStart] = useState<{
     nodeId: string;
     nodeName: string;
@@ -335,6 +391,31 @@ function DashboardCanvasInner({
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get("ai") === "1") {
+      setAiChatOpen(true);
+    }
+  }, [searchParams]);
+
+  const setAiChatOpenWithQuery = useCallback(
+    (open: boolean) => {
+      setAiChatOpen(open);
+
+      const nextSearchParams = new URLSearchParams(searchParams.toString());
+      if (open) {
+        nextSearchParams.set("ai", "1");
+      } else {
+        nextSearchParams.delete("ai");
+      }
+
+      const search = nextSearchParams.toString();
+      router.replace(`${pathname}${search ? `?${search}` : ""}`, {
+        scroll: false,
+      });
+    },
+    [pathname, router, searchParams]
+  );
 
   useEffect(() => {
     supabase
@@ -474,47 +555,225 @@ function DashboardCanvasInner({
   const handleNodeLongPress = useCallback(
     (nodeId: string, nodeName: string, x: number, y: number) => {
       if (keepRangeStart) return;
+      if (multiSelectMode) return;
       setContextMenu(null);
       setEdgeMenu(null);
       setNodeMenu({ x, y, nodeId, nodeName });
     },
-    [keepRangeStart]
+    [keepRangeStart, multiSelectMode]
   );
+
+  const handleNodeSelect = useCallback((nodeId: string) => {
+    setSelectedNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleGroupExpand = useCallback(
+    async (groupId: string) => {
+      const previousGroups = collapsedGroups;
+      setCollapsedGroups((prev) => prev.filter((g) => g.id !== groupId));
+
+      if (!canEditCurrentBranch) return;
+
+      const { error } = await supabase
+        .from("collapsed_panel_groups")
+        .delete()
+        .eq("id", groupId)
+        .eq("branch_id", project.active_branch_id);
+
+      if (error) {
+        setCollapsedGroups(previousGroups);
+        setActionError(error.message);
+        return;
+      }
+
+      setActionError(null);
+    },
+    [canEditCurrentBranch, collapsedGroups, project.active_branch_id, supabase]
+  );
+
+  const handleEnterMultiSelect = useCallback(() => {
+    if (!nodeMenu || !canEditCurrentBranch) return;
+    setMultiSelectMode(true);
+    setSelectedNodeIds(new Set([nodeMenu.nodeId]));
+    setNodeMenu(null);
+  }, [canEditCurrentBranch, nodeMenu]);
+
+  const handleCollapseSelected = useCallback(async () => {
+    if (!canEditCurrentBranch) return;
+    if (selectedNodeIds.size < 1) return;
+    const ids = Array.from(selectedNodeIds);
+
+    // Compute centroid position from current node positions
+    let sumX = 0;
+    let sumY = 0;
+    let count = 0;
+    ids.forEach((nid) => {
+      const zg = zentaiGamenList.find((item) => item.id === nid);
+      if (zg) {
+        sumX += zg.position_x;
+        sumY += zg.position_y;
+        count += 1;
+      }
+    });
+    const position = count > 0
+      ? { x: sumX / count, y: sumY / count }
+      : { x: 0, y: 0 };
+
+    const firstZg = zentaiGamenList.find((item) => item.id === ids[0]);
+    const name = firstZg
+      ? ids.length > 1
+        ? `${firstZg.name} 他${ids.length - 1}枚`
+        : firstZg.name
+      : `${ids.length}枚のパネル`;
+
+    const { data, error } = await supabase
+      .from("collapsed_panel_groups")
+      .insert({
+        project_id: project.id,
+        branch_id: project.active_branch_id,
+        name,
+        node_ids: ids,
+        position_x: position.x,
+        position_y: position.y,
+      })
+      .select()
+      .single();
+
+    if (error || !data) {
+      setActionError(error?.message ?? "折りたたみ情報の保存に失敗しました");
+      return;
+    }
+
+    setCollapsedGroups((prev) => [
+      ...prev,
+      groupRowToCollapsedGroup(data as CollapsedPanelGroup),
+    ]);
+    setMultiSelectMode(false);
+    setSelectedNodeIds(new Set());
+    setActionError(null);
+  }, [
+    canEditCurrentBranch,
+    project.active_branch_id,
+    project.id,
+    selectedNodeIds,
+    supabase,
+    zentaiGamenList,
+  ]);
 
   const buildNodes = useCallback(
     (nextZentaiGamen: ZentaiGamen[], nextConnections: DBConnection[]): Node[] => {
+      const groupedNodeIds = new Set(collapsedGroups.flatMap((g) => g.nodeIds));
+      const nodeIdToGroup = new Map<string, CollapsedGroup>();
+      collapsedGroups.forEach((g) => g.nodeIds.forEach((nid) => nodeIdToGroup.set(nid, g)));
+
       const sourceIds = new Set(nextConnections.map((connection) => connection.source_id));
-      return nextZentaiGamen.map((item) => ({
-        id: item.id,
-        type: "zentaiGamen",
-        position: { x: item.position_x, y: item.position_y },
-        data: {
-          name: item.name,
-          gridData: item.grid_data,
+
+      // Regular (non-grouped) zentai-gamen nodes
+      const regularNodes: Node[] = nextZentaiGamen
+        .filter((item) => !groupedNodeIds.has(item.id))
+        .map((item) => ({
+          id: item.id,
+          type: "zentaiGamen",
+          position: { x: item.position_x, y: item.position_y },
+          data: {
+            name: item.name,
+            gridData: item.grid_data,
+            gridWidth: project.grid_width,
+            gridHeight: project.grid_height,
+            hasOutgoingEdge: sourceIds.has(item.id),
+            isWave: item.panel_type === "motion" && item.motion_type === "wave",
+            isKeepRangeSelected: keepRangePath?.includes(item.id) ?? false,
+            isKeepRangeStart: keepRangeStart?.nodeId === item.id,
+            isMultiSelectMode: multiSelectMode,
+            isSelected: selectedNodeIds.has(item.id),
+            onDoubleClick: handleNodeDoubleClick,
+            onLongPress: handleNodeLongPress,
+            onSelect: handleNodeSelect,
+          },
+        }));
+
+      // Group nodes for collapsed groups
+      const groupNodes: Node[] = collapsedGroups.map((group) => {
+        const firstZg = nextZentaiGamen.find((zg) => group.nodeIds.includes(zg.id));
+        const hasOutgoingEdge = nextConnections.some(
+          (conn) =>
+            group.nodeIds.includes(conn.source_id) &&
+            !group.nodeIds.includes(conn.target_id)
+        );
+        const groupData: GroupNodeData = {
+          name: group.name,
+          nodeCount: group.nodeIds.length,
+          gridData: firstZg?.grid_data ?? "",
           gridWidth: project.grid_width,
           gridHeight: project.grid_height,
-          hasOutgoingEdge: sourceIds.has(item.id),
-          isWave: item.panel_type === "motion" && item.motion_type === "wave",
-          isKeepRangeSelected: keepRangePath?.includes(item.id) ?? false,
-          isKeepRangeStart: keepRangeStart?.nodeId === item.id,
-          onDoubleClick: handleNodeDoubleClick,
-          onLongPress: handleNodeLongPress,
-        },
-      }));
+          hasOutgoingEdge,
+          onExpand: handleGroupExpand,
+        };
+        return {
+          id: group.id,
+          type: "groupNode",
+          position: group.position,
+          data: groupData,
+        };
+      });
+
+      return [...regularNodes, ...groupNodes];
     },
     [
+      collapsedGroups,
       handleNodeDoubleClick,
       handleNodeLongPress,
+      handleNodeSelect,
+      handleGroupExpand,
       keepRangePath,
       keepRangeStart,
+      multiSelectMode,
+      selectedNodeIds,
       project.grid_height,
       project.grid_width,
     ]
   );
 
-  const buildEdges = useCallback((nextConnections: DBConnection[]): Edge[] => {
-    return buildConnectionEdges(nextConnections);
-  }, []);
+  const buildEdges = useCallback(
+    (nextConnections: DBConnection[]): Edge[] => {
+      if (collapsedGroups.length === 0) {
+        return buildConnectionEdges(nextConnections);
+      }
+
+      const nodeIdToGroup = new Map<string, CollapsedGroup>();
+      collapsedGroups.forEach((g) => g.nodeIds.forEach((nid) => nodeIdToGroup.set(nid, g)));
+
+      const getVirtualId = (realId: string) => nodeIdToGroup.get(realId)?.id ?? realId;
+      const edgeMap = new Map<string, Edge>();
+
+      nextConnections.forEach((conn) => {
+        const srcId = getVirtualId(conn.source_id);
+        const tgtId = getVirtualId(conn.target_id);
+        if (srcId === tgtId) return; // intra-group connection — hide it
+        const key = `${srcId}:${tgtId}`;
+        if (edgeMap.has(key)) return; // deduplicate parallel virtual edges
+        edgeMap.set(key, {
+          id: `${conn.id}-v`,
+          source: srcId,
+          target: tgtId,
+          type: "connection",
+          markerEnd: undefined,
+          data: {},
+        });
+      });
+
+      return Array.from(edgeMap.values());
+    },
+    [collapsedGroups]
+  );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(
     buildNodes(initialZentaiGamen, initialConnections)
@@ -524,14 +783,19 @@ function DashboardCanvasInner({
   );
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    const nextCollapsedGroups = normalizeCollapsedGroups(
+      initialCollapsedGroups.map(groupRowToCollapsedGroup),
+      initialZentaiGamen
+    );
     setZentaiGamenList(initialZentaiGamen);
     setConnectionList(initialConnections);
+    setCollapsedGroups(nextCollapsedGroups);
     setNodes(buildNodes(initialZentaiGamen, initialConnections));
     setEdges(buildEdges(initialConnections));
     // Sync only when server-provided project data changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    initialCollapsedGroups,
     initialConnections,
     initialZentaiGamen,
     setEdges,
@@ -539,29 +803,52 @@ function DashboardCanvasInner({
   ]);
 
   useEffect(() => {
-    const selectedIds = new Set(
+    const selectedRangeIds = new Set(
       keepRangePath ?? (keepRangeStart ? [keepRangeStart.nodeId] : [])
     );
     const startId = keepRangeStart?.nodeId ?? null;
 
     setNodes((existingNodes) =>
-      existingNodes.map((node) => ({
-        ...node,
-        data: {
-          ...node.data,
-          isKeepRangeSelected: selectedIds.has(node.id),
-          isKeepRangeStart: node.id === startId,
-          onDoubleClick: handleNodeDoubleClick,
-          onLongPress: handleNodeLongPress,
-        },
-      }))
+      existingNodes.map((node) => {
+        if (node.type === "groupNode") return node;
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            isKeepRangeSelected: selectedRangeIds.has(node.id),
+            isKeepRangeStart: node.id === startId,
+            isMultiSelectMode: multiSelectMode,
+            isSelected: selectedNodeIds.has(node.id),
+            onDoubleClick: handleNodeDoubleClick,
+            onLongPress: handleNodeLongPress,
+            onSelect: handleNodeSelect,
+          },
+        };
+      })
     );
   }, [
     handleNodeDoubleClick,
     handleNodeLongPress,
+    handleNodeSelect,
     keepRangePath,
     keepRangeStart,
+    multiSelectMode,
+    selectedNodeIds,
     setNodes,
+  ]);
+
+  // Rebuild nodes/edges whenever collapsed groups change
+  useEffect(() => {
+    setNodes(buildNodes(zentaiGamenList, connectionList));
+    setEdges(buildEdges(connectionList));
+  }, [
+    collapsedGroups,
+    buildNodes,
+    buildEdges,
+    zentaiGamenList,
+    connectionList,
+    setNodes,
+    setEdges,
   ]);
 
   const onConnect = useCallback(
@@ -689,6 +976,31 @@ function DashboardCanvasInner({
 
   const onNodeDragStop = useCallback(
     async (_event: unknown, node: Node) => {
+      if (node.type === "groupNode") {
+        setCollapsedGroups((prev) =>
+          prev.map((g) => (g.id === node.id ? { ...g, position: node.position } : g))
+        );
+        if (!canEditCurrentBranch) return;
+
+        const { error } = await supabase
+          .from("collapsed_panel_groups")
+          .update({
+            position_x: node.position.x,
+            position_y: node.position.y,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", node.id)
+          .eq("branch_id", project.active_branch_id);
+
+        if (error) {
+          setActionError(error.message);
+          return;
+        }
+
+        setActionError(null);
+        return;
+      }
+
       if (!canEditCurrentBranch) return;
 
       const { error } = await supabase
@@ -716,6 +1028,15 @@ function DashboardCanvasInner({
 
   const onPanePointerDown = useCallback(
     (event: React.PointerEvent) => {
+      if (isReactFlowItemEventTarget(event.target)) {
+        return;
+      }
+
+      if (multiSelectMode) {
+        setMultiSelectMode(false);
+        setSelectedNodeIds(new Set());
+        return;
+      }
       if (!canEditCurrentBranch) return;
       if (keepRangeStart) return;
 
@@ -736,7 +1057,7 @@ function DashboardCanvasInner({
         });
       }, 500);
     },
-    [canEditCurrentBranch, keepRangeStart, reactFlowInstance]
+    [canEditCurrentBranch, keepRangeStart, multiSelectMode, reactFlowInstance]
   );
 
   const onPanePointerMove = useCallback((event: React.PointerEvent) => {
@@ -1029,6 +1350,18 @@ function DashboardCanvasInner({
       return;
     }
 
+    const deleteGroupsResult = await supabase
+      .from("collapsed_panel_groups")
+      .delete()
+      .eq("project_id", project.id)
+      .eq("branch_id", project.active_branch_id)
+      .contains("node_ids", [nodeMenu.nodeId]);
+
+    if (deleteGroupsResult.error) {
+      setActionError(deleteGroupsResult.error.message);
+      return;
+    }
+
     setActionError(null);
     setZentaiGamenList((prev) => prev.filter((item) => item.id !== nodeMenu.nodeId));
     setConnectionList((prev) =>
@@ -1044,11 +1377,15 @@ function DashboardCanvasInner({
         (edge) => edge.source !== nodeMenu.nodeId && edge.target !== nodeMenu.nodeId
       )
     );
+    setCollapsedGroups((prev) =>
+      prev.filter((group) => !group.nodeIds.includes(nodeMenu.nodeId))
+    );
     setNodeMenu(null);
   }, [
     canEditCurrentBranch,
     nodeMenu,
     project.active_branch_id,
+    project.id,
     setEdges,
     setNodes,
     supabase,
@@ -1084,6 +1421,51 @@ function DashboardCanvasInner({
     },
     [canEditCurrentBranch, nodeMenu, project.active_branch_id, setNodes, supabase]
   );
+
+  const handleDuplicateNode = useCallback(async () => {
+    if (!nodeMenu || !canEditCurrentBranch) return;
+
+    const original = zentaiGamenList.find((item) => item.id === nodeMenu.nodeId);
+    if (!original) return;
+
+    const { data, error } = await supabase
+      .from("zentai_gamen")
+      .insert({
+        project_id: project.id,
+        branch_id: project.active_branch_id,
+        name: `${original.name} (コピー)`,
+        grid_data: original.grid_data,
+        position_x: original.position_x + 50,
+        position_y: original.position_y + 50,
+        panel_type: original.panel_type,
+        motion_type: original.motion_type,
+        motion_data: original.motion_data,
+        panel_duration_override_ms: original.panel_duration_override_ms,
+      })
+      .select()
+      .single();
+
+    setNodeMenu(null);
+    if (error || !data) {
+      setActionError(error?.message ?? "複製できませんでした");
+      return;
+    }
+
+    const panel = data as ZentaiGamen;
+    setActionError(null);
+    setZentaiGamenList((current) => [...current, panel]);
+    setNodes((current) => [...current, buildNodes([panel], connectionList)[0]]);
+  }, [
+    buildNodes,
+    canEditCurrentBranch,
+    connectionList,
+    nodeMenu,
+    project.active_branch_id,
+    project.id,
+    setNodes,
+    supabase,
+    zentaiGamenList,
+  ]);
 
   const handleStartKeepRange = useCallback(() => {
     if (!nodeMenu || !canEditCurrentBranch) return;
@@ -1318,6 +1700,56 @@ function DashboardCanvasInner({
     [viewportStorageKey]
   );
 
+  const handleCreateAiPanel = useCallback(
+    async ({ name, gridData }: { name: string; gridData: string }) => {
+      if (!canEditCurrentBranch) {
+        throw new Error("このブランチは編集できません");
+      }
+
+      const position = reactFlowInstance.screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      });
+
+      const { data, error } = await supabase
+        .from("zentai_gamen")
+        .insert({
+          project_id: project.id,
+          branch_id: project.active_branch_id,
+          name,
+          grid_data: gridData,
+          position_x: position.x,
+          position_y: position.y,
+          panel_type: "general",
+          motion_type: null,
+          motion_data: null,
+        })
+        .select()
+        .single();
+
+      if (error || !data) {
+        throw error ?? new Error("パネルを作成できませんでした");
+      }
+
+      const panel = data as ZentaiGamen;
+      setActionError(null);
+      setZentaiGamenList((current) => [...current, panel]);
+      setNodes((current) => [...current, buildNodes([panel], connectionList)[0]]);
+
+      return panel;
+    },
+    [
+      buildNodes,
+      canEditCurrentBranch,
+      connectionList,
+      project.active_branch_id,
+      project.id,
+      reactFlowInstance,
+      setNodes,
+      supabase,
+    ]
+  );
+
   return (
     <div className="h-full w-full flex">
       <div className="flex-1 h-full relative">
@@ -1342,6 +1774,21 @@ function DashboardCanvasInner({
           )}
         </button>
 
+        <button
+          type="button"
+          onClick={() => {
+            setContextMenu(null);
+            setNodeMenu(null);
+            setEdgeMenu(null);
+            setAiChatOpenWithQuery(true);
+          }}
+          className="absolute right-4 top-4 z-30 flex h-10 w-10 items-center justify-center rounded-lg border border-card-border bg-card text-foreground shadow-sm transition-colors hover:border-accent/50"
+          aria-label="AI生成"
+          title="AI生成"
+        >
+          <MessageCircle size={19} />
+        </button>
+
         <ProjectBranchSwitcher
           projectId={project.id}
           branches={branches}
@@ -1363,7 +1810,7 @@ function DashboardCanvasInner({
         )}
 
         {actionError && (
-          <div className="absolute top-4 right-4 z-30 max-w-sm rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger shadow-sm">
+          <div className="absolute top-16 right-4 z-30 max-w-sm rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger shadow-sm">
             {actionError}
           </div>
         )}
@@ -1397,6 +1844,39 @@ function DashboardCanvasInner({
               >
                 キャンセル
               </button>
+            </div>
+          </div>
+        )}
+
+        {multiSelectMode && (
+          <div className="absolute left-16 right-4 top-36 z-30 rounded-xl border border-accent/50 bg-card/95 px-4 py-3 shadow-xl backdrop-blur-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  複数選択中: {selectedNodeIds.size}枚選択済み
+                </p>
+                <p className="text-xs text-muted">
+                  パネルをタップして選択・解除できます
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void handleCollapseSelected()}
+                  disabled={selectedNodeIds.size < 1}
+                  className="rounded-lg border border-accent/50 bg-accent/10 px-3 py-2 text-sm text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  折りたたむ
+                </button>
+                <button
+                  onClick={() => {
+                    setMultiSelectMode(false);
+                    setSelectedNodeIds(new Set());
+                  }}
+                  className="rounded-lg border border-card-border px-3 py-2 text-sm text-muted hover:text-foreground"
+                >
+                  キャンセル
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1463,8 +1943,10 @@ function DashboardCanvasInner({
             nodeName={nodeMenu.nodeName}
             onDelete={handleDeleteNode}
             onRename={handleRenameNode}
+            onDuplicate={() => void handleDuplicateNode()}
             onPlay={handlePlayFromNode}
             onKeep={handleStartKeepRange}
+            onMultiSelect={handleEnterMultiSelect}
             onClose={() => setNodeMenu(null)}
             canEdit={canEditCurrentBranch}
           />
@@ -1516,6 +1998,18 @@ function DashboardCanvasInner({
           showGitBadge={showGitBadge}
           showGit={canViewGit}
         />
+
+        {aiChatOpen && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 px-4 backdrop-blur-sm">
+            <TextToPanelChat
+              project={project}
+              currentBranch={currentBranch}
+              canEditCurrentBranch={canEditCurrentBranch}
+              onClose={() => setAiChatOpenWithQuery(false)}
+              onCreatePanel={handleCreateAiPanel}
+            />
+          </div>
+        )}
       </div>
 
       {playbackData && (
