@@ -37,6 +37,9 @@ export interface MusicData {
   end_sec: number;
   offset_sec: number;
   duration: number;
+  bpm?: number | null;
+  bpm_offset_sec?: number | null;
+  timeline_px_per_second?: number | null;
 }
 
 export interface ProjectBranchSettings {

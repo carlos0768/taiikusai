@@ -30,7 +30,16 @@ import {
 } from "@/components/playback/masterClock";
 import MusicTrack, { type MusicTrackHandle } from "./MusicTrack";
 
-const PX_PER_SECOND = 30;
+const DEFAULT_TIMELINE_PX_PER_SECOND = 60;
+const TIMELINE_PX_OPTIONS = [30, 60, 90] as const;
+
+function normalizeTimelinePxPerSecond(value: number | null | undefined) {
+  return TIMELINE_PX_OPTIONS.includes(
+    value as (typeof TIMELINE_PX_OPTIONS)[number]
+  )
+    ? value!
+    : DEFAULT_TIMELINE_PX_PER_SECOND;
+}
 
 interface PlaybackPanelProps {
   projectId: string;
@@ -340,15 +349,23 @@ export default function PlaybackPanel({
   );
   const [gapItems, setGapItems] = useState<PlaybackGapItem[]>(timeline.gapItems);
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [pxPerSecond, setPxPerSecond] = useState(() =>
+    normalizeTimelinePxPerSecond(initialMusic?.timeline_px_per_second)
+  );
   // 波形キャレット表示用 (再生中の親 rAF で更新)。state 経由でもズレない
   // — 真実は MusicTrackHandle.getCurrentTimeSec() であり、これは表示用の鏡。
   const [musicCurrentSec, setMusicCurrentSec] = useState(0);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFrameItems(timeline.frameItems);
     setGapItems(timeline.gapItems);
   }, [timeline]);
+
+  useEffect(() => {
+    setPxPerSecond(
+      normalizeTimelinePxPerSecond(initialMusic?.timeline_px_per_second)
+    );
+  }, [initialMusic]);
 
   // frame/gap の override 変更で長さが変わるので timeline (segments含む) を派生
   const playbackTimeline = useMemo<PlaybackTimeline>(() => {
@@ -753,7 +770,8 @@ export default function PlaybackPanel({
 
         <MusicTrack
           ref={musicHandleRef}
-          pxPerSecond={PX_PER_SECOND}
+          pxPerSecond={pxPerSecond}
+          onPxPerSecondChange={setPxPerSecond}
           projectId={projectId}
           initialMusic={initialMusic}
           onMusicChange={onMusicChange}
@@ -768,7 +786,7 @@ export default function PlaybackPanel({
                 grid={frameThumbnailGrid(frameItem.frame)}
                 isActive={currentIndex === idx && !isWhiteFrame}
                 durationMs={frameItem.durationMs}
-                widthPx={(frameItem.timelineWidthMs / 1000) * PX_PER_SECOND}
+                widthPx={(frameItem.timelineWidthMs / 1000) * pxPerSecond}
                 onTap={() => {
                   handlePause();
                   handleGoTo(idx);
@@ -786,7 +804,7 @@ export default function PlaybackPanel({
               {idx < gapItems.length && (
                 <GapButton
                   intervalMs={gapItems[idx].intervalMs}
-                  widthPx={(gapItems[idx].intervalMs / 1000) * PX_PER_SECOND}
+                  widthPx={(gapItems[idx].intervalMs / 1000) * pxPerSecond}
                   isActive={isWhiteFrame && currentIndex === idx}
                   isOverride={gapItems[idx].isIntervalOverride}
                   isSaving={
