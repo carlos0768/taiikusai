@@ -8,8 +8,6 @@ interface MusicWaveformProps {
   pxPerSecond: number;
   width: number;
   height: number;
-  bpm?: number | null;
-  bpmOffsetSec?: number | null;
 }
 
 interface PeakLayer {
@@ -188,65 +186,12 @@ function drawPeakHighlights(
   }
 }
 
-function drawBeatGrid(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  duration: number,
-  pxPerSecond: number,
-  bpm: number | null | undefined,
-  bpmOffsetSec: number | null | undefined
-) {
-  if (!bpm || bpm <= 0 || duration <= 0) return;
-
-  const beatIntervalSec = 60 / bpm;
-  const offset = bpmOffsetSec ?? 0;
-  const firstBeatIdx = Math.ceil(-offset / beatIntervalSec);
-  const startBeat = Math.max(0, firstBeatIdx);
-
-  for (let i = startBeat; ; i++) {
-    const t = offset + i * beatIntervalSec;
-    if (t > duration) break;
-    const x = Math.round(t * pxPerSecond) + 0.5;
-    if (x < 0 || x > width) continue;
-
-    const isBarStart = i % 4 === 0;
-    ctx.strokeStyle = isBarStart
-      ? "rgba(255, 255, 255, 0.82)"
-      : "rgba(255, 255, 255, 0.34)";
-    ctx.lineWidth = isBarStart ? 1.5 : 0.75;
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, height);
-    ctx.stroke();
-
-    if (isBarStart) {
-      ctx.fillStyle = "#ff2d2d";
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x - 5, 7);
-      ctx.lineTo(x + 5, 7);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.moveTo(x, height);
-      ctx.lineTo(x - 5, height - 7);
-      ctx.lineTo(x + 5, height - 7);
-      ctx.closePath();
-      ctx.fill();
-    }
-  }
-}
-
 export default function MusicWaveform({
   audioUrl,
   duration,
   pxPerSecond,
   width,
   height,
-  bpm,
-  bpmOffsetSec,
 }: MusicWaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [peaks, setPeaks] = useState<PeakData | null>(null);
@@ -349,8 +294,7 @@ export default function MusicWaveform({
     ctx.lineTo(width, mid);
     ctx.stroke();
 
-    drawBeatGrid(ctx, width, height, duration, pxPerSecond, bpm, bpmOffsetSec);
-  }, [peaks, width, height, bpm, bpmOffsetSec, duration, pxPerSecond]);
+  }, [peaks, width, height]);
 
   return (
     <div

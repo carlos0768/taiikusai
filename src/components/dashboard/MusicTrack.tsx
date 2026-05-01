@@ -100,77 +100,84 @@ function BeatGridOverlay({
   bpm: number | null;
   bpmOffsetSec: number | null;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const dpr =
-      typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
-    canvas.width = Math.max(1, Math.round(width * dpr));
-    canvas.height = Math.max(1, Math.round(height * dpr));
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
-
-    if (!bpm || bpm <= 0 || duration <= 0) return;
-
-    const beatIntervalSec = 60 / bpm;
-    const offset = bpmOffsetSec ?? 0;
-    const firstBeatIdx = Math.ceil(-offset / beatIntervalSec);
-    const startBeat = Math.max(0, firstBeatIdx);
-    const endBeat = Math.ceil((duration - offset) / beatIntervalSec);
-
-    for (let i = startBeat; i <= endBeat; i++) {
-      const t = offset + i * beatIntervalSec;
-      if (t < 0 || t > duration) continue;
-
-      const x = Math.round(t * pxPerSecond) + 0.5;
-      if (x < 0 || x > width) continue;
-
-      const isBarStart = i % 4 === 0;
-      ctx.strokeStyle = isBarStart
-        ? "rgba(255, 255, 255, 0.94)"
-        : "rgba(255, 255, 255, 0.52)";
-      ctx.lineWidth = isBarStart ? 1.75 : 1;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-
-      if (isBarStart) {
-        ctx.fillStyle = "#ff2d2d";
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x - 5, 8);
-        ctx.lineTo(x + 5, 8);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.moveTo(x, height);
-        ctx.lineTo(x - 5, height - 8);
-        ctx.lineTo(x + 5, height - 8);
-        ctx.closePath();
-        ctx.fill();
-      }
-    }
-  }, [width, height, duration, pxPerSecond, bpm, bpmOffsetSec]);
-
   if (!bpm || bpm <= 0 || duration <= 0) return null;
 
+  const beatIntervalSec = 60 / bpm;
+  const phaseSec =
+    ((bpmOffsetSec ?? 0) % beatIntervalSec + beatIntervalSec) %
+    beatIntervalSec;
+  const markers: Array<{ x: number; isMeasureStart: boolean }> = [];
+
+  for (
+    let beatNumber = 0, t = phaseSec;
+    t <= duration;
+    beatNumber++, t += beatIntervalSec
+  ) {
+    const x = t * pxPerSecond;
+    if (x < 0 || x > width) continue;
+    markers.push({
+      x,
+      isMeasureStart: beatNumber % 4 === 0,
+    });
+  }
+
   return (
-    <canvas
-      ref={canvasRef}
-      className="absolute inset-0 z-[8] block pointer-events-none"
-      style={{ width, height }}
+    <svg
+      className="absolute inset-0 pointer-events-none"
+      style={{ width, height, zIndex: 30 }}
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
       aria-hidden
-    />
+    >
+      {markers.map((marker, index) => {
+        const strokeWidth = marker.isMeasureStart ? 2 : 1;
+        const strokeOpacity = marker.isMeasureStart ? 0.95 : 0.62;
+        return (
+          <g key={`beat-${index}`}>
+            <line
+              x1={marker.x}
+              y1={0}
+              x2={marker.x}
+              y2={height}
+              stroke="rgba(0,0,0,0.75)"
+              strokeWidth={strokeWidth + 1.5}
+              vectorEffect="non-scaling-stroke"
+            />
+            <line
+              x1={marker.x}
+              y1={0}
+              x2={marker.x}
+              y2={height}
+              stroke={`rgba(255,255,255,${strokeOpacity})`}
+              strokeWidth={strokeWidth}
+              vectorEffect="non-scaling-stroke"
+            />
+          </g>
+        );
+      })}
+      {markers
+        .filter((marker) => marker.isMeasureStart)
+        .map((marker, index) => (
+          <g key={`measure-${index}`}>
+            <polygon
+              points={`${marker.x},0 ${marker.x - 6},9 ${marker.x + 6},9`}
+              fill="#ff2525"
+              stroke="rgba(0,0,0,0.65)"
+              strokeWidth={0.75}
+              vectorEffect="non-scaling-stroke"
+            />
+            <polygon
+              points={`${marker.x},${height} ${marker.x - 6},${height - 9} ${
+                marker.x + 6
+              },${height - 9}`}
+              fill="#ff2525"
+              stroke="rgba(0,0,0,0.65)"
+              strokeWidth={0.75}
+              vectorEffect="non-scaling-stroke"
+            />
+          </g>
+        ))}
+    </svg>
   );
 }
 
