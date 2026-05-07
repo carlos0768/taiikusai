@@ -13,7 +13,7 @@ const COLOR_DISPLAY: Record<number, string> = {
   2: "赤",
   3: "●", // black
   4: "青",
-  5: "・", // undefined (designer hasn't decided yet)
+  5: "閉", // undefined (designer hasn't decided yet)
 };
 
 function getColorDisplay(scene: SceneData): string {
