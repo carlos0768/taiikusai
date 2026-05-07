@@ -13,7 +13,7 @@ const COLOR_DISPLAY: Record<number, string> = {
   2: "赤",
   3: "●", // black
   4: "青",
-  5: "・", // undefined (designer hasn't decided yet)
+  5: "閉", // undefined (designer hasn't decided yet)
 };
 
 function getColorDisplay(scene: SceneData): string {
@@ -75,7 +75,7 @@ export function generateScriptHtml(
   scenes: SceneData[],
   projectName: string
 ): string {
-  const position = `${getPanelScriptRowLabel(cellY)}行${cellX + 1}番`;
+  const position = `${getPanelScriptRowLabel(cellY)}列${cellX + 1}番`;
   const COLS_PER_GROUP = 3; // 番号, 色, 動き
   const GROUPS_PER_ROW = 4;
   const ROWS_PER_PAGE = Math.ceil(scenes.length / GROUPS_PER_ROW);

@@ -299,7 +299,7 @@ export default function EditorPage() {
           project.name
         );
 
-        zip.file(`${getPanelScriptRowLabel(y)}行${x + 1}番.html`, html);
+        zip.file(`${getPanelScriptRowLabel(y)}列${x + 1}番.html`, html);
       }
     }
 
