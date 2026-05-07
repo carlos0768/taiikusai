@@ -22,7 +22,7 @@ import GridEditor, { type GridEditorSavePayload } from "@/components/editor/Grid
 import { findPlaybackRoutes } from "@/lib/api/connections";
 import {
   generateScriptHtml,
-  getPanelScriptColumnLabel,
+  getPanelScriptRowLabel,
 } from "@/lib/export/generateScript";
 import { decodeKeepMask, filterKeepMaskBySameColor, isKeepCell } from "@/lib/keep";
 import { zentaiGamenToPlaybackFrame } from "@/lib/playback/frameBuilder";
@@ -299,7 +299,7 @@ export default function EditorPage() {
           project.name
         );
 
-        zip.file(`${getPanelScriptColumnLabel(x)}列${y + 1}番.html`, html);
+        zip.file(`${getPanelScriptRowLabel(y)}行${x + 1}番.html`, html);
       }
     }
 

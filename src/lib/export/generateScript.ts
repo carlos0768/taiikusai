@@ -62,17 +62,11 @@ const COLOR_CLASS: Record<number, string> = {
   5: "color-undefined",
 };
 
-export function getPanelScriptColumnLabel(columnIndex: number): string {
-  let value = columnIndex + 1;
-  let label = "";
-
-  while (value > 0) {
-    value -= 1;
-    label = String.fromCharCode(65 + (value % 26)) + label;
-    value = Math.floor(value / 26);
+export function getPanelScriptRowLabel(rowIndex: number): string {
+  if (rowIndex < 26) {
+    return String.fromCharCode(65 + rowIndex);
   }
-
-  return label;
+  return String(rowIndex + 1);
 }
 
 export function generateScriptHtml(
@@ -81,7 +75,7 @@ export function generateScriptHtml(
   scenes: SceneData[],
   projectName: string
 ): string {
-  const position = `${getPanelScriptColumnLabel(cellX)}列${cellY + 1}番`;
+  const position = `${getPanelScriptRowLabel(cellY)}行${cellX + 1}番`;
   const COLS_PER_GROUP = 3; // 番号, 色, 動き
   const GROUPS_PER_ROW = 4;
   const ROWS_PER_PAGE = Math.ceil(scenes.length / GROUPS_PER_ROW);
