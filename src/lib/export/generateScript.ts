@@ -69,7 +69,7 @@ export function getPanelScriptRowLabel(rowIndex: number): string {
   return String(rowIndex + 1);
 }
 
-export function generateScriptHtml(
+export function generateScriptInnerHtml(
   cellX: number,
   cellY: number,
   scenes: SceneData[],
@@ -111,14 +111,7 @@ export function generateScriptHtml(
     groupHeaders += `<th class="col-num">番号</th><th class="col-color">色</th><th class="col-memo">動き</th>`;
   }
 
-  return `<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<title>${projectName} - ${position}</title>
-${CSS}
-</head>
-<body>
+  return `${CSS}
 <table class="script-table">
   <tr class="header-row">
     <td colspan="${COLS_PER_GROUP * GROUPS_PER_ROW}">${projectName}　パネル台本</td>
@@ -134,7 +127,5 @@ ${CSS}
   <tr class="separator"><td colspan="${COLS_PER_GROUP * GROUPS_PER_ROW}"></td></tr>
   <tr class="group-header">${groupHeaders}</tr>
   ${tableRows}
-</table>
-</body>
-</html>`;
+</table>`;
 }

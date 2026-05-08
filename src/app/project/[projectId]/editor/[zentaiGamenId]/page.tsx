@@ -21,7 +21,7 @@ import {
 import GridEditor, { type GridEditorSavePayload } from "@/components/editor/GridEditor";
 import { findPlaybackRoutes } from "@/lib/api/connections";
 import {
-  generateScriptHtml,
+  generateScriptInnerHtml,
   getPanelScriptRowLabel,
 } from "@/lib/export/generateScript";
 import { decodeKeepMask, filterKeepMaskBySameColor, isKeepCell } from "@/lib/keep";
@@ -278,6 +278,7 @@ export default function EditorPage() {
       if (!ok) return;
     }
 
+    const html2pdf = (await import("html2pdf.js")).default;
     const zip = new JSZip();
 
     for (let y = 0; y < height; y += 1) {
@@ -292,14 +293,24 @@ export default function EditorPage() {
           memo: scene.memo,
         }));
 
-        const html = generateScriptHtml(
+        const innerHtml = generateScriptInnerHtml(
           x,
           y,
           cellScenes,
           project.name
         );
 
-        zip.file(`${getPanelScriptRowLabel(y)}列${x + 1}番.html`, html);
+        const pdfBlob = await html2pdf()
+          .set({
+            margin: 0,
+            image: { type: "jpeg", quality: 0.98 },
+            html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+            jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+          })
+          .from(innerHtml, "string")
+          .output("blob");
+
+        zip.file(`${getPanelScriptRowLabel(y)}列${x + 1}番.pdf`, pdfBlob);
       }
     }
 
