@@ -280,6 +280,8 @@ export default function EditorPage() {
 
     const html2pdf = (await import("html2pdf.js")).default;
     const zip = new JSZip();
+    const rowDigits = String(height).length;
+    const colDigits = String(width).length;
 
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
@@ -310,7 +312,12 @@ export default function EditorPage() {
           .from(innerHtml, "string")
           .output("blob");
 
-        zip.file(`${getPanelScriptRowLabel(y)}列${x + 1}番.pdf`, pdfBlob);
+        const rowSort = String(y + 1).padStart(rowDigits, "0");
+        const colLabel = String(x + 1).padStart(colDigits, "0");
+        zip.file(
+          `${rowSort}_${getPanelScriptRowLabel(y)}列${colLabel}番.pdf`,
+          pdfBlob
+        );
       }
     }
 
