@@ -48,8 +48,8 @@ interface ExportProgress {
 function createPdfSourceElement(innerHtml: string): HTMLElement {
   const element = document.createElement("div");
   element.setAttribute("aria-hidden", "true");
-  element.style.position = "absolute";
-  element.style.left = "-10000px";
+  element.style.position = "fixed";
+  element.style.left = "0";
   element.style.top = "0";
   element.style.width = "210mm";
   element.style.minHeight = "297mm";
@@ -360,6 +360,8 @@ export default function EditorPage() {
                 useCORS: true,
                 backgroundColor: "#ffffff",
                 windowWidth: 794,
+                scrollX: 0,
+                scrollY: 0,
               },
               jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
             })
