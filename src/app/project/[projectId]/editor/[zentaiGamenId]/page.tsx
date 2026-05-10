@@ -77,7 +77,7 @@ async function createPdfBlobFromElement(element: HTMLElement): Promise<Blob> {
   const height = Math.ceil(element.scrollHeight) + 24;
 
   const canvas = await html2canvas(element, {
-    scale: 2,
+    scale: 1.5,
     useCORS: true,
     backgroundColor: "#ffffff",
     width,
@@ -116,7 +116,7 @@ async function createPdfBlobFromElement(element: HTMLElement): Promise<Blob> {
   const pageInset = 4;
   const maxImageWidth = pageWidth - pageInset * 2;
   const maxImageHeight = pageHeight - pageInset * 2;
-  const imageData = canvas.toDataURL("image/png");
+  const imageData = canvas.toDataURL("image/jpeg", 0.92);
   const canvasRatio = canvas.width / canvas.height;
   const pageRatio = maxImageWidth / maxImageHeight;
   const imageWidth =
@@ -126,9 +126,12 @@ async function createPdfBlobFromElement(element: HTMLElement): Promise<Blob> {
   const x = (pageWidth - imageWidth) / 2;
   const y = (pageHeight - imageHeight) / 2;
 
-  pdf.addImage(imageData, "PNG", x, y, imageWidth, imageHeight);
+  pdf.addImage(imageData, "JPEG", x, y, imageWidth, imageHeight);
 
-  return pdf.output("blob");
+  const blob = pdf.output("blob");
+  canvas.width = 0;
+  canvas.height = 0;
+  return blob;
 }
 
 function downloadBlob(blob: Blob, filename: string) {
