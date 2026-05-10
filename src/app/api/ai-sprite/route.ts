@@ -3,6 +3,8 @@ import { requirePermission, requireAuth } from "@/lib/server/auth";
 import { HttpError, toErrorResponse } from "@/lib/server/errors";
 import { generateAiSpriteGrid } from "@/lib/server/aiSprite";
 
+export const runtime = "nodejs";
+
 function readGridDimension(value: unknown, label: string): number {
   if (
     typeof value !== "number" ||
@@ -31,10 +33,10 @@ export async function POST(request: Request) {
     const width = readGridDimension(gridWidth, "gridWidth");
     const height = readGridDimension(gridHeight, "gridHeight");
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const apiKey = process.env.REPLICATE_API_TOKEN;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "ANTHROPIC_API_KEY not configured" },
+        { error: "REPLICATE_API_TOKEN not configured" },
         { status: 500 }
       );
     }
