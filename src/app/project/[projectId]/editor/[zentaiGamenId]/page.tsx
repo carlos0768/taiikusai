@@ -51,9 +51,10 @@ function createPdfSourceElement(innerHtml: string): HTMLElement {
   element.style.position = "fixed";
   element.style.left = "0";
   element.style.top = "0";
-  element.style.width = "210mm";
-  element.style.minHeight = "297mm";
+  element.style.width = "793px";
+  element.style.minHeight = "0";
   element.style.background = "#fff";
+  element.style.overflow = "visible";
   element.style.pointerEvents = "none";
   element.innerHTML = innerHtml;
   document.body.appendChild(element);
@@ -71,12 +72,17 @@ async function createPdfBlobFromElement(element: HTMLElement): Promise<Blob> {
     import("html2canvas"),
     import("jspdf"),
   ]);
+  const width = Math.ceil(element.scrollWidth);
+  const height = Math.ceil(element.scrollHeight);
 
   const canvas = await html2canvas(element, {
     scale: 2,
     useCORS: true,
     backgroundColor: "#ffffff",
-    windowWidth: 794,
+    width,
+    height,
+    windowWidth: width,
+    windowHeight: height,
     scrollX: 0,
     scrollY: 0,
   });
