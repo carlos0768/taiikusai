@@ -31,6 +31,7 @@ import type {
   Template,
   ZentaiGamen,
 } from "@/types";
+import AiSpriteDialog from "@/components/dashboard/AiSpriteDialog";
 import CameraCapture from "@/components/scan/CameraCapture";
 import ContextMenu, { type SubMenuItem } from "./ContextMenu";
 import ConnectionEdge from "./ConnectionEdge";
@@ -90,8 +91,10 @@ function DashboardCanvasInner({
   const [actionError, setActionError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileTypeRef = useRef<"xlsx" | "csv">("xlsx");
+  const pendingCreatePositionRef = useRef<{ x: number; y: number } | null>(null);
 
   const [showCamera, setShowCamera] = useState(false);
+  const [showAiSpriteDialog, setShowAiSpriteDialog] = useState(false);
   const [scanProcessing, setScanProcessing] = useState(false);
   const [playbackData, setPlaybackData] = useState<{
     frames: GridData[];
@@ -344,12 +347,23 @@ function DashboardCanvasInner({
     []
   );
 
-  const createAndNavigate = useCallback(
-    async (gridData: string, name: string) => {
-      if (!canEditCurrentBranch) return;
+  const rememberCreatePosition = useCallback(() => {
+    if (!contextMenu) return;
+    pendingCreatePositionRef.current = {
+      x: contextMenu.flowX,
+      y: contextMenu.flowY,
+    };
+  }, [contextMenu]);
 
-      const positionX = contextMenu?.flowX ?? 0;
-      const positionY = contextMenu?.flowY ?? 0;
+  const createAndNavigate = useCallback(
+    async (gridData: string, name: string): Promise<boolean> => {
+      if (!canEditCurrentBranch) return false;
+
+      const activeCreatePosition = contextMenu
+        ? { x: contextMenu.flowX, y: contextMenu.flowY }
+        : pendingCreatePositionRef.current;
+      const positionX = activeCreatePosition?.x ?? 0;
+      const positionY = activeCreatePosition?.y ?? 0;
 
       const { data, error } = await supabase
         .from("zentai_gamen")
@@ -365,12 +379,14 @@ function DashboardCanvasInner({
         .single();
 
       setContextMenu(null);
+      pendingCreatePositionRef.current = null;
       if (error || !data) {
         setActionError(error?.message ?? "画面を作成できませんでした");
-        return;
+        return false;
       }
 
       router.push(`/project/${project.id}/editor/${data.id}${currentBranchQuery}`);
+      return true;
     },
     [
       canEditCurrentBranch,
@@ -408,10 +424,11 @@ function DashboardCanvasInner({
 
   const handleImportFile = useCallback((type: "xlsx" | "csv") => {
     if (!canEditCurrentBranch) return;
+    rememberCreatePosition();
     fileTypeRef.current = type;
     setContextMenu(null);
     setTimeout(() => fileInputRef.current?.click(), 100);
-  }, [canEditCurrentBranch]);
+  }, [canEditCurrentBranch, rememberCreatePosition]);
 
   const handleFileSelected = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -444,9 +461,27 @@ function DashboardCanvasInner({
 
   const handleScan = useCallback(() => {
     if (!canEditCurrentBranch) return;
+    rememberCreatePosition();
     setContextMenu(null);
     setShowCamera(true);
-  }, [canEditCurrentBranch]);
+  }, [canEditCurrentBranch, rememberCreatePosition]);
+
+  const handleCloseCamera = useCallback(() => {
+    pendingCreatePositionRef.current = null;
+    setShowCamera(false);
+  }, []);
+
+  const handleAiDraw = useCallback(() => {
+    if (!canEditCurrentBranch) return;
+    rememberCreatePosition();
+    setContextMenu(null);
+    setShowAiSpriteDialog(true);
+  }, [canEditCurrentBranch, rememberCreatePosition]);
+
+  const handleCloseAiSpriteDialog = useCallback(() => {
+    pendingCreatePositionRef.current = null;
+    setShowAiSpriteDialog(false);
+  }, []);
 
   const handleScanCapture = useCallback(
     async (imageBase64: string) => {
@@ -469,6 +504,33 @@ function DashboardCanvasInner({
       } finally {
         setScanProcessing(false);
       }
+    },
+    [createAndNavigate, project.grid_height, project.grid_width]
+  );
+
+  const handleAiSpriteGenerate = useCallback(
+    async (prompt: string) => {
+      const response = await fetchJson<{ gridData: string; name?: string }>(
+        "/api/ai-sprite",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            prompt,
+            gridWidth: project.grid_width,
+            gridHeight: project.grid_height,
+          }),
+        }
+      );
+      const created = await createAndNavigate(
+        response.gridData,
+        response.name || "AIピクセル"
+      );
+
+      if (!created) {
+        throw new Error("AI描画の画面を作成できませんでした");
+      }
+
+      setShowAiSpriteDialog(false);
     },
     [createAndNavigate, project.grid_height, project.grid_width]
   );
@@ -694,6 +756,7 @@ function DashboardCanvasInner({
             y={contextMenu.screenY}
             onManual={handleCreateManual}
             onScan={handleScan}
+            onAiDraw={handleAiDraw}
             onSelectTemplate={handleSelectTemplate}
             onSelectExisting={handleSelectExisting}
             onImportFile={handleImportFile}
@@ -716,10 +779,17 @@ function DashboardCanvasInner({
           />
         )}
 
+        {showAiSpriteDialog && (
+          <AiSpriteDialog
+            onGenerate={handleAiSpriteGenerate}
+            onClose={handleCloseAiSpriteDialog}
+          />
+        )}
+
         {showCamera && (
           <CameraCapture
             onCapture={handleScanCapture}
-            onClose={() => setShowCamera(false)}
+            onClose={handleCloseCamera}
           />
         )}
 
