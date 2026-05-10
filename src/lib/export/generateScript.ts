@@ -64,8 +64,7 @@ const CSS = `
     box-sizing: border-box;
     background-color: #ffffff;
     direction: ltr;
-    line-height: 1;
-    padding: 0 3px 4px 3px;
+    padding: 1px 3px 3px 3px;
   }
   .ritz .waffle .softmerge { overflow: visible; }
   .ritz .waffle .softmerge-inner {
@@ -75,8 +74,8 @@ const CSS = `
     white-space: nowrap;
   }
   .ritz .waffle .s29 {
-    padding-top: 0;
-    padding-bottom: 5px;
+    padding-top: 1px;
+    padding-bottom: 4px;
   }
   .ritz .waffle .s0 {
     background-color: #ffffff;
