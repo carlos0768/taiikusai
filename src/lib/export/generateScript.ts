@@ -22,9 +22,9 @@ const COLOR_DISPLAY: Record<number, string> = {
 };
 
 const COLUMN_WIDTHS = [39, 47, 101, 39, 47, 101, 39, 47, 101, 39, 47, 101];
-const COLUMN_LABELS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
 const GROUPS_PER_ROW = 4;
 const MIN_SCENE_ROWS = 25;
+const SCRIPT_PAGE_WIDTH = COLUMN_WIDTHS.reduce((sum, width) => sum + width, 0);
 
 function getColorDisplay(scene: SceneData): string {
   if (scene.action === "keep") {
@@ -39,13 +39,13 @@ const CSS = `
   body { font-family: Arial, sans-serif; }
   .script-page {
     box-sizing: border-box;
-    width: 793px;
+    width: ${SCRIPT_PAGE_WIDTH}px;
     background: #fff;
     color: #000;
     font-family: Arial, sans-serif;
   }
   .ritz.grid-container {
-    width: 793px;
+    width: ${SCRIPT_PAGE_WIDTH}px;
     height: auto;
     overflow: visible;
     background: #fff;
@@ -56,7 +56,7 @@ const CSS = `
     border-collapse: collapse;
     border-spacing: 0;
     table-layout: fixed;
-    width: 793px;
+    width: ${SCRIPT_PAGE_WIDTH}px;
   }
   .ritz .waffle a { color: inherit; }
   .ritz .waffle th,
@@ -65,36 +65,6 @@ const CSS = `
     background-color: #ffffff;
     direction: ltr;
     padding: 2px 3px 2px 3px;
-  }
-  .ritz .waffle .row-header,
-  .ritz .waffle .row-header.freezebar-origin-ltr {
-    width: 45px;
-  }
-  .ritz .waffle .freezebar-origin-ltr {
-    height: 23px;
-    background: #efeded;
-    border: 0 solid #c7c7c7;
-    border-right-width: 1px;
-    border-bottom-width: 1px;
-  }
-  .ritz .waffle .column-headers-background,
-  .ritz .waffle .row-headers-background {
-    background: #ffffff;
-    color: #444746;
-    font-family: Arial, sans-serif;
-    font-size: 12px;
-    font-weight: 400;
-    text-align: center;
-    vertical-align: middle;
-    position: relative;
-    z-index: 1;
-  }
-  .ritz .waffle .row-header-wrapper {
-    border-width: 0;
-    line-height: inherit;
-    margin: 0;
-    overflow: hidden;
-    padding: 0;
   }
   .ritz .waffle .softmerge { overflow: visible; }
   .ritz .waffle .softmerge-inner {
@@ -502,12 +472,8 @@ export function getPanelScriptRowLabel(rowIndex: number): string {
   return String(rowIndex + 1);
 }
 
-function rowHeader(rowNumber: number, height: number): string {
-  return `<th id="scriptR${rowNumber - 1}" style="height: ${height}px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: ${height}px">${rowNumber}</div></th>`;
-}
-
 function tableRow(rowNumber: number, height: number, cells: string): string {
-  return `<tr style="height: ${height}px">${rowHeader(rowNumber, height)}${cells}</tr>`;
+  return `<tr style="height: ${height}px" data-row="${rowNumber}">${cells}</tr>`;
 }
 
 function td(className: string, content = "", attrs = ""): string {
@@ -517,14 +483,6 @@ function td(className: string, content = "", attrs = ""): string {
 
 function emptyCells(classNames: string[]): string {
   return classNames.map((className) => td(className)).join("");
-}
-
-function renderColumnHeaders(): string {
-  const cells = COLUMN_WIDTHS.map((width, index) => {
-    return `<th id="scriptC${index}" style="width:${width}px;" class="column-headers-background">${COLUMN_LABELS[index]}</th>`;
-  }).join("");
-
-  return `<thead><tr><th class="row-header freezebar-origin-ltr"></th>${cells}</tr></thead>`;
 }
 
 function getSheetPosition(cellX: number, cellY: number): string {
@@ -651,7 +609,7 @@ function generateScriptContent(
 
   return {
     css: CSS,
-    tableHtml: `<div class="ritz grid-container" dir="ltr"><table class="waffle no-grid" cellspacing="0" cellpadding="0">${renderColumnHeaders()}<tbody>${bodyRows}</tbody></table></div>`,
+    tableHtml: `<div class="ritz grid-container" dir="ltr"><table class="waffle no-grid" cellspacing="0" cellpadding="0"><tbody>${bodyRows}</tbody></table></div>`,
   };
 }
 

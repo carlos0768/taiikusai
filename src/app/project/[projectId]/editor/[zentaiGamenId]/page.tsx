@@ -51,7 +51,7 @@ function createPdfSourceElement(innerHtml: string): HTMLElement {
   element.style.position = "fixed";
   element.style.left = "0";
   element.style.top = "0";
-  element.style.width = "793px";
+  element.style.width = "748px";
   element.style.minHeight = "0";
   element.style.background = "#fff";
   element.style.overflow = "visible";
