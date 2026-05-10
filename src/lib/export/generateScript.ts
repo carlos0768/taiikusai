@@ -73,6 +73,17 @@ const CSS = `
     text-overflow: clip;
     white-space: nowrap;
   }
+  .ritz .waffle .cell-content {
+    display: inline-block;
+    line-height: 1.05;
+    transform: translateY(-2px);
+  }
+  .ritz .waffle .softmerge .cell-content {
+    display: block;
+  }
+  .ritz .waffle .s29 .cell-content {
+    transform: translateY(-3px);
+  }
   .ritz .waffle .s0 {
     background-color: #ffffff;
     text-align: center;
@@ -478,7 +489,10 @@ function tableRow(rowNumber: number, height: number, cells: string): string {
 
 function td(className: string, content = "", attrs = ""): string {
   const attrText = attrs ? ` ${attrs}` : "";
-  return `<td class="${className}"${attrText} dir="ltr">${content}</td>`;
+  const wrappedContent = content
+    ? `<span class="cell-content">${content}</span>`
+    : "";
+  return `<td class="${className}"${attrText} dir="ltr">${wrappedContent}</td>`;
 }
 
 function emptyCells(classNames: string[]): string {

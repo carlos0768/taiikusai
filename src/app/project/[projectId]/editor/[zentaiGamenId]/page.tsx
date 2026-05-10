@@ -93,13 +93,16 @@ async function createPdfBlobFromElement(element: HTMLElement): Promise<Blob> {
   });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
+  const pageInset = 2;
+  const maxImageWidth = pageWidth - pageInset * 2;
+  const maxImageHeight = pageHeight - pageInset * 2;
   const imageData = canvas.toDataURL("image/jpeg", 0.98);
   const canvasRatio = canvas.width / canvas.height;
-  const pageRatio = pageWidth / pageHeight;
+  const pageRatio = maxImageWidth / maxImageHeight;
   const imageWidth =
-    canvasRatio > pageRatio ? pageWidth : pageHeight * canvasRatio;
+    canvasRatio > pageRatio ? maxImageWidth : maxImageHeight * canvasRatio;
   const imageHeight =
-    canvasRatio > pageRatio ? pageWidth / canvasRatio : pageHeight;
+    canvasRatio > pageRatio ? maxImageWidth / canvasRatio : maxImageHeight;
   const x = (pageWidth - imageWidth) / 2;
   const y = (pageHeight - imageHeight) / 2;
 
