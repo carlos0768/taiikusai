@@ -13,6 +13,7 @@ interface ContextMenuProps {
   onManual: () => void;
   onWave: () => void;
   onScan: () => void;
+  onAiDraw: () => void;
   onSelectTemplate: (templateId: string) => void;
   onSelectExisting: (zentaiGamenId: string) => void;
   onImportFile: (type: "xlsx" | "csv") => void;
@@ -29,6 +30,7 @@ export default function ContextMenu({
   onManual,
   onWave,
   onScan,
+  onAiDraw,
   onSelectTemplate,
   onSelectExisting,
   onImportFile,
@@ -80,6 +82,12 @@ export default function ContextMenu({
           className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-foreground hover:bg-accent/10 transition-colors"
         >
           <span>スキャン</span>
+        </button>
+        <button
+          onClick={onAiDraw}
+          className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-foreground hover:bg-accent/10 transition-colors"
+        >
+          <span>AI描画</span>
         </button>
         <button
           onClick={onManual}
