@@ -66,6 +66,45 @@ function waitForFrame(): Promise<void> {
   });
 }
 
+async function createPdfBlobFromElement(element: HTMLElement): Promise<Blob> {
+  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+    import("html2canvas"),
+    import("jspdf"),
+  ]);
+
+  const canvas = await html2canvas(element, {
+    scale: 2,
+    useCORS: true,
+    backgroundColor: "#ffffff",
+    windowWidth: 794,
+    scrollX: 0,
+    scrollY: 0,
+  });
+  const pdf = new jsPDF({
+    unit: "mm",
+    format: "a4",
+    orientation: "portrait",
+  });
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const imageHeight = (canvas.height * pageWidth) / canvas.width;
+  const imageData = canvas.toDataURL("image/jpeg", 0.98);
+
+  let y = 0;
+  let remainingHeight = imageHeight;
+  while (remainingHeight > 0) {
+    if (y !== 0) {
+      pdf.addPage();
+    }
+
+    pdf.addImage(imageData, "JPEG", 0, -y, pageWidth, imageHeight);
+    y += pageHeight;
+    remainingHeight -= pageHeight;
+  }
+
+  return pdf.output("blob");
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -318,7 +357,6 @@ export default function EditorPage() {
       if (!ok) return;
     }
 
-    const html2pdf = (await import("html2pdf.js")).default;
     const zip = new JSZip();
     const rowDigits = String(height).length;
     const colDigits = String(width).length;
@@ -351,22 +389,7 @@ export default function EditorPage() {
 
         try {
           await waitForFrame();
-          pdfBlob = await html2pdf()
-            .set({
-              margin: 0,
-              image: { type: "jpeg", quality: 0.98 },
-              html2canvas: {
-                scale: 2,
-                useCORS: true,
-                backgroundColor: "#ffffff",
-                windowWidth: 794,
-                scrollX: 0,
-                scrollY: 0,
-              },
-              jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-            })
-            .from(pdfSource, "element")
-            .output("blob");
+          pdfBlob = await createPdfBlobFromElement(pdfSource);
         } finally {
           pdfSource.remove();
         }
