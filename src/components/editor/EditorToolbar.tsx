@@ -22,6 +22,8 @@ interface EditorToolbarProps {
   isEditing: boolean;
   onToggleEdit: () => void;
   onExport: () => void;
+  isExporting: boolean;
+  exportLabel: string;
   onToggleMemo: () => void;
   showMemo: boolean;
   isMoveMode: boolean;
@@ -65,6 +67,8 @@ export default function EditorToolbar({
   isEditing,
   onToggleEdit,
   onExport,
+  isExporting,
+  exportLabel,
   onToggleMemo,
   isMoveMode,
   onToggleMove,
@@ -101,9 +105,11 @@ export default function EditorToolbar({
 
         <button
           onClick={onExport}
-          className="px-3 py-1 text-sm text-muted hover:text-foreground transition-colors shrink-0"
+          disabled={isExporting}
+          aria-busy={isExporting}
+          className="min-w-[104px] px-3 py-1 text-center text-sm text-muted hover:text-foreground transition-colors shrink-0 disabled:cursor-wait disabled:opacity-60"
         >
-          パネル出力
+          {exportLabel}
         </button>
 
         <button

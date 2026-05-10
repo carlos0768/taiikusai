@@ -7,6 +7,11 @@ interface SceneData {
   memo: string;
 }
 
+interface ScriptContent {
+  css: string;
+  tableHtml: string;
+}
+
 const COLOR_DISPLAY: Record<number, string> = {
   0: "〇", // white (fold)
   1: "黄",
@@ -25,7 +30,9 @@ function getColorDisplay(scene: SceneData): string {
 
 const CSS = `
 <style>
-  body { margin: 0; padding: 10px; font-family: Arial, sans-serif; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body { font-family: Arial, sans-serif; }
+  .script-page { box-sizing: border-box; width: 100%; padding: 10px; background: #fff; font-family: Arial, sans-serif; }
   .script-table { border-collapse: collapse; width: 100%; }
   .script-table th, .script-table td {
     border: 1px solid #000;
@@ -49,7 +56,7 @@ const CSS = `
   .color-undefined { background: #e5e7eb; color: #9ca3af; }
   .keep { color: #888; font-style: italic; }
   .group-header th { font-size: 10pt; border-bottom: 2px solid #000; }
-  @media print { body { padding: 5mm; } }
+  @media print { .script-page { padding: 5mm; } }
 </style>
 `;
 
@@ -62,6 +69,15 @@ const COLOR_CLASS: Record<number, string> = {
   5: "color-undefined",
 };
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function getPanelScriptRowLabel(rowIndex: number): string {
   if (rowIndex < 26) {
     return String.fromCharCode(65 + rowIndex);
@@ -69,12 +85,12 @@ export function getPanelScriptRowLabel(rowIndex: number): string {
   return String(rowIndex + 1);
 }
 
-export function generateScriptInnerHtml(
+function generateScriptContent(
   cellX: number,
   cellY: number,
   scenes: SceneData[],
   projectName: string
-): string {
+): ScriptContent {
   const position = `${getPanelScriptRowLabel(cellY)}列${cellX + 1}番`;
   const COLS_PER_GROUP = 3; // 番号, 色, 動き
   const GROUPS_PER_ROW = 4;
@@ -96,7 +112,7 @@ export function generateScriptInnerHtml(
 
         tableRows += `<td class="col-num"><b>${scene.sceneNumber}</b></td>`;
         tableRows += `<td class="col-color ${colorClass}">${colorText}</td>`;
-        tableRows += `<td class="col-memo">${scene.memo || ""}</td>`;
+        tableRows += `<td class="col-memo">${escapeHtml(scene.memo || "")}</td>`;
       } else {
         tableRows += `<td class="col-num"></td><td class="col-color"></td><td class="col-memo"></td>`;
       }
@@ -111,21 +127,60 @@ export function generateScriptInnerHtml(
     groupHeaders += `<th class="col-num">番号</th><th class="col-color">色</th><th class="col-memo">動き</th>`;
   }
 
-  return `${CSS}
-<table class="script-table">
+  return {
+    css: CSS,
+    tableHtml: `<table class="script-table">
   <tr class="header-row">
-    <td colspan="${COLS_PER_GROUP * GROUPS_PER_ROW}">${projectName}　パネル台本</td>
+    <td colspan="${COLS_PER_GROUP * GROUPS_PER_ROW}">${escapeHtml(projectName)}　パネル台本</td>
   </tr>
   <tr class="info-row">
     <td colspan="${COLS_PER_GROUP * GROUPS_PER_ROW - 2}" style="text-align:left">
       　　年　　組　　番　氏名
     </td>
     <td colspan="2" style="text-align:right;font-weight:bold;font-size:14pt;border:2px solid #000">
-      ${position}
+      ${escapeHtml(position)}
     </td>
   </tr>
   <tr class="separator"><td colspan="${COLS_PER_GROUP * GROUPS_PER_ROW}"></td></tr>
   <tr class="group-header">${groupHeaders}</tr>
   ${tableRows}
-</table>`;
+</table>`,
+  };
+}
+
+export function generateScriptInnerHtml(
+  cellX: number,
+  cellY: number,
+  scenes: SceneData[],
+  projectName: string
+): string {
+  const content = generateScriptContent(cellX, cellY, scenes, projectName);
+  return `${content.css}
+<div class="script-page">
+${content.tableHtml}
+</div>`;
+}
+
+export function generateScriptHtml(
+  cellX: number,
+  cellY: number,
+  scenes: SceneData[],
+  projectName: string
+): string {
+  const content = generateScriptContent(cellX, cellY, scenes, projectName);
+  const position = `${getPanelScriptRowLabel(cellY)}列${cellX + 1}番`;
+
+  return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>${escapeHtml(projectName)} - ${escapeHtml(position)}</title>
+${content.css}
+</head>
+<body>
+<div class="script-page">
+${content.tableHtml}
+</div>
+</body>
+</html>`;
 }

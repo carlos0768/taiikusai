@@ -40,6 +40,44 @@ interface MeResponse {
   profile: AuthProfile;
 }
 
+interface ExportProgress {
+  completed: number;
+  total: number;
+}
+
+function createPdfSourceElement(innerHtml: string): HTMLElement {
+  const element = document.createElement("div");
+  element.setAttribute("aria-hidden", "true");
+  element.style.position = "absolute";
+  element.style.left = "-10000px";
+  element.style.top = "0";
+  element.style.width = "210mm";
+  element.style.minHeight = "297mm";
+  element.style.background = "#fff";
+  element.style.pointerEvents = "none";
+  element.innerHTML = innerHtml;
+  document.body.appendChild(element);
+  return element;
+}
+
+function waitForFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export default function EditorPage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -173,7 +211,9 @@ export default function EditorPage() {
     [currentBranch, projectId, supabase, zentaiGamenId]
   );
 
-  const handleExport = useCallback(async () => {
+  const handleExport = useCallback(async (
+    onProgress?: (progress: ExportProgress) => void
+  ) => {
     if (!project || !currentBranch) return;
 
     const [{ data: allZg, error: zentaiGamenError }, { data: allConns, error: connectionsError }] =
@@ -282,6 +322,10 @@ export default function EditorPage() {
     const zip = new JSZip();
     const rowDigits = String(height).length;
     const colDigits = String(width).length;
+    const total = width * height;
+    let completed = 0;
+
+    onProgress?.({ completed, total });
 
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
@@ -302,15 +346,28 @@ export default function EditorPage() {
           project.name
         );
 
-        const pdfBlob = await html2pdf()
-          .set({
-            margin: 0,
-            image: { type: "jpeg", quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
-            jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-          })
-          .from(innerHtml, "string")
-          .output("blob");
+        const pdfSource = createPdfSourceElement(innerHtml);
+        let pdfBlob: Blob;
+
+        try {
+          await waitForFrame();
+          pdfBlob = await html2pdf()
+            .set({
+              margin: 0,
+              image: { type: "jpeg", quality: 0.98 },
+              html2canvas: {
+                scale: 2,
+                useCORS: true,
+                backgroundColor: "#ffffff",
+                windowWidth: 794,
+              },
+              jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+            })
+            .from(pdfSource, "element")
+            .output("blob");
+        } finally {
+          pdfSource.remove();
+        }
 
         const rowSort = String(y + 1).padStart(rowDigits, "0");
         const colLabel = String(x + 1).padStart(colDigits, "0");
@@ -318,16 +375,13 @@ export default function EditorPage() {
           `${rowSort}_${getPanelScriptRowLabel(y)}列${colLabel}番.pdf`,
           pdfBlob
         );
+        completed += 1;
+        onProgress?.({ completed, total });
       }
     }
 
     const blob = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${project.name}_パネル台本.zip`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `${project.name}_パネル台本.zip`);
   }, [currentBranch, project, projectId, supabase, zentaiGamenId]);
 
   if (error || !project || !currentBranch || !grid || !zentaiGamen) {
