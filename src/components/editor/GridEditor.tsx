@@ -39,6 +39,11 @@ export interface GridEditorSavePayload {
   motionData?: WaveMotionData | null;
 }
 
+export interface GridEditorExportProgress {
+  completed: number;
+  total: number;
+}
+
 interface GridEditorProps {
   initialGrid: GridData;
   initialAfterGrid: GridData | null;
@@ -51,7 +56,9 @@ interface GridEditorProps {
   initialName: string;
   initialMemo: string;
   onSave: (payload: GridEditorSavePayload) => Promise<void>;
-  onExport: () => void;
+  onExport: (
+    onProgress?: (progress: GridEditorExportProgress) => void
+  ) => Promise<void>;
   auth: AuthProfile;
   currentBranch: ProjectBranch;
   branches: ProjectBranch[];
@@ -142,8 +149,17 @@ export default function GridEditor({
   const [showMemo, setShowMemo] = useState(false);
   const [showWavePreview, setShowWavePreview] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [exportProgress, setExportProgress] =
+    useState<GridEditorExportProgress | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
+  const isExporting = exportProgress !== null;
+  const exportLabel =
+    exportProgress && exportProgress.total > 0
+      ? `出力中 ${exportProgress.completed}/${exportProgress.total}`
+      : isExporting
+        ? "出力中..."
+        : "パネル出力";
 
   useEffect(() => {
     prefetchRoutes(router, [
@@ -323,6 +339,23 @@ export default function GridEditor({
     },
     [activeState, isKeep]
   );
+
+  const handleExport = useCallback(async () => {
+    if (isExporting) return;
+
+    setActionError(null);
+    setExportProgress({ completed: 0, total: 0 });
+
+    try {
+      await onExport(setExportProgress);
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "パネル出力に失敗しました"
+      );
+    } finally {
+      setExportProgress(null);
+    }
+  }, [isExporting, onExport]);
 
   const handleSwitchBranch = useCallback(
     (nextBranchId: string) => {
@@ -519,7 +552,9 @@ export default function GridEditor({
           setIsEditing((prev) => !prev);
           if (isMoveMode) setIsMoveMode(false);
         }}
-        onExport={onExport}
+        onExport={() => void handleExport()}
+        isExporting={isExporting}
+        exportLabel={exportLabel}
         onToggleMemo={() => setShowMemo((prev) => !prev)}
         showMemo={showMemo}
         isMoveMode={isKeep ? false : isMoveMode}
