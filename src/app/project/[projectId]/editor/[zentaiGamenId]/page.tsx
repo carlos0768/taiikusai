@@ -48,6 +48,7 @@ interface ExportProgress {
 function createPdfSourceElement(innerHtml: string): HTMLElement {
   const element = document.createElement("div");
   element.setAttribute("aria-hidden", "true");
+  element.dataset.panelScriptPdfSource = "true";
   element.style.position = "fixed";
   element.style.left = "0";
   element.style.top = "0";
@@ -73,7 +74,7 @@ async function createPdfBlobFromElement(element: HTMLElement): Promise<Blob> {
     import("jspdf"),
   ]);
   const width = Math.ceil(element.scrollWidth);
-  const height = Math.ceil(element.scrollHeight);
+  const height = Math.ceil(element.scrollHeight) + 24;
 
   const canvas = await html2canvas(element, {
     scale: 2,
@@ -85,6 +86,25 @@ async function createPdfBlobFromElement(element: HTMLElement): Promise<Blob> {
     windowHeight: height,
     scrollX: 0,
     scrollY: 0,
+    onclone: (clonedDocument) => {
+      const clonedSource = clonedDocument.querySelector<HTMLElement>(
+        '[data-panel-script-pdf-source="true"]'
+      );
+      if (!clonedSource) return;
+
+      clonedSource.classList.add("pdf-capture");
+      const style = clonedDocument.createElement("style");
+      style.textContent = `
+        .pdf-capture .ritz .waffle .softmerge-inner,
+        .pdf-capture .ritz .waffle .s17,
+        .pdf-capture .ritz .waffle .s21,
+        .pdf-capture .ritz .waffle .s22,
+        .pdf-capture .ritz .waffle .s36 {
+          overflow: visible !important;
+        }
+      `;
+      clonedDocument.head.appendChild(style);
+    },
   });
   const pdf = new jsPDF({
     unit: "mm",
@@ -93,10 +113,10 @@ async function createPdfBlobFromElement(element: HTMLElement): Promise<Blob> {
   });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
-  const pageInset = 2;
+  const pageInset = 4;
   const maxImageWidth = pageWidth - pageInset * 2;
   const maxImageHeight = pageHeight - pageInset * 2;
-  const imageData = canvas.toDataURL("image/jpeg", 0.98);
+  const imageData = canvas.toDataURL("image/png");
   const canvasRatio = canvas.width / canvas.height;
   const pageRatio = maxImageWidth / maxImageHeight;
   const imageWidth =
@@ -106,7 +126,7 @@ async function createPdfBlobFromElement(element: HTMLElement): Promise<Blob> {
   const x = (pageWidth - imageWidth) / 2;
   const y = (pageHeight - imageHeight) / 2;
 
-  pdf.addImage(imageData, "JPEG", x, y, imageWidth, imageHeight);
+  pdf.addImage(imageData, "PNG", x, y, imageWidth, imageHeight);
 
   return pdf.output("blob");
 }
