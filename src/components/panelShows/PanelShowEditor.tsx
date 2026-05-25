@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchJson } from "@/lib/client/api";
 import { READONLY_AUTH_PROFILE } from "@/lib/client/authProfile";
 import { fetchProjectBranchContext } from "@/lib/projectBranches";
+import { decodeGrid } from "@/lib/grid/codec";
+import { COLOR_MAP, type ColorIndex } from "@/lib/grid/types";
 import { getPanelShow, updatePanelShow } from "@/lib/api/panelShows";
 import type {
   AuthProfile,
@@ -94,6 +96,7 @@ export default function PanelShowEditor({
     () => new Map()
   );
   const [panelIds, setPanelIds] = useState<string[]>([]);
+  const [showName, setShowName] = useState("");
   const [hasMissingPanels, setHasMissingPanels] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
 
@@ -140,6 +143,7 @@ export default function PanelShowEditor({
         ((panelRows ?? []) as ZentaiGamen[]).forEach((p) => map.set(p.id, p));
 
         applyShow(show);
+        setShowName(show.name);
         setPanelMap(map);
         setPanelIds(show.panel_ids);
         setHasMissingPanels(
@@ -260,6 +264,64 @@ export default function PanelShowEditor({
   const clampDim = (value: number) =>
     Math.max(MIN_DIM, Math.min(MAX_DIM, Math.round(value) || MIN_DIM));
 
+  const handleExport = useCallback(() => {
+    const PANEL_W = 240;
+    const gap = 4;
+    const pad = 16;
+    const cellH = Math.max(
+      1,
+      Math.round((gridHeight / gridWidth) * PANEL_W)
+    );
+    const totalW = pad * 2 + cols * PANEL_W + (cols - 1) * gap;
+    const totalH = pad * 2 + rows * cellH + (rows - 1) * gap;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = totalW;
+    canvas.height = totalH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, totalW, totalH);
+
+    validPlacements.forEach((p) => {
+      const panel = panelMap.get(p.panel_id);
+      if (!panel) return;
+      const x = pad + p.col * (PANEL_W + gap);
+      const y = pad + p.row * (cellH + gap);
+      const grid = decodeGrid(panel.grid_data, gridWidth, gridHeight);
+      const cw = PANEL_W / grid.width;
+      const ch = cellH / grid.height;
+      for (let gy = 0; gy < grid.height; gy++) {
+        for (let gx = 0; gx < grid.width; gx++) {
+          const idx = grid.cells[gy * grid.width + gx] as ColorIndex;
+          ctx.fillStyle = COLOR_MAP[idx];
+          ctx.fillRect(
+            x + gx * cw,
+            y + gy * ch,
+            Math.ceil(cw),
+            Math.ceil(ch)
+          );
+        }
+      }
+    });
+
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(showName || "panel-show").replace(
+        /[\\/:*?"<>|]/g,
+        "_"
+      )}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, "image/png");
+  }, [cols, rows, gridWidth, gridHeight, validPlacements, panelMap, showName]);
+
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center text-muted">
@@ -323,6 +385,12 @@ export default function PanelShowEditor({
             一部のパネルは削除されています
           </span>
         )}
+        <button
+          onClick={handleExport}
+          className="ml-auto rounded-lg border border-accent/50 bg-accent/10 px-3 py-1.5 text-sm text-accent hover:bg-accent/20 transition-colors"
+        >
+          画像で書き出す
+        </button>
       </div>
 
       <div className="flex-1 overflow-auto p-4">
