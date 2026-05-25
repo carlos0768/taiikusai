@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDrag } from "@use-gesture/react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchJson } from "@/lib/client/api";
@@ -35,6 +35,11 @@ type Cell = { row: number; col: number } | null;
 
 function cellKey(row: number, col: number): string {
   return `${row}-${col}`;
+}
+
+// Rows are labelled with letters increasing upward (bottom row = "A").
+function rowLabel(row: number, totalRows: number): string {
+  return String.fromCharCode(65 + (totalRows - 1 - row));
 }
 
 function applyPlacement(
@@ -268,12 +273,16 @@ export default function PanelShowEditor({
     const PANEL_W = 240;
     const gap = 4;
     const pad = 16;
+    const labelLeft = 28;
+    const labelTop = 22;
     const cellH = Math.max(
       1,
       Math.round((gridHeight / gridWidth) * PANEL_W)
     );
-    const totalW = pad * 2 + cols * PANEL_W + (cols - 1) * gap;
-    const totalH = pad * 2 + rows * cellH + (rows - 1) * gap;
+    const originX = pad + labelLeft;
+    const originY = pad + labelTop;
+    const totalW = originX + pad + cols * PANEL_W + (cols - 1) * gap;
+    const totalH = originY + pad + rows * cellH + (rows - 1) * gap;
 
     const canvas = document.createElement("canvas");
     canvas.width = totalW;
@@ -284,11 +293,25 @@ export default function PanelShowEditor({
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, totalW, totalH);
 
+    // Axis labels: numbers across the top, letters up the left side.
+    ctx.fillStyle = "#6B7280";
+    ctx.font = "bold 14px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (let c = 0; c < cols; c++) {
+      const cx = originX + c * (PANEL_W + gap) + PANEL_W / 2;
+      ctx.fillText(String(c + 1), cx, pad + labelTop / 2);
+    }
+    for (let r = 0; r < rows; r++) {
+      const cy = originY + r * (cellH + gap) + cellH / 2;
+      ctx.fillText(rowLabel(r, rows), pad + labelLeft / 2, cy);
+    }
+
     validPlacements.forEach((p) => {
       const panel = panelMap.get(p.panel_id);
       if (!panel) return;
-      const x = pad + p.col * (PANEL_W + gap);
-      const y = pad + p.row * (cellH + gap);
+      const x = originX + p.col * (PANEL_W + gap);
+      const y = originY + p.row * (cellH + gap);
       const grid = decodeGrid(panel.grid_data, gridWidth, gridHeight);
       const cw = PANEL_W / grid.width;
       const ch = cellH / grid.height;
@@ -402,41 +425,57 @@ export default function PanelShowEditor({
           <div
             className="grid gap-1"
             style={{
-              gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+              gridTemplateColumns: `auto repeat(${cols}, minmax(0, 1fr))`,
             }}
           >
-            {Array.from({ length: rows * cols }).map((_, i) => {
-              const row = Math.floor(i / cols);
-              const col = i % cols;
-              const panelId = placedByCell.get(cellKey(row, col));
-              const panel = panelId ? panelMap.get(panelId) : undefined;
-              return (
-                <div
-                  key={cellKey(row, col)}
-                  data-cell="1"
-                  data-row={row}
-                  data-col={col}
-                  className="relative border border-gray-200 bg-white overflow-hidden flex items-center justify-center"
-                  style={{ aspectRatio }}
-                >
-                  {panel ? (
-                    <div
-                      {...(canEdit
-                        ? bindDrag(panel.id, { row, col } as Cell)
-                        : {})}
-                      className="w-full h-full"
-                      style={{ touchAction: canEdit ? "none" : undefined }}
-                    >
-                      <PanelCanvas
-                        gridData={panel.grid_data}
-                        gridWidth={gridWidth}
-                        gridHeight={gridHeight}
-                      />
-                    </div>
-                  ) : null}
+            {/* Top column-number labels */}
+            <div />
+            {Array.from({ length: cols }).map((_, col) => (
+              <div
+                key={`num-${col}`}
+                className="flex items-end justify-center pb-0.5 text-[10px] font-medium text-gray-500 select-none"
+              >
+                {col + 1}
+              </div>
+            ))}
+
+            {Array.from({ length: rows }).map((_, row) => (
+              <Fragment key={`row-${row}`}>
+                <div className="flex items-center justify-center pr-1 text-[10px] font-medium text-gray-500 select-none">
+                  {rowLabel(row, rows)}
                 </div>
-              );
-            })}
+                {Array.from({ length: cols }).map((_, col) => {
+                  const panelId = placedByCell.get(cellKey(row, col));
+                  const panel = panelId ? panelMap.get(panelId) : undefined;
+                  return (
+                    <div
+                      key={cellKey(row, col)}
+                      data-cell="1"
+                      data-row={row}
+                      data-col={col}
+                      className="relative border border-gray-200 bg-white overflow-hidden flex items-center justify-center"
+                      style={{ aspectRatio }}
+                    >
+                      {panel ? (
+                        <div
+                          {...(canEdit
+                            ? bindDrag(panel.id, { row, col } as Cell)
+                            : {})}
+                          className="w-full h-full"
+                          style={{ touchAction: canEdit ? "none" : undefined }}
+                        >
+                          <PanelCanvas
+                            gridData={panel.grid_data}
+                            gridWidth={gridWidth}
+                            gridHeight={gridHeight}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </Fragment>
+            ))}
           </div>
         </div>
       </div>
