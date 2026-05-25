@@ -144,6 +144,25 @@ export interface CollapsedPanelGroup {
   updated_at: string;
 }
 
+export interface PanelShowPlacement {
+  panel_id: string;
+  row: number;
+  col: number;
+}
+
+export interface PanelShow {
+  id: string;
+  project_id: string;
+  branch_id: string;
+  name: string;
+  panel_ids: string[];
+  rows: number;
+  cols: number;
+  placements: PanelShowPlacement[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Template {
   id: string;
   owner_id: string;

@@ -53,6 +53,10 @@ export default function Sidebar({
         label: "テンプレ",
         href: buildBranchPath(`/project/${projectId}/templates`, branchId),
       },
+      {
+        label: "パネルショー",
+        href: buildBranchPath(`/project/${projectId}/panel-shows`, branchId),
+      },
       ...(showGit
         ? [
             {
