@@ -394,6 +394,7 @@ function DashboardCanvasInner({
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
+  const paneMovedRef = useRef(false);
 
   useEffect(() => {
     if (searchParams.get("ai") === "1") {
@@ -1089,8 +1090,8 @@ function DashboardCanvasInner({
       }
 
       if (multiSelectMode) {
-        setMultiSelectMode(false);
-        setSelectedNodeIds(new Set());
+        longPressStartRef.current = { x: event.clientX, y: event.clientY };
+        paneMovedRef.current = false;
         return;
       }
       if (!canEditCurrentBranch) return;
@@ -1121,9 +1122,12 @@ function DashboardCanvasInner({
 
     const dx = event.clientX - longPressStartRef.current.x;
     const dy = event.clientY - longPressStartRef.current.y;
-    if (Math.sqrt(dx * dx + dy * dy) > 10 && longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
+    if (Math.sqrt(dx * dx + dy * dy) > 10) {
+      paneMovedRef.current = true;
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
     }
   }, []);
 
@@ -1132,8 +1136,15 @@ function DashboardCanvasInner({
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
+    // In multi-select mode, a tap (no drag) on empty space clears the
+    // selection; panning the canvas must not.
+    if (multiSelectMode && longPressStartRef.current && !paneMovedRef.current) {
+      setMultiSelectMode(false);
+      setSelectedNodeIds(new Set());
+    }
     longPressStartRef.current = null;
-  }, []);
+    paneMovedRef.current = false;
+  }, [multiSelectMode]);
 
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node) => {
