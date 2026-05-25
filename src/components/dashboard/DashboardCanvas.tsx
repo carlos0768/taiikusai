@@ -671,6 +671,59 @@ function DashboardCanvasInner({
     zentaiGamenList,
   ]);
 
+  const handleCreatePanelShow = useCallback(async () => {
+    if (!canEditCurrentBranch) return;
+    if (selectedNodeIds.size < 1) return;
+    const ids = Array.from(selectedNodeIds);
+
+    const firstZg = zentaiGamenList.find((item) => item.id === ids[0]);
+    const name = firstZg
+      ? ids.length > 1
+        ? `${firstZg.name} 他${ids.length - 1}枚`
+        : firstZg.name
+      : `${ids.length}枚のパネルショー`;
+
+    const cols = Math.ceil(Math.sqrt(ids.length));
+    const rows = Math.ceil(ids.length / cols);
+
+    const { data, error } = await supabase
+      .from("panel_shows")
+      .insert({
+        project_id: project.id,
+        branch_id: project.active_branch_id,
+        name,
+        panel_ids: ids,
+        rows,
+        cols,
+        placements: [],
+      })
+      .select()
+      .single();
+
+    if (error || !data) {
+      setActionError(error?.message ?? "パネルショーの作成に失敗しました");
+      return;
+    }
+
+    setMultiSelectMode(false);
+    setSelectedNodeIds(new Set());
+    setActionError(null);
+    router.push(
+      buildBranchPath(
+        `/project/${project.id}/panel-shows/${data.id}`,
+        project.active_branch_id
+      )
+    );
+  }, [
+    canEditCurrentBranch,
+    project.active_branch_id,
+    project.id,
+    router,
+    selectedNodeIds,
+    supabase,
+    zentaiGamenList,
+  ]);
+
   const buildNodes = useCallback(
     (nextZentaiGamen: ZentaiGamen[], nextConnections: DBConnection[]): Node[] => {
       const groupedNodeIds = new Set(collapsedGroups.flatMap((g) => g.nodeIds));
@@ -1936,6 +1989,14 @@ function DashboardCanvasInner({
                   className="rounded-lg border border-accent/50 bg-accent/10 px-3 py-2 text-sm text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   折りたたむ
+                </button>
+                <span className="mx-1 h-5 w-px bg-card-border" />
+                <button
+                  onClick={() => void handleCreatePanelShow()}
+                  disabled={selectedNodeIds.size < 1}
+                  className="rounded-lg border border-accent/50 bg-accent/10 px-3 py-2 text-sm text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  これでパネルショーを作成する
                 </button>
                 <button
                   onClick={() => {
