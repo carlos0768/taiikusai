@@ -17,6 +17,7 @@ export default function UploadForm() {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ url: string } | null>(null);
+  const [progress, setProgress] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -25,14 +26,16 @@ export default function UploadForm() {
     setStatus("idle");
     setError(null);
     setResult(null);
+    setProgress(0);
   }
 
   async function handleUpload() {
     if (!file) return;
     setStatus("uploading");
     setError(null);
+    setProgress(0);
     try {
-      const { url } = await uploadFile(file);
+      const { url } = await uploadFile(file, (f) => setProgress(f));
       setResult({ url });
       setStatus("done");
     } catch (e) {
@@ -85,6 +88,20 @@ export default function UploadForm() {
           onChange={(e) => pick(e.target.files?.[0] ?? null)}
         />
       </div>
+
+      {uploading && (
+        <div className="mt-4">
+          <div className="h-2 w-full rounded-full bg-card-border overflow-hidden">
+            <div
+              className="h-full bg-accent transition-all"
+              style={{ width: `${Math.round(progress * 100)}%` }}
+            />
+          </div>
+          <p className="text-muted text-xs mt-1 text-right">
+            {Math.round(progress * 100)}%
+          </p>
+        </div>
+      )}
 
       {error && <p className="text-danger text-sm mt-4">{error}</p>}
 
