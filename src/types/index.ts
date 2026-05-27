@@ -35,6 +35,8 @@ export interface Project {
   grid_height: number;
   colors: string[];
   main_branch_requires_admin_approval: boolean;
+  highlight_branch_id: string | null;
+  highlight_start_zentai_gamen_id: string | null;
   created_at: string;
   updated_at: string;
 }

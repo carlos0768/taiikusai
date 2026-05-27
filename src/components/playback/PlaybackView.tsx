@@ -8,12 +8,20 @@ interface PlaybackViewProps {
   frames: GridData[];
   frameNames: string[];
   onBack: () => void;
+  highlightedCell?: { x: number; y: number } | null;
+  showControls?: boolean;
+  autoPlay?: boolean;
+  onCurrentIndexChange?: (index: number) => void;
 }
 
 export default function PlaybackView({
   frames,
   frameNames,
   onBack,
+  highlightedCell = null,
+  showControls = true,
+  autoPlay = false,
+  onCurrentIndexChange,
 }: PlaybackViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -29,6 +37,16 @@ export default function PlaybackView({
     next,
     prev,
   } = usePlayback(frames.length);
+
+  useEffect(() => {
+    if (autoPlay) {
+      play();
+    }
+  }, [autoPlay, play]);
+
+  useEffect(() => {
+    onCurrentIndexChange?.(currentIndex);
+  }, [currentIndex, onCurrentIndexChange]);
 
   // Render current frame
   useEffect(() => {
@@ -82,7 +100,28 @@ export default function PlaybackView({
       ctx.lineTo(canvasW, y * cellH);
       ctx.stroke();
     }
-  }, [currentIndex, frames]);
+
+    if (
+      highlightedCell &&
+      highlightedCell.x >= 0 &&
+      highlightedCell.x < grid.width &&
+      highlightedCell.y >= 0 &&
+      highlightedCell.y < grid.height
+    ) {
+      const lineWidth = Math.max(3, Math.min(cellW, cellH) * 0.16);
+      const inset = lineWidth / 2;
+      ctx.save();
+      ctx.strokeStyle = "#22c55e";
+      ctx.lineWidth = lineWidth;
+      ctx.strokeRect(
+        highlightedCell.x * cellW + inset,
+        highlightedCell.y * cellH + inset,
+        Math.max(0, cellW - lineWidth),
+        Math.max(0, cellH - lineWidth)
+      );
+      ctx.restore();
+    }
+  }, [currentIndex, frames, highlightedCell]);
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -110,73 +149,74 @@ export default function PlaybackView({
         <canvas ref={canvasRef} style={{ imageRendering: "pixelated" }} />
       </div>
 
-      {/* Controls */}
-      <div className="px-4 py-3 border-t border-card-border space-y-3">
-        {/* Progress dots */}
-        <div className="flex items-center justify-center gap-1.5 flex-wrap">
-          {frames.map((_, idx) => (
+      {showControls && (
+        <div className="px-4 py-3 border-t border-card-border space-y-3">
+          {/* Progress dots */}
+          <div className="flex items-center justify-center gap-1.5 flex-wrap">
+            {frames.map((_, idx) => (
+              <button
+                key={idx}
+                onClick={() => {
+                  pause();
+                  // Direct set through goTo equivalent
+                }}
+                className={`w-2.5 h-2.5 rounded-full transition-colors ${
+                  idx === currentIndex
+                    ? "bg-accent"
+                    : idx < currentIndex
+                      ? "bg-accent/40"
+                      : "bg-card-border"
+                }`}
+              />
+            ))}
+          </div>
+
+          {/* Playback buttons */}
+          <div className="flex items-center justify-center gap-4">
             <button
-              key={idx}
-              onClick={() => {
-                pause();
-                // Direct set through goTo equivalent
-              }}
-              className={`w-2.5 h-2.5 rounded-full transition-colors ${
-                idx === currentIndex
-                  ? "bg-accent"
-                  : idx < currentIndex
-                    ? "bg-accent/40"
-                    : "bg-card-border"
-              }`}
+              onClick={stop}
+              className="text-muted hover:text-foreground transition-colors px-2 py-1"
+            >
+              ⏹
+            </button>
+            <button
+              onClick={prev}
+              className="text-muted hover:text-foreground transition-colors px-2 py-1 text-lg"
+            >
+              ⏮
+            </button>
+            <button
+              onClick={isPlaying ? pause : play}
+              className="w-12 h-12 flex items-center justify-center bg-accent text-black rounded-full text-xl hover:opacity-90 transition-opacity"
+            >
+              {isPlaying ? "⏸" : "▶"}
+            </button>
+            <button
+              onClick={next}
+              className="text-muted hover:text-foreground transition-colors px-2 py-1 text-lg"
+            >
+              ⏭
+            </button>
+          </div>
+
+          {/* Speed control */}
+          <div className="flex items-center justify-center gap-3">
+            <span className="text-xs text-muted">速度</span>
+            <input
+              type="range"
+              min={500}
+              max={5000}
+              step={100}
+              value={intervalMs}
+              onChange={(e) => setIntervalMs(Number(e.target.value))}
+              className="w-40 accent-accent"
             />
-          ))}
+            <span className="text-xs text-muted w-12">
+              {(intervalMs / 1000).toFixed(1)}秒
+            </span>
+          </div>
         </div>
-
-        {/* Playback buttons */}
-        <div className="flex items-center justify-center gap-4">
-          <button
-            onClick={stop}
-            className="text-muted hover:text-foreground transition-colors px-2 py-1"
-          >
-            ⏹
-          </button>
-          <button
-            onClick={prev}
-            className="text-muted hover:text-foreground transition-colors px-2 py-1 text-lg"
-          >
-            ⏮
-          </button>
-          <button
-            onClick={isPlaying ? pause : play}
-            className="w-12 h-12 flex items-center justify-center bg-accent text-black rounded-full text-xl hover:opacity-90 transition-opacity"
-          >
-            {isPlaying ? "⏸" : "▶"}
-          </button>
-          <button
-            onClick={next}
-            className="text-muted hover:text-foreground transition-colors px-2 py-1 text-lg"
-          >
-            ⏭
-          </button>
-        </div>
-
-        {/* Speed control */}
-        <div className="flex items-center justify-center gap-3">
-          <span className="text-xs text-muted">速度</span>
-          <input
-            type="range"
-            min={500}
-            max={5000}
-            step={100}
-            value={intervalMs}
-            onChange={(e) => setIntervalMs(Number(e.target.value))}
-            className="w-40 accent-accent"
-          />
-          <span className="text-xs text-muted w-12">
-            {(intervalMs / 1000).toFixed(1)}秒
-          </span>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -51,6 +51,7 @@ export default function Sidebar({
           },
         ]
       : []),
+    { label: "表示ページ", href: `/project/${projectId}/highlight` },
     { label: "設定", href: `/project/${projectId}/settings${query}` },
   ];
 

@@ -23,6 +23,7 @@ import { encodeGrid, decodeGrid } from "@/lib/grid/codec";
 import { createEmptyGrid, type GridData } from "@/lib/grid/types";
 import { parseExcel, parseCsv } from "@/lib/import/parseSpreadsheet";
 import { findPlaybackRoutes } from "@/lib/api/connections";
+import { getPanelColumns } from "@/lib/panelColumns";
 import type {
   AuthProfile,
   Connection as DBConnection,
@@ -37,10 +38,11 @@ import ContextMenu, { type SubMenuItem } from "./ContextMenu";
 import ConnectionEdge from "./ConnectionEdge";
 import NodeDeleteMenu from "./NodeDeleteMenu";
 import PlaybackPanel from "./PlaybackPanel";
+import PanelColumnNode from "./PanelColumnNode";
 import Sidebar from "./Sidebar";
 import ZentaiGamenNode from "./ZentaiGamenNode";
 
-const nodeTypes = { zentaiGamen: ZentaiGamenNode };
+const nodeTypes = { zentaiGamen: ZentaiGamenNode, panelColumn: PanelColumnNode };
 const edgeTypes = { connection: ConnectionEdge };
 
 interface DashboardCanvasProps {
@@ -134,7 +136,32 @@ function DashboardCanvasInner({
   const buildNodes = useCallback(
     (nextZentaiGamen: ZentaiGamen[], nextConnections: DBConnection[]): Node[] => {
       const sourceIds = new Set(nextConnections.map((connection) => connection.source_id));
-      return nextZentaiGamen.map((item) => ({
+      const zentaiGamenMap = new Map(nextZentaiGamen.map((item) => [item.id, item]));
+      const panelColumns = getPanelColumns(nextZentaiGamen, nextConnections);
+      const columnNodes: Node[] =
+        panelColumns.length >= 2
+          ? panelColumns.flatMap((column) => {
+              const startNode = zentaiGamenMap.get(column.startNodeId);
+              if (!startNode) return [];
+
+              return [
+                {
+                  id: `panel-column-${column.startNodeId}`,
+                  type: "panelColumn",
+                  position: {
+                    x: startNode.position_x - 108,
+                    y: startNode.position_y + 34,
+                  },
+                  data: { label: column.label },
+                  draggable: false,
+                  selectable: false,
+                  connectable: false,
+                },
+              ];
+            })
+          : [];
+
+      const panelNodes = nextZentaiGamen.map((item) => ({
         id: item.id,
         type: "zentaiGamen",
         position: { x: item.position_x, y: item.position_y },
@@ -148,6 +175,8 @@ function DashboardCanvasInner({
           onLongPress: handleNodeLongPress,
         },
       }));
+
+      return [...columnNodes, ...panelNodes];
     },
     [
       handleNodeDoubleClick,

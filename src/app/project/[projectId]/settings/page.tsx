@@ -3,7 +3,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { fetchJson } from "@/lib/client/api";
-import type { AuthProfile, Project } from "@/types";
+import { createClient } from "@/lib/supabase/client";
+import { getPanelColumns, type PanelColumn } from "@/lib/panelColumns";
+import type {
+  AuthProfile,
+  BranchContextResponse,
+  Connection,
+  Project,
+  ProjectBranch,
+  ZentaiGamen,
+} from "@/types";
 
 interface UsersResponse {
   users: AuthProfile[];
@@ -39,9 +48,16 @@ export default function SettingsPage() {
   const router = useRouter();
   const projectId = params.projectId as string;
   const branchName = searchParams.get("branch") ?? "main";
+  const [supabase] = useState(() => createClient());
 
   const [profile, setProfile] = useState<AuthProfile | null>(null);
   const [project, setProject] = useState<Project | null>(null);
+  const [branches, setBranches] = useState<ProjectBranch[]>([]);
+  const [displayBranchId, setDisplayBranchId] = useState("");
+  const [displayStartId, setDisplayStartId] = useState("");
+  const [panelColumns, setPanelColumns] = useState<PanelColumn[]>([]);
+  const [loadingPanelColumns, setLoadingPanelColumns] = useState(false);
+  const [savingDisplaySettings, setSavingDisplaySettings] = useState(false);
   const [users, setUsers] = useState<AuthProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,18 +68,97 @@ export default function SettingsPage() {
     isAdmin: false,
   });
 
+  const loadPanelColumns = useCallback(
+    async (branchId: string, preferredStartId?: string | null) => {
+      if (!branchId) {
+        setPanelColumns([]);
+        setDisplayStartId("");
+        return;
+      }
+
+      setLoadingPanelColumns(true);
+
+      try {
+        const [
+          { data: nextZentaiGamen, error: zentaiGamenError },
+          { data: nextConnections, error: connectionsError },
+        ] = await Promise.all([
+          supabase
+            .from("zentai_gamen")
+            .select("*")
+            .eq("project_id", projectId)
+            .eq("branch_id", branchId)
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("connections")
+            .select("*")
+            .eq("project_id", projectId)
+            .eq("branch_id", branchId)
+            .order("sort_order", { ascending: true }),
+        ]);
+
+        if (zentaiGamenError) {
+          throw zentaiGamenError;
+        }
+        if (connectionsError) {
+          throw connectionsError;
+        }
+
+        const nextColumns = getPanelColumns(
+          (nextZentaiGamen ?? []) as ZentaiGamen[],
+          (nextConnections ?? []) as Connection[]
+        );
+        const nextStartId =
+          preferredStartId &&
+          nextColumns.some((column) => column.startNodeId === preferredStartId)
+            ? preferredStartId
+            : nextColumns[0]?.startNodeId ?? "";
+
+        setPanelColumns(nextColumns);
+        setDisplayStartId(nextStartId);
+      } catch (err) {
+        setPanelColumns([]);
+        setDisplayStartId("");
+        setError(
+          err instanceof Error
+            ? err.message
+            : "パネル列を読み込めませんでした"
+        );
+      } finally {
+        setLoadingPanelColumns(false);
+      }
+    },
+    [projectId, supabase]
+  );
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const [me, projectResponse] = await Promise.all([
+      const [me, projectResponse, branchContext] = await Promise.all([
         fetchJson<MeResponse>("/api/auth/me"),
         fetchJson<ProjectResponse>(`/api/projects/${projectId}`),
+        fetchJson<BranchContextResponse>(
+          `/api/projects/${projectId}/branches?branch=${branchName}`
+        ),
       ]);
 
       setProfile(me.profile);
       setProject(projectResponse.project);
+      setBranches(branchContext.branches);
+
+      const configuredBranchId = projectResponse.project.highlight_branch_id;
+      const initialDisplayBranchId =
+        configuredBranchId &&
+        branchContext.branches.some((branch) => branch.id === configuredBranchId)
+          ? configuredBranchId
+          : branchContext.currentBranch.id;
+      setDisplayBranchId(initialDisplayBranchId);
+      await loadPanelColumns(
+        initialDisplayBranchId,
+        projectResponse.project.highlight_start_zentai_gamen_id
+      );
 
       if (me.profile.is_admin || me.profile.permissions.can_manage_accounts) {
         const usersResponse = await fetchJson<UsersResponse>("/api/settings/users");
@@ -76,7 +171,7 @@ export default function SettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [branchName, loadPanelColumns, projectId]);
 
   useEffect(() => {
     void load();
@@ -155,6 +250,40 @@ export default function SettingsPage() {
     }
   }, [project, projectId]);
 
+  const handleDisplayBranchChange = useCallback(
+    (nextBranchId: string) => {
+      setDisplayBranchId(nextBranchId);
+      void loadPanelColumns(nextBranchId);
+    },
+    [loadPanelColumns]
+  );
+
+  const handleUpdateDisplaySettings = useCallback(async () => {
+    if (!project || !profile?.is_admin) return;
+
+    setSavingDisplaySettings(true);
+    setError(null);
+
+    try {
+      const response = await fetchJson<ProjectResponse & { success: boolean }>(
+        `/api/projects/${projectId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            highlightBranchId: displayBranchId,
+            highlightStartZentaiGamenId: displayStartId,
+          }),
+        }
+      );
+
+      setProject(response.project);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "表示設定を更新できませんでした");
+    } finally {
+      setSavingDisplaySettings(false);
+    }
+  }, [displayBranchId, displayStartId, profile?.is_admin, project, projectId]);
+
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -172,6 +301,12 @@ export default function SettingsPage() {
   }
 
   const canManageAccounts = profile.is_admin || profile.permissions.can_manage_accounts;
+  const selectedDisplayBranch = branches.find(
+    (branch) => branch.id === displayBranchId
+  );
+  const selectedDisplayColumn = panelColumns.find(
+    (column) => column.startNodeId === displayStartId
+  );
 
   return (
     <div className="h-full flex flex-col">
@@ -224,6 +359,87 @@ export default function SettingsPage() {
             <p className="text-sm text-muted">
               Git リクエスト通知は各アカウントごとに ON/OFF できます。管理者向け通知は下のアカウント設定から変更できます。
             </p>
+          </section>
+
+          <section className="rounded-xl border border-card-border bg-card p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold">表示ページ</h2>
+                <p className="mt-1 text-sm text-muted">
+                  {selectedDisplayBranch && selectedDisplayColumn
+                    ? `${selectedDisplayBranch.name} / ${selectedDisplayColumn.label}`
+                    : "未設定"}
+                </p>
+              </div>
+              <button
+                onClick={() => router.push(`/project/${projectId}/highlight`)}
+                className="rounded-lg border border-card-border px-4 py-2 text-sm text-foreground hover:border-accent/50 transition-colors"
+              >
+                表示ページを開く
+              </button>
+            </div>
+
+            {!profile.is_admin && (
+              <p className="text-sm text-muted">admin のみ変更できます。</p>
+            )}
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-xs text-muted">ブランチ</span>
+                <select
+                  value={displayBranchId}
+                  disabled={!profile.is_admin || branches.length === 0}
+                  onChange={(event) => handleDisplayBranchChange(event.target.value)}
+                  className="w-full rounded-lg border border-card-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:border-accent disabled:opacity-40"
+                >
+                  {branches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-xs text-muted">パネル列</span>
+                <select
+                  value={displayStartId}
+                  disabled={
+                    !profile.is_admin ||
+                    loadingPanelColumns ||
+                    panelColumns.length === 0
+                  }
+                  onChange={(event) => setDisplayStartId(event.target.value)}
+                  className="w-full rounded-lg border border-card-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:border-accent disabled:opacity-40"
+                >
+                  {panelColumns.length === 0 && (
+                    <option value="">
+                      {loadingPanelColumns ? "読み込み中..." : "パネル列なし"}
+                    </option>
+                  )}
+                  {panelColumns.map((column) => (
+                    <option key={column.startNodeId} value={column.startNodeId}>
+                      {column.label} - {column.startNodeName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => void handleUpdateDisplaySettings()}
+                disabled={
+                  !profile.is_admin ||
+                  !displayBranchId ||
+                  !displayStartId ||
+                  savingDisplaySettings
+                }
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-black hover:opacity-90 transition-opacity disabled:opacity-40"
+              >
+                {savingDisplaySettings ? "保存中..." : "保存"}
+              </button>
+            </div>
           </section>
 
           <section className="rounded-xl border border-card-border bg-card p-5">

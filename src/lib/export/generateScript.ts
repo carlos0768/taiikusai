@@ -6,6 +6,10 @@ interface SceneData {
   memo: string;
 }
 
+interface GenerateScriptOptions {
+  highlightedSceneNumber?: number;
+}
+
 const COLOR_DISPLAY: Record<number, string> = {
   0: "〇", // white
   1: "黄",
@@ -48,6 +52,12 @@ const CSS = `
   .color-black { background: #e0e0e0; }
   .color-blue { background: #cce0ff; }
   .keep { color: #888; font-style: italic; }
+  .highlight-scene {
+    background: #ccff00 !important;
+    color: #111 !important;
+    box-shadow: inset 0 0 0 3px #39ff14;
+    font-weight: bold;
+  }
   .group-header th { font-size: 10pt; border-bottom: 2px solid #000; }
   @media print { body { padding: 5mm; } }
 </style>
@@ -65,7 +75,8 @@ export function generateScriptHtml(
   cellX: number,
   cellY: number,
   scenes: SceneData[],
-  projectName: string
+  projectName: string,
+  options: GenerateScriptOptions = {}
 ): string {
   const position = `${cellY + 1}列${cellX + 1}番`;
   const COLS_PER_GROUP = 3; // 番号, 色, 動き
@@ -89,10 +100,14 @@ export function generateScriptHtml(
         );
         const isKeep = colorText === "keep";
         const colorClass = isKeep ? "keep" : COLOR_CLASS[scene.colorIndex] ?? "";
+        const highlightClass =
+          scene.sceneNumber === options.highlightedSceneNumber
+            ? " highlight-scene"
+            : "";
 
-        tableRows += `<td class="col-num"><b>${scene.sceneNumber}</b></td>`;
-        tableRows += `<td class="col-color ${colorClass}">${colorText}</td>`;
-        tableRows += `<td class="col-memo">${scene.memo || ""}</td>`;
+        tableRows += `<td class="col-num${highlightClass}"><b>${scene.sceneNumber}</b></td>`;
+        tableRows += `<td class="col-color ${colorClass}${highlightClass}">${colorText}</td>`;
+        tableRows += `<td class="col-memo${highlightClass}">${scene.memo || ""}</td>`;
       } else {
         tableRows += `<td class="col-num"></td><td class="col-color"></td><td class="col-memo"></td>`;
       }
