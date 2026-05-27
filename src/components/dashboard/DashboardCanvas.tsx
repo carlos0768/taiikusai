@@ -688,8 +688,8 @@ function DashboardCanvasInner({
           <span className="w-4 h-0.5 bg-foreground" />
         </button>
 
-        <div className="absolute left-16 right-4 top-4 z-20">
-          <div className="rounded-xl border border-card-border bg-card/95 px-3 py-3 backdrop-blur-sm shadow-lg">
+        <div className="absolute left-16 top-4 z-20 max-w-[calc(100%_-_5rem)]">
+          <div className="w-fit max-w-full rounded-xl border border-card-border bg-card/95 px-3 py-3 backdrop-blur-sm shadow-lg">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs uppercase tracking-[0.2em] text-muted">
                 Branch
