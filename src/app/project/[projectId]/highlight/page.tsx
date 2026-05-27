@@ -44,6 +44,29 @@ function parseColumnLetters(value: string) {
   return columnNumber - 1;
 }
 
+function inferGridDimensions(
+  gridData: string,
+  fallbackWidth: number,
+  fallbackHeight: number
+) {
+  const cellCount = atob(gridData).length;
+  const fallbackCellCount = fallbackWidth * fallbackHeight;
+
+  if (cellCount === fallbackCellCount || cellCount <= 0) {
+    return { width: fallbackWidth, height: fallbackHeight };
+  }
+
+  if (cellCount % fallbackHeight === 0) {
+    return { width: cellCount / fallbackHeight, height: fallbackHeight };
+  }
+
+  if (cellCount % fallbackWidth === 0) {
+    return { width: fallbackWidth, height: cellCount / fallbackWidth };
+  }
+
+  return { width: fallbackWidth, height: fallbackHeight };
+}
+
 interface PanelThumbnailProps {
   grid: GridData;
   name: string;
@@ -151,13 +174,19 @@ export default function HighlightPage() {
         );
         setData(response);
         setFrames(
-          response.frames.map((frame) =>
-            decodeGrid(
+          response.frames.map((frame) => {
+            const dimensions = inferGridDimensions(
               frame.gridData,
               response.project.gridWidth,
               response.project.gridHeight
-            )
-          )
+            );
+
+            return decodeGrid(
+              frame.gridData,
+              dimensions.width,
+              dimensions.height
+            );
+          })
         );
       } catch (err) {
         setError(
@@ -174,16 +203,17 @@ export default function HighlightPage() {
   }, [projectId]);
 
   const highlightedCell = useMemo(() => {
-    if (!data) return null;
+    const displayGrid = frames[0];
+    if (!displayGrid) return null;
 
     const rowIndex = parseColumnLetters(alphabetInput);
     const cellNumber = Number(numberInput);
     if (rowIndex === null || !Number.isInteger(cellNumber)) return null;
     if (
       rowIndex < 0 ||
-      rowIndex >= data.project.gridHeight ||
+      rowIndex >= displayGrid.height ||
       cellNumber < 1 ||
-      cellNumber > data.project.gridWidth
+      cellNumber > displayGrid.width
     ) {
       return null;
     }
@@ -192,16 +222,19 @@ export default function HighlightPage() {
       x: cellNumber - 1,
       y: rowIndex,
     };
-  }, [alphabetInput, data, numberInput]);
+  }, [alphabetInput, frames, numberInput]);
 
   const scriptHtml = useMemo(() => {
     if (!data || !highlightedCell || frames.length === 0) return "";
 
     const scenes = frames.map((grid, index) => ({
       sceneNumber: index + 1,
-      colorIndex: grid.cells[
-        highlightedCell.y * data.project.gridWidth + highlightedCell.x
-      ] as ColorIndex,
+      colorIndex:
+        highlightedCell.x < grid.width && highlightedCell.y < grid.height
+          ? (grid.cells[
+              highlightedCell.y * grid.width + highlightedCell.x
+            ] as ColorIndex)
+          : 0,
       memo: data.frames[index]?.memo || "",
     }));
 
@@ -350,7 +383,7 @@ export default function HighlightPage() {
             <input
               type="number"
               min={1}
-              max={data.project.gridWidth}
+              max={frames[0]?.width ?? data.project.gridWidth}
               value={numberInput}
               onChange={(event) => setNumberInput(event.target.value)}
               className="w-24 rounded-lg border border-card-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-400"
