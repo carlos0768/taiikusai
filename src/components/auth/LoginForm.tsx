@@ -2,13 +2,24 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  DEFAULT_AUTH_REDIRECT_PATH,
+  getSafeAuthRedirectPath,
+} from "@/lib/authRedirect";
 
-export default function LoginForm() {
+type LoginFormProps = {
+  redirectTo?: string;
+};
+
+export default function LoginForm({
+  redirectTo = DEFAULT_AUTH_REDIRECT_PATH,
+}: LoginFormProps) {
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const safeRedirectTo = getSafeAuthRedirectPath(redirectTo);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -28,7 +39,7 @@ export default function LoginForm() {
         return;
       }
 
-      router.push("/dashboard");
+      router.replace(safeRedirectTo);
       router.refresh();
     } catch {
       setError("エラーが発生しました");

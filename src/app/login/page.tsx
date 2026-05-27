@@ -1,8 +1,18 @@
 import LoginForm from "@/components/auth/LoginForm";
+import { getSafeAuthRedirectPath } from "@/lib/authRedirect";
 
 export const dynamic = "force-dynamic";
 
-export default function LoginPage() {
+type LoginPageProps = {
+  searchParams: Promise<{
+    next?: string | string[];
+  }>;
+};
+
+export default async function LoginPage({ searchParams }: LoginPageProps) {
+  const { next } = await searchParams;
+  const redirectTo = getSafeAuthRedirectPath(next);
+
   return (
     <main
       className="h-full flex items-center justify-center p-4 relative"
@@ -13,7 +23,7 @@ export default function LoginPage() {
       }}
     >
       <div className="bg-card border border-card-border rounded-xl shadow-2xl p-8 w-full max-w-sm">
-        <LoginForm />
+        <LoginForm redirectTo={redirectTo} />
       </div>
     </main>
   );
