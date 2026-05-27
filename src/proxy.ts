@@ -1,7 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { getSafeAuthRedirectPath } from "@/lib/authRedirect";
 
-const PUBLIC_PAGE_PATHS = new Set(["/login"]);
+const LOGIN_PATH = "/login";
+const PUBLIC_PAGE_PATHS = new Set([LOGIN_PATH]);
 
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
@@ -42,13 +44,20 @@ export async function proxy(request: NextRequest) {
     }
 
     const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = "/login";
+    redirectUrl.pathname = LOGIN_PATH;
+    redirectUrl.search = "";
+    redirectUrl.searchParams.set(
+      "next",
+      `${request.nextUrl.pathname}${request.nextUrl.search}`
+    );
     return NextResponse.redirect(redirectUrl);
   }
 
   if (isPublicPage) {
-    const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = "/dashboard";
+    const redirectPath = getSafeAuthRedirectPath(
+      request.nextUrl.searchParams.get("next")
+    );
+    const redirectUrl = new URL(redirectPath, request.url);
     return NextResponse.redirect(redirectUrl);
   }
 

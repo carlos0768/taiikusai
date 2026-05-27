@@ -48,12 +48,14 @@ interface ExportProgress {
 function createPdfSourceElement(innerHtml: string): HTMLElement {
   const element = document.createElement("div");
   element.setAttribute("aria-hidden", "true");
-  element.style.position = "absolute";
-  element.style.left = "-10000px";
+  element.dataset.panelScriptPdfSource = "true";
+  element.style.position = "fixed";
+  element.style.left = "0";
   element.style.top = "0";
-  element.style.width = "210mm";
-  element.style.minHeight = "297mm";
+  element.style.width = "748px";
+  element.style.minHeight = "0";
   element.style.background = "#fff";
+  element.style.overflow = "visible";
   element.style.pointerEvents = "none";
   element.innerHTML = innerHtml;
   document.body.appendChild(element);
@@ -64,6 +66,72 @@ function waitForFrame(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => resolve());
   });
+}
+
+async function createPdfBlobFromElement(element: HTMLElement): Promise<Blob> {
+  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+    import("html2canvas"),
+    import("jspdf"),
+  ]);
+  const width = Math.ceil(element.scrollWidth);
+  const height = Math.ceil(element.scrollHeight) + 24;
+
+  const canvas = await html2canvas(element, {
+    scale: 1.5,
+    useCORS: true,
+    backgroundColor: "#ffffff",
+    width,
+    height,
+    windowWidth: width,
+    windowHeight: height,
+    scrollX: 0,
+    scrollY: 0,
+    onclone: (clonedDocument) => {
+      const clonedSource = clonedDocument.querySelector<HTMLElement>(
+        '[data-panel-script-pdf-source="true"]'
+      );
+      if (!clonedSource) return;
+
+      clonedSource.classList.add("pdf-capture");
+      const style = clonedDocument.createElement("style");
+      style.textContent = `
+        .pdf-capture .ritz .waffle .softmerge-inner,
+        .pdf-capture .ritz .waffle .s17,
+        .pdf-capture .ritz .waffle .s21,
+        .pdf-capture .ritz .waffle .s22,
+        .pdf-capture .ritz .waffle .s36 {
+          overflow: visible !important;
+        }
+      `;
+      clonedDocument.head.appendChild(style);
+    },
+  });
+  const pdf = new jsPDF({
+    unit: "mm",
+    format: "a4",
+    orientation: "portrait",
+  });
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const pageInset = 4;
+  const maxImageWidth = pageWidth - pageInset * 2;
+  const maxImageHeight = pageHeight - pageInset * 2;
+  const imageData = canvas.toDataURL("image/jpeg", 0.92);
+  const canvasRatio = canvas.width / canvas.height;
+  const pageRatio = maxImageWidth / maxImageHeight;
+  const imageWidth =
+    canvasRatio > pageRatio ? maxImageWidth : maxImageHeight * canvasRatio;
+  const imageHeight =
+    canvasRatio > pageRatio ? maxImageWidth / canvasRatio : maxImageHeight;
+  const x = (pageWidth - imageWidth) / 2;
+  const y = (pageHeight - imageHeight) / 2;
+
+  pdf.addImage(imageData, "JPEG", x, y, imageWidth, imageHeight);
+
+  const blob = pdf.output("blob");
+  canvas.width = 0;
+  canvas.height = 0;
+  return blob;
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -318,7 +386,6 @@ export default function EditorPage() {
       if (!ok) return;
     }
 
-    const html2pdf = (await import("html2pdf.js")).default;
     const zip = new JSZip();
     const rowDigits = String(height).length;
     const colDigits = String(width).length;
@@ -351,20 +418,7 @@ export default function EditorPage() {
 
         try {
           await waitForFrame();
-          pdfBlob = await html2pdf()
-            .set({
-              margin: 0,
-              image: { type: "jpeg", quality: 0.98 },
-              html2canvas: {
-                scale: 2,
-                useCORS: true,
-                backgroundColor: "#ffffff",
-                windowWidth: 794,
-              },
-              jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-            })
-            .from(pdfSource, "element")
-            .output("blob");
+          pdfBlob = await createPdfBlobFromElement(pdfSource);
         } finally {
           pdfSource.remove();
         }
