@@ -41,6 +41,7 @@ export async function PATCH(
     const { error: profileError } = await admin
       .from("profiles")
       .update({
+        username: existing.username ?? existing.login_id,
         display_name:
           typeof body.displayName === "string" && body.displayName.trim()
             ? body.displayName.trim()

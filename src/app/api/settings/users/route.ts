@@ -56,6 +56,7 @@ export async function POST(request: Request) {
       password: String(password),
       email_confirm: true,
       user_metadata: {
+        username: normalizedLoginId,
         login_id: normalizedLoginId,
         display_name: String(displayName).trim(),
       },
@@ -68,6 +69,7 @@ export async function POST(request: Request) {
     const nextIsAdmin = Boolean(isAdmin);
     const { error: profileError } = await admin.from("profiles").upsert({
       id: created.user.id,
+      username: normalizedLoginId,
       login_id: normalizedLoginId,
       display_name: String(displayName).trim(),
       is_admin: nextIsAdmin,

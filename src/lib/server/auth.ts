@@ -50,6 +50,7 @@ export async function ensureSeedAdminAccount() {
         password: DEFAULT_ADMIN_PASSWORD,
         email_confirm: true,
         user_metadata: {
+          username: loginId,
           login_id: loginId,
           display_name: DEFAULT_ADMIN_DISPLAY_NAME,
         },
@@ -65,6 +66,7 @@ export async function ensureSeedAdminAccount() {
 
   const { error: upsertProfileError } = await admin.from("profiles").upsert({
     id: userId,
+    username: loginId,
     login_id: loginId,
     display_name: DEFAULT_ADMIN_DISPLAY_NAME,
     is_admin: true,
