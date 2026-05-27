@@ -5,6 +5,7 @@ import {
   normalizeStatus,
   parsePermissionInput,
   requireAdmin,
+  syncPracticeAppMetadata,
 } from "@/lib/server/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { toErrorResponse, HttpError } from "@/lib/server/errors";
@@ -29,8 +30,15 @@ export async function PATCH(
       throw new HttpError(404, "対象ユーザーが見つかりません");
     }
 
-    const nextIsAdmin =
-      typeof body.isAdmin === "boolean" ? body.isAdmin : existing.is_admin;
+    const nextIsPractice =
+      typeof body.isPractice === "boolean"
+        ? body.isPractice
+        : Boolean(existing.is_practice);
+    const nextIsAdmin = nextIsPractice
+      ? false
+      : typeof body.isAdmin === "boolean"
+        ? body.isAdmin
+        : existing.is_admin;
     const nextStatus =
       typeof body.status === "string" ? normalizeStatus(body.status) : existing.status;
 
@@ -47,6 +55,7 @@ export async function PATCH(
             ? body.displayName.trim()
             : existing.display_name,
         is_admin: nextIsAdmin,
+        is_practice: nextIsPractice,
         status: nextStatus,
         git_notifications_enabled:
           typeof body.gitNotificationsEnabled === "boolean"
@@ -64,12 +73,17 @@ export async function PATCH(
       .from("user_permissions")
       .upsert({
         user_id: userId,
-        ...parsePermissionInput(body.permissions, nextIsAdmin),
+        ...parsePermissionInput(
+          nextIsPractice ? { can_view_projects: true } : body.permissions,
+          nextIsAdmin
+        ),
       });
 
     if (permissionError) {
       throw permissionError;
     }
+
+    await syncPracticeAppMetadata(userId, nextIsPractice);
 
     const users = await listProfilesWithPermissions();
     return NextResponse.json({ success: true, users });

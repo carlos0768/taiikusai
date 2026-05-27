@@ -4,6 +4,7 @@ export interface Profile {
   login_id: string;
   display_name: string;
   is_admin: boolean;
+  is_practice: boolean;
   status: "active" | "disabled";
   created_by: string | null;
   git_notifications_enabled: boolean;

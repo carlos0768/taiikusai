@@ -24,7 +24,13 @@ export default function DashboardPage() {
   const router = useRouter();
 
   const canManageProjects =
-    profile?.is_admin || profile?.permissions.can_edit_branch_content;
+    Boolean(profile) &&
+    !profile?.is_practice &&
+    (profile?.is_admin || profile?.permissions.can_edit_branch_content);
+  const canViewProjects =
+    profile?.is_practice ||
+    profile?.is_admin ||
+    profile?.permissions.can_view_projects;
 
   const loadProjects = useCallback(async () => {
     setLoading(true);
@@ -40,7 +46,7 @@ export default function DashboardPage() {
       ]);
 
       setProfile(me);
-      if (me.is_admin || me.permissions.can_view_projects) {
+      if (me.is_practice || me.is_admin || me.permissions.can_view_projects) {
         if (projectResult.error) {
           throw projectResult.error;
         }
@@ -162,7 +168,7 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {!loading && profile && !profile.is_admin && !profile.permissions.can_view_projects && (
+          {!loading && profile && !canViewProjects && (
             <div className="rounded-xl border border-card-border bg-card px-6 py-8 text-center">
               <p className="text-muted">プロジェクトの閲覧権限がありません。</p>
             </div>
@@ -232,7 +238,7 @@ export default function DashboardPage() {
 
           {loading && <p className="text-muted text-center py-12">読み込み中...</p>}
 
-          {!loading && projects.length === 0 && profile && (profile.is_admin || profile.permissions.can_view_projects) && (
+          {!loading && projects.length === 0 && profile && canViewProjects && (
             <div className="text-center py-12">
               <p className="text-muted mb-2">プロジェクトがありません</p>
               <p className="text-sm text-muted">
@@ -248,7 +254,13 @@ export default function DashboardPage() {
               <div
                 key={project.id}
                 className="flex items-center justify-between p-4 bg-card border border-card-border rounded-lg hover:border-accent/50 transition-colors cursor-pointer"
-                onClick={() => router.push(`/project/${project.id}`)}
+                onClick={() =>
+                  router.push(
+                    profile?.is_practice
+                      ? `/project/${project.id}/highlight`
+                      : `/project/${project.id}`
+                  )
+                }
               >
                 <div>
                   <h3 className="font-medium">{project.name}</h3>

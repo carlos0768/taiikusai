@@ -66,6 +66,7 @@ export default function SettingsPage() {
     displayName: "",
     password: "",
     isAdmin: false,
+    isPractice: false,
   });
 
   const loadPanelColumns = useCallback(
@@ -198,6 +199,7 @@ export default function SettingsPage() {
         displayName: "",
         password: "",
         isAdmin: false,
+        isPractice: false,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "アカウントを作成できませんでした");
@@ -214,6 +216,7 @@ export default function SettingsPage() {
             body: JSON.stringify({
               displayName: user.display_name,
               isAdmin: user.is_admin,
+              isPractice: user.is_practice,
               status: user.status,
               gitNotificationsEnabled: user.git_notifications_enabled,
               permissions: user.permissions,
@@ -450,7 +453,7 @@ export default function SettingsPage() {
 
             {canManageAccounts && (
               <>
-                <div className="grid gap-3 md:grid-cols-4">
+                <div className="grid gap-3 md:grid-cols-5">
                   <input
                     value={createForm.loginId}
                     onChange={(event) =>
@@ -489,6 +492,7 @@ export default function SettingsPage() {
                     <input
                       type="checkbox"
                       checked={createForm.isAdmin}
+                      disabled={createForm.isPractice}
                       onChange={(event) =>
                         setCreateForm((prev) => ({
                           ...prev,
@@ -497,6 +501,20 @@ export default function SettingsPage() {
                       }
                     />
                     admin
+                  </label>
+                  <label className="flex items-center gap-2 rounded-lg border border-card-border bg-background px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={createForm.isPractice}
+                      onChange={(event) =>
+                        setCreateForm((prev) => ({
+                          ...prev,
+                          isPractice: event.target.checked,
+                          isAdmin: event.target.checked ? false : prev.isAdmin,
+                        }))
+                      }
+                    />
+                    practice
                   </label>
                 </div>
                 <div className="mt-3 flex justify-end">
@@ -535,6 +553,7 @@ export default function SettingsPage() {
                           <input
                             type="checkbox"
                             checked={user.is_admin}
+                            disabled={user.is_practice}
                             onChange={(event) =>
                               setUsers((prev) =>
                                 prev.map((item) =>
@@ -549,6 +568,39 @@ export default function SettingsPage() {
                             }
                           />
                           admin
+                        </label>
+                        <label className="flex items-center gap-2 text-sm text-muted">
+                          <input
+                            type="checkbox"
+                            checked={user.is_practice}
+                            onChange={(event) =>
+                              setUsers((prev) =>
+                                prev.map((item) =>
+                                  item.id === user.id
+                                    ? {
+                                        ...item,
+                                        is_practice: event.target.checked,
+                                        is_admin: event.target.checked
+                                          ? false
+                                          : item.is_admin,
+                                        permissions: event.target.checked
+                                          ? {
+                                              ...item.permissions,
+                                              can_view_projects: true,
+                                              can_create_branches: false,
+                                              can_edit_branch_content: false,
+                                              can_request_main_merge: false,
+                                              can_view_git_requests: false,
+                                              can_manage_accounts: false,
+                                            }
+                                          : item.permissions,
+                                      }
+                                    : item
+                                )
+                              )
+                            }
+                          />
+                          practice
                         </label>
                         <label className="flex items-center gap-2 text-sm text-muted">
                           <input
@@ -599,7 +651,7 @@ export default function SettingsPage() {
                             <input
                               type="checkbox"
                               checked={Boolean(user.permissions[permission.key])}
-                              disabled={user.is_admin}
+                              disabled={user.is_admin || user.is_practice}
                               onChange={(event) =>
                                 setUsers((prev) =>
                                   prev.map((item) =>
