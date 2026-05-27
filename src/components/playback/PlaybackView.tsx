@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
 import { usePlayback } from "./usePlayback";
 
@@ -25,6 +25,7 @@ export default function PlaybackView({
 }: PlaybackViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef<number | null>(null);
 
   const {
     currentIndex,
@@ -48,20 +49,29 @@ export default function PlaybackView({
     onCurrentIndexChange?.(currentIndex);
   }, [currentIndex, onCurrentIndexChange]);
 
-  // Render current frame
-  useEffect(() => {
+  const renderCurrentFrame = useCallback(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container || frames.length === 0) return;
 
-    const grid = frames[currentIndex];
-    const rect = container.getBoundingClientRect();
+    const grid = frames[Math.min(currentIndex, frames.length - 1)];
+    const styles = window.getComputedStyle(container);
+    const availableWidth =
+      container.clientWidth -
+      Number.parseFloat(styles.paddingLeft || "0") -
+      Number.parseFloat(styles.paddingRight || "0");
+    const availableHeight =
+      container.clientHeight -
+      Number.parseFloat(styles.paddingTop || "0") -
+      Number.parseFloat(styles.paddingBottom || "0");
+
+    if (availableWidth <= 0 || availableHeight <= 0) return;
+
     const dpr = window.devicePixelRatio || 1;
 
-    // Fit grid to container
     const cellSize = Math.min(
-      rect.width / grid.width,
-      rect.height / grid.height
+      availableWidth / grid.width,
+      availableHeight / grid.height
     );
     const canvasW = grid.width * cellSize;
     const canvasH = grid.height * cellSize;
@@ -123,10 +133,42 @@ export default function PlaybackView({
     }
   }, [currentIndex, frames, highlightedCell]);
 
+  const scheduleRender = useCallback(() => {
+    if (rafRef.current !== null) return;
+
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      renderCurrentFrame();
+    });
+  }, [renderCurrentFrame]);
+
+  useEffect(() => {
+    scheduleRender();
+  }, [scheduleRender]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver(() => {
+      scheduleRender();
+    });
+
+    observer.observe(container);
+
+    return () => {
+      observer.disconnect();
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [scheduleRender]);
+
   return (
-    <div className="h-full flex flex-col bg-background">
+    <div className="h-full min-h-0 flex flex-col bg-background">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-card-border">
+      <div className="flex shrink-0 items-center justify-between px-4 py-2 border-b border-card-border">
         <button
           onClick={onBack}
           className="text-muted hover:text-foreground transition-colors text-lg px-2"
@@ -144,13 +186,13 @@ export default function PlaybackView({
       {/* Canvas */}
       <div
         ref={containerRef}
-        className="flex-1 flex items-center justify-center p-4 overflow-hidden"
+        className="min-h-0 flex-1 flex items-center justify-center p-4 overflow-hidden"
       >
         <canvas ref={canvasRef} style={{ imageRendering: "pixelated" }} />
       </div>
 
       {showControls && (
-        <div className="px-4 py-3 border-t border-card-border space-y-3">
+        <div className="shrink-0 px-4 py-3 border-t border-card-border space-y-3">
           {/* Progress dots */}
           <div className="flex items-center justify-center gap-1.5 flex-wrap">
             {frames.map((_, idx) => (

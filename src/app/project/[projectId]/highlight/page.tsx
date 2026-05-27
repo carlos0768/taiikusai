@@ -167,8 +167,8 @@ export default function HighlightPage() {
     : "範囲外";
 
   return (
-    <div className="h-full flex flex-col bg-background">
-      <div className="border-b border-card-border bg-card px-4 py-3">
+    <div className="h-full min-h-0 flex flex-col bg-background">
+      <div className="shrink-0 border-b border-card-border bg-card px-4 py-3">
         <div className="flex flex-wrap items-end gap-3">
           <div className="mr-auto min-w-[220px]">
             <p className="text-xs uppercase tracking-[0.2em] text-muted">
@@ -241,7 +241,7 @@ export default function HighlightPage() {
 
       <div className="min-h-0 flex-1">
         <div className={`h-full min-h-0 ${showScript ? "flex" : ""}`}>
-          <div className={showScript ? "min-w-0 flex-1" : "h-full"}>
+          <div className={showScript ? "h-full min-w-0 flex-1 basis-1/2" : "h-full"}>
             <PlaybackView
               frames={frames}
               frameNames={frameNames}
@@ -254,13 +254,13 @@ export default function HighlightPage() {
           </div>
 
           {showScript && (
-            <div className="min-w-0 flex-1 border-l border-card-border bg-white">
+            <div className="h-full min-w-0 flex-1 basis-1/2 border-l border-card-border bg-white">
               {scriptHtml ? (
                 <iframe
                   title="パネル原稿"
                   srcDoc={scriptHtml}
                   sandbox=""
-                  className="h-full w-full bg-white"
+                  className="block h-full w-full bg-white"
                 />
               ) : (
                 <div className="flex h-full items-center justify-center bg-card text-sm text-muted">
