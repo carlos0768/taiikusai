@@ -95,6 +95,7 @@ export async function GET(
         gridHeight: branch.grid_height,
         defaultPanelDurationMs: branch.default_panel_duration_ms,
         defaultIntervalMs: branch.default_interval_ms,
+        musicData: branch.music_data,
       },
       branch: {
         id: branch.id,

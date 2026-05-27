@@ -580,15 +580,21 @@ function renderSceneRows(
           scene.sceneNumber === options.highlightedSceneNumber
             ? " script-highlight"
             : "";
+        const sceneNumberAttr = `data-scene-number="${scene.sceneNumber}"`;
         const colorText = escapeHtml(getColorDisplay(scene));
         const memo = scene.memo || "";
         const memoClass = getMemoCellClass(memo, isLastSceneRow);
         cells += td(
           `${numClass}${highlightClass}`,
-          escapeHtml(String(scene.sceneNumber))
+          escapeHtml(String(scene.sceneNumber)),
+          sceneNumberAttr
         );
-        cells += td(`${colorClass}${highlightClass}`, colorText);
-        cells += td(`${memoClass}${highlightClass}`, escapeHtmlWithBreaks(memo));
+        cells += td(`${colorClass}${highlightClass}`, colorText, sceneNumberAttr);
+        cells += td(
+          `${memoClass}${highlightClass}`,
+          escapeHtmlWithBreaks(memo),
+          sceneNumberAttr
+        );
       } else {
         cells += td(numClass);
         cells += td(colorClass);
@@ -636,6 +642,50 @@ function generateScriptContent(
   };
 }
 
+function getScriptHighlightRuntime(): string {
+  return `<script>
+(function () {
+  function syncHighlight(sceneNumber) {
+    if (!/^\\d+$/.test(sceneNumber)) return;
+
+    var previous = document.querySelectorAll(".script-highlight");
+    for (var i = 0; i < previous.length; i += 1) {
+      previous[i].classList.remove("script-highlight");
+    }
+
+    var selector = '[data-scene-number="' + sceneNumber + '"]';
+    var highlighted = document.querySelectorAll(selector);
+    for (var j = 0; j < highlighted.length; j += 1) {
+      highlighted[j].classList.add("script-highlight");
+    }
+
+    if (highlighted[0]) {
+      highlighted[0].scrollIntoView({
+        block: "center",
+        inline: "nearest",
+        behavior: "auto"
+      });
+    }
+  }
+
+  window.addEventListener("message", function (event) {
+    var data = event.data || {};
+    if (data.type !== "panel-script-highlight") return;
+    syncHighlight(String(data.sceneNumber || ""));
+  });
+
+  var initial = document.querySelector(".script-highlight");
+  if (initial) {
+    initial.scrollIntoView({
+      block: "center",
+      inline: "nearest",
+      behavior: "auto"
+    });
+  }
+})();
+</script>`;
+}
+
 export function generateScriptInnerHtml(
   cellX: number,
   cellY: number,
@@ -670,7 +720,7 @@ export function generateScriptHtml(
     projectName,
     options
   );
-  const position = `${getPanelScriptRowLabel(cellY)}列${cellX + 1}番`;
+  const position = `${cellX + 1}番${getPanelScriptRowLabel(cellY)}列`;
 
   return `<!DOCTYPE html>
 <html lang="ja">
@@ -683,6 +733,7 @@ ${content.css}
 <div class="script-page">
 ${content.tableHtml}
 </div>
+${getScriptHighlightRuntime()}
 </body>
 </html>`;
 }

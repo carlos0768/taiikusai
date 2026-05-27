@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import PlaybackView from "@/components/playback/PlaybackView";
+import PlaybackView, {
+  type PlaybackViewHandle,
+} from "@/components/playback/PlaybackView";
 import { fetchJson } from "@/lib/client/api";
 import { generateScriptHtml } from "@/lib/export/generateScript";
 import { decodeGrid } from "@/lib/grid/codec";
 import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
 import { buildPlaybackTimeline } from "@/lib/playback/frameBuilder";
-import type { Connection, ZentaiGamen } from "@/types";
+import type { Connection, MusicData, ZentaiGamen } from "@/types";
 
 interface HighlightResponse {
   project: {
@@ -18,6 +20,7 @@ interface HighlightResponse {
     gridHeight: number;
     defaultPanelDurationMs: number;
     defaultIntervalMs: number;
+    musicData: MusicData | null;
   };
   branch: {
     id: string;
@@ -151,17 +154,12 @@ export default function HighlightPage() {
   const [alphabetInput, setAlphabetInput] = useState("A");
   const [numberInput, setNumberInput] = useState("1");
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [showScript, setShowScript] = useState(false);
   const [isPlaybackPlaying, setIsPlaybackPlaying] = useState(false);
-  const [playbackControl, setPlaybackControl] = useState<{
-    action: "play" | "pause" | null;
-    signal: number;
-  }>({ action: null, signal: 0 });
   const [panelDrawerOpen, setPanelDrawerOpen] = useState(false);
-  const [panelSeek, setPanelSeek] = useState({ index: 0, signal: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const scriptFrameRef = useRef<HTMLIFrameElement>(null);
+  const playbackViewRef = useRef<PlaybackViewHandle>(null);
 
   useEffect(() => {
     async function load() {
@@ -257,12 +255,78 @@ export default function HighlightPage() {
       highlightedCell.x,
       highlightedCell.y,
       scenes,
-      data.project.name,
-      {
-        highlightedSceneNumber: Math.min(currentFrameIndex + 1, frames.length),
-      }
+      data.project.name
     );
-  }, [currentFrameIndex, data, frames, highlightedCell]);
+  }, [data, frames, highlightedCell]);
+
+  const syncScriptHighlight = useCallback((frameIndex = currentFrameIndex) => {
+    const scriptFrame = scriptFrameRef.current;
+    if (!scriptFrame) return;
+    const sceneNumber = String(Math.min(frameIndex + 1, frames.length));
+
+    scriptFrame.contentWindow?.postMessage(
+      { type: "panel-script-highlight", sceneNumber },
+      "*"
+    );
+
+    try {
+      const scriptDocument = scriptFrame.contentDocument;
+      if (!scriptDocument) return;
+
+      scriptDocument
+        .querySelectorAll<HTMLElement>(".script-highlight")
+        .forEach((element) => element.classList.remove("script-highlight"));
+
+      const highlightedElements = scriptDocument.querySelectorAll<HTMLElement>(
+        `[data-scene-number="${sceneNumber}"]`
+      );
+      highlightedElements.forEach((element) =>
+        element.classList.add("script-highlight")
+      );
+      const highlightedElement = highlightedElements[0];
+
+      highlightedElement?.scrollIntoView({
+        block: "center",
+        inline: "nearest",
+        behavior: "auto",
+      });
+    } catch {
+      // Sandboxed srcdoc frames can be opaque to the parent; the frame script handles it.
+    }
+  }, [currentFrameIndex, frames.length]);
+
+  const handleCurrentIndexChange = useCallback(
+    (nextIndex: number) => {
+      setCurrentFrameIndex(nextIndex);
+      syncScriptHighlight(nextIndex);
+      window.requestAnimationFrame(() => syncScriptHighlight(nextIndex));
+    },
+    [syncScriptHighlight]
+  );
+
+  useEffect(() => {
+    if (!scriptHtml) return;
+
+    const animationFrameId = window.requestAnimationFrame(syncScriptHighlight);
+    const timeoutId = window.setTimeout(syncScriptHighlight, 50);
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [currentFrameIndex, scriptHtml, syncScriptHighlight]);
+
+  useEffect(() => {
+    if (!isPlaybackPlaying || !scriptHtml) return;
+
+    let animationFrameId: number;
+    const tick = () => {
+      syncScriptHighlight();
+      animationFrameId = window.requestAnimationFrame(tick);
+    };
+
+    animationFrameId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(animationFrameId);
+  }, [isPlaybackPlaying, scriptHtml, syncScriptHighlight]);
 
   if (loading) {
     return (
@@ -291,76 +355,15 @@ export default function HighlightPage() {
   }
 
   const cellDescription = highlightedCell
-    ? `${alphabetInput.trim().toUpperCase()} ${numberInput}`
+    ? `列 ${numberInput} / 行 ${alphabetInput.trim().toUpperCase()}`
     : "範囲外";
 
   return (
     <div className="h-full min-h-0 flex flex-col bg-background">
-      {panelDrawerOpen && (
-        <button
-          type="button"
-          aria-label="パネル一覧を閉じる"
-          onClick={() => setPanelDrawerOpen(false)}
-          className="fixed inset-0 z-40 bg-black/50"
-        />
-      )}
-
-      <aside
-        aria-hidden={!panelDrawerOpen}
-        className={`fixed left-0 top-0 z-50 h-full w-72 max-w-[86vw] border-r border-card-border bg-card shadow-2xl transition-transform duration-200 ${
-          panelDrawerOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
-      >
-        <div className="border-b border-card-border px-4 py-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs uppercase tracking-[0.2em] text-muted">
-                Panels
-              </p>
-              <h2 className="mt-1 truncate text-sm font-semibold text-foreground">
-                {data.panelColumn.label} / {data.branch.name}
-              </h2>
-            </div>
-            <button
-              type="button"
-              onClick={() => setPanelDrawerOpen(false)}
-              className="shrink-0 rounded-lg border border-card-border px-2 py-1 text-sm text-muted hover:text-foreground"
-              aria-label="閉じる"
-            >
-              ×
-            </button>
-          </div>
-        </div>
-        <div className="h-[calc(100%-73px)] space-y-3 overflow-y-auto p-3">
-          {data.frames.map((frame, index) => {
-            const grid = frames[index];
-            if (!grid) return null;
-
-            return (
-              <PanelThumbnail
-                key={frame.id}
-                grid={grid}
-                name={frame.name}
-                index={index}
-                isActive={index === currentFrameIndex}
-                onSelect={(nextIndex) => {
-                  setPanelSeek((prev) => ({
-                    index: nextIndex,
-                    signal: prev.signal + 1,
-                  }));
-                  setCurrentFrameIndex(nextIndex);
-                  setPanelDrawerOpen(false);
-                }}
-              />
-            );
-          })}
-        </div>
-      </aside>
-
       <div className="shrink-0 border-b border-card-border bg-card px-4 py-3">
         <div className="flex flex-wrap items-end gap-3">
           <button
-            onClick={() => setPanelDrawerOpen(true)}
+            onClick={() => setPanelDrawerOpen((prev) => !prev)}
             className="flex h-10 w-10 shrink-0 flex-col items-center justify-center gap-1 rounded-lg border border-card-border bg-background hover:border-accent/50 transition-colors"
             aria-label="パネル一覧"
           >
@@ -379,7 +382,7 @@ export default function HighlightPage() {
           </div>
 
           <label className="block">
-            <span className="mb-1 block text-xs text-muted">アルファベット</span>
+            <span className="mb-1 block text-xs text-muted">行</span>
             <input
               type="text"
               inputMode="text"
@@ -393,7 +396,7 @@ export default function HighlightPage() {
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-xs text-muted">数字</span>
+            <span className="mb-1 block text-xs text-muted">列</span>
             <input
               type="number"
               min={1}
@@ -410,12 +413,13 @@ export default function HighlightPage() {
 
           <button
             type="button"
-            onClick={() =>
-              setPlaybackControl((prev) => ({
-                action: isPlaybackPlaying ? "pause" : "play",
-                signal: prev.signal + 1,
-              }))
-            }
+            onClick={() => {
+              if (isPlaybackPlaying) {
+                playbackViewRef.current?.pause();
+              } else {
+                void playbackViewRef.current?.play();
+              }
+            }}
             disabled={frames.length <= 1}
             className="flex items-center gap-2 rounded-lg border border-card-border bg-background px-4 py-2 text-sm text-foreground hover:border-accent/50 disabled:cursor-not-allowed disabled:opacity-40 transition-colors"
           >
@@ -424,62 +428,85 @@ export default function HighlightPage() {
             </span>
             <span>{isPlaybackPlaying ? "一時停止" : "再生"}</span>
           </button>
-
-          <div className="relative">
-            <button
-              onClick={() => setSettingsOpen((prev) => !prev)}
-              className="rounded-lg border border-card-border bg-background px-4 py-2 text-sm text-foreground hover:border-accent/50 transition-colors"
-            >
-              設定
-            </button>
-
-            {settingsOpen && (
-              <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-56 rounded-lg border border-card-border bg-card p-3 shadow-xl">
-                <button
-                  onClick={() => {
-                    setShowScript((prev) => !prev);
-                    setSettingsOpen(false);
-                  }}
-                  disabled={!highlightedCell}
-                  className={`w-full rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-                    showScript
-                      ? "bg-emerald-400/15 text-emerald-200"
-                      : "text-foreground hover:bg-background"
-                  } disabled:opacity-40`}
-                >
-                  パネル原稿を表示
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       </div>
 
-      <div className="min-h-0 flex-1">
-        <div className={`h-full min-h-0 ${showScript ? "flex" : ""}`}>
-          <div className={showScript ? "h-full min-w-0 flex-1 basis-1/2" : "h-full"}>
-            <PlaybackView
-              timeline={timeline}
-              highlightedCell={highlightedCell}
-              showControls={false}
-              autoPlay={false}
-              onCurrentIndexChange={setCurrentFrameIndex}
-              onPlayingChange={setIsPlaybackPlaying}
-              seekIndex={panelSeek.index}
-              seekSignal={panelSeek.signal}
-              playbackAction={playbackControl.action}
-              playbackSignal={playbackControl.signal}
-              onBack={() => router.push(`/project/${projectId}`)}
-            />
-          </div>
+      <div className="min-h-0 flex-1 flex">
+        <aside
+          aria-hidden={!panelDrawerOpen}
+          className={`min-h-0 shrink-0 overflow-hidden border-r border-card-border bg-card transition-[width] duration-200 ${
+            panelDrawerOpen ? "w-72" : "w-0"
+          }`}
+        >
+          <div className="flex h-full w-72 flex-col">
+            <div className="shrink-0 border-b border-card-border px-4 py-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted">
+                    Panels
+                  </p>
+                  <h2 className="mt-1 truncate text-sm font-semibold text-foreground">
+                    {data.panelColumn.label} / {data.branch.name}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPanelDrawerOpen(false)}
+                  className="shrink-0 rounded-lg border border-card-border px-2 py-1 text-sm text-muted hover:text-foreground"
+                  aria-label="閉じる"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+              {data.frames.map((frame, index) => {
+                const grid = frames[index];
+                if (!grid) return null;
 
-          {showScript && (
+                return (
+                  <PanelThumbnail
+                    key={frame.id}
+                    grid={grid}
+                    name={frame.name}
+                    index={index}
+                    isActive={index === currentFrameIndex}
+                    onSelect={(nextIndex) => {
+                      playbackViewRef.current?.goTo(nextIndex);
+                      setCurrentFrameIndex(nextIndex);
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        </aside>
+
+        <div className="min-h-0 min-w-0 flex-1">
+          <div className="flex h-full min-h-0">
+            <div className="h-full min-w-0 flex-1 basis-1/2">
+              <PlaybackView
+                ref={playbackViewRef}
+                timeline={timeline}
+                musicData={data.project.musicData}
+                showBackButton={false}
+                highlightedCell={highlightedCell}
+                showControls={false}
+                autoPlay={false}
+                onCurrentIndexChange={handleCurrentIndexChange}
+                onPlayingChange={setIsPlaybackPlaying}
+                onBack={() => router.push(`/project/${projectId}`)}
+              />
+            </div>
+
             <div className="h-full min-w-0 flex-1 basis-1/2 border-l border-card-border bg-white">
               {scriptHtml ? (
                 <iframe
+                  ref={scriptFrameRef}
                   title="パネル原稿"
                   srcDoc={scriptHtml}
-                  sandbox=""
+                  sandbox="allow-scripts allow-same-origin"
+                  onLoad={() => syncScriptHighlight()}
                   className="block h-full w-full bg-white"
                 />
               ) : (
@@ -488,7 +515,7 @@ export default function HighlightPage() {
                 </div>
               )}
             </div>
-          )}
+          </div>
         </div>
       </div>
     </div>

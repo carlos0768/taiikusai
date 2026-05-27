@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  type ForwardedRef,
+} from "react";
 import {
   COLOR_MAP,
   UNDEFINED_COLOR,
@@ -12,12 +20,15 @@ import {
 } from "@/lib/grid/types";
 import type { PlaybackTimeline } from "@/lib/playback/frameBuilder";
 import { msToSecondsString } from "@/lib/playback/timing";
+import type { MusicData } from "@/types";
 import { usePlayback } from "./usePlayback";
 import { createMasterClock } from "./masterClock";
 
 interface PlaybackViewProps {
   timeline: PlaybackTimeline;
   onBack: () => void;
+  musicData?: MusicData | null;
+  showBackButton?: boolean;
   highlightedCell?: { x: number; y: number } | null;
   showControls?: boolean;
   autoPlay?: boolean;
@@ -27,6 +38,39 @@ interface PlaybackViewProps {
   seekSignal?: number;
   playbackAction?: "play" | "pause" | "toggle" | "stop" | null;
   playbackSignal?: number;
+}
+
+export interface PlaybackViewHandle {
+  play(): Promise<void>;
+  pause(): void;
+  stop(): void;
+  toggle(): Promise<void>;
+  goTo(index: number): void;
+}
+
+interface YTPlayer {
+  playVideo: () => void;
+  pauseVideo: () => void;
+  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
+  getCurrentTime: () => number;
+  destroy: () => void;
+}
+
+interface YouTubeWindow {
+  YT?: {
+    Player: new (
+      element: HTMLElement,
+      config: {
+        height: string;
+        width: string;
+        videoId: string;
+        playerVars?: Record<string, number | string>;
+        events?: {
+          onReady?: (event: { target: YTPlayer }) => void;
+        };
+      }
+    ) => YTPlayer;
+  };
 }
 
 function drawGrid(
@@ -134,9 +178,11 @@ function drawCellHighlight(
   ctx.restore();
 }
 
-export default function PlaybackView({
+function PlaybackViewComponent({
   timeline,
   onBack,
+  musicData = null,
+  showBackButton = true,
   highlightedCell = null,
   showControls = true,
   autoPlay = false,
@@ -146,19 +192,103 @@ export default function PlaybackView({
   seekSignal = 0,
   playbackAction = null,
   playbackSignal = 0,
-}: PlaybackViewProps) {
+}: PlaybackViewProps, ref: ForwardedRef<PlaybackViewHandle>) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const youtubeContainerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
+  const musicDataRef = useRef<MusicData | null>(musicData);
+  const musicSourceTypeRef = useRef<MusicData["source_type"] | null>(
+    musicData?.source_type ?? null
+  );
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const youtubePlayerRef = useRef<YTPlayer | null>(null);
+  const youtubeReadyRef = useRef(false);
   const frames = useMemo(
     () => timeline.frameItems.map((item) => item.frame),
     [timeline.frameItems]
   );
 
-  // 音楽を持たない再生ビュー: getAudioTimeMs は常に null → perf.now() ベースで進む
-  const clock = useMemo(
-    () => createMasterClock({ getAudioTimeMs: () => null }),
+  useEffect(() => {
+    musicDataRef.current = musicData;
+    musicSourceTypeRef.current = musicData?.source_type ?? null;
+  }, [musicData]);
+
+  const isMusicLoaded = useCallback(() => {
+    const sourceType = musicSourceTypeRef.current;
+    if (sourceType === "file") {
+      return Boolean(audioRef.current);
+    }
+    if (sourceType === "youtube") {
+      return Boolean(youtubePlayerRef.current && youtubeReadyRef.current);
+    }
+    return false;
+  }, []);
+
+  const getMusicCurrentTimeSec = useCallback(() => {
+    const sourceType = musicSourceTypeRef.current;
+    if (sourceType === "file") {
+      return audioRef.current?.currentTime ?? 0;
+    }
+    if (sourceType === "youtube") {
+      return youtubePlayerRef.current?.getCurrentTime() ?? 0;
+    }
+    return 0;
+  }, []);
+
+  const getMusicStartSec = useCallback(
+    () => musicDataRef.current?.start_sec ?? 0,
     []
+  );
+
+  const getMusicEndSec = useCallback(
+    () => musicDataRef.current?.end_sec ?? 0,
+    []
+  );
+
+  const playMusic = useCallback(async () => {
+    const sourceType = musicSourceTypeRef.current;
+    if (sourceType === "file") {
+      try {
+        await audioRef.current?.play();
+      } catch {
+        // Browser autoplay policies may reject non-user-initiated playback.
+      }
+    } else if (sourceType === "youtube") {
+      youtubePlayerRef.current?.playVideo();
+    }
+  }, []);
+
+  const pauseMusic = useCallback(() => {
+    const sourceType = musicSourceTypeRef.current;
+    if (sourceType === "file") {
+      audioRef.current?.pause();
+    } else if (sourceType === "youtube") {
+      youtubePlayerRef.current?.pauseVideo();
+    }
+  }, []);
+
+  const seekMusic = useCallback((timeSec: number) => {
+    const safeTime = Math.max(0, timeSec);
+    const sourceType = musicSourceTypeRef.current;
+    if (sourceType === "file" && audioRef.current) {
+      audioRef.current.currentTime = safeTime;
+    } else if (sourceType === "youtube") {
+      youtubePlayerRef.current?.seekTo(safeTime, true);
+    }
+  }, []);
+
+  // The master clock follows the configured music when it is available.
+  const clock = useMemo(
+    () =>
+      // eslint-disable-next-line react-hooks/refs
+      createMasterClock({
+        getAudioTimeMs: () => {
+          if (!isMusicLoaded()) return null;
+          return (getMusicCurrentTimeSec() - getMusicStartSec()) * 1000;
+        },
+      }),
+    [getMusicCurrentTimeSec, getMusicStartSec, isMusicLoaded]
   );
 
   const {
@@ -166,19 +296,172 @@ export default function PlaybackView({
     isPlaying,
     isWhiteFrame,
     frameElapsedMs,
-    play,
-    pause,
-    stop,
-    next,
-    prev,
+    play: startPlayback,
+    pause: pausePlayback,
+    stop: stopPlayback,
     goTo,
   } = usePlayback({ timeline, clock });
 
   useEffect(() => {
-    if (autoPlay) {
-      play();
+    if (musicData?.source_type !== "file" || !musicData.file_url) return;
+
+    const audio = new Audio(musicData.file_url);
+    audio.preload = "auto";
+    audio.currentTime = Math.max(0, musicData.start_sec);
+    audioRef.current = audio;
+
+    return () => {
+      audio.pause();
+      if (audioRef.current === audio) {
+        audioRef.current = null;
+      }
+    };
+  }, [musicData?.file_url, musicData?.source_type, musicData?.start_sec]);
+
+  useEffect(() => {
+    if (musicData?.source_type !== "youtube" || !musicData.video_id) return;
+
+    const container = youtubeContainerRef.current;
+    if (!container) return;
+
+    const scriptSrc = "https://www.youtube.com/iframe_api";
+    if (!document.querySelector(`script[src="${scriptSrc}"]`)) {
+      const script = document.createElement("script");
+      script.src = scriptSrc;
+      document.head.appendChild(script);
     }
-  }, [autoPlay, play]);
+
+    const playerElement = document.createElement("div");
+    container.appendChild(playerElement);
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const waitForApi = () => {
+      if (cancelled) return;
+
+      const youtubeApi = (window as unknown as YouTubeWindow).YT;
+      if (!youtubeApi?.Player) {
+        timeoutId = setTimeout(waitForApi, 100);
+        return;
+      }
+
+      youtubePlayerRef.current = new youtubeApi.Player(playerElement, {
+        height: "0",
+        width: "0",
+        videoId: musicData.video_id ?? "",
+        playerVars: {
+          autoplay: 0,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          modestbranding: 1,
+          playsinline: 1,
+        },
+        events: {
+          onReady: () => {
+            if (!cancelled) {
+              youtubeReadyRef.current = true;
+            }
+          },
+        },
+      });
+    };
+
+    waitForApi();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      youtubeReadyRef.current = false;
+      youtubePlayerRef.current?.destroy();
+      youtubePlayerRef.current = null;
+      if (playerElement.parentNode) {
+        playerElement.parentNode.removeChild(playerElement);
+      }
+    };
+  }, [musicData?.source_type, musicData?.video_id]);
+
+  const handlePlay = useCallback(async () => {
+    if (timeline.frameItems.length === 0) return;
+
+    if (clock.now() >= timeline.totalMs) {
+      clock.reset();
+    }
+
+    if (isMusicLoaded()) {
+      seekMusic(getMusicStartSec() + clock.now() / 1000);
+      await playMusic();
+    }
+
+    startPlayback();
+  }, [
+    clock,
+    getMusicStartSec,
+    isMusicLoaded,
+    playMusic,
+    seekMusic,
+    startPlayback,
+    timeline.frameItems.length,
+    timeline.totalMs,
+  ]);
+
+  const handlePause = useCallback(() => {
+    pauseMusic();
+    pausePlayback();
+  }, [pauseMusic, pausePlayback]);
+
+  const handleStop = useCallback(() => {
+    pauseMusic();
+    if (isMusicLoaded()) {
+      seekMusic(getMusicStartSec());
+    }
+    stopPlayback();
+  }, [getMusicStartSec, isMusicLoaded, pauseMusic, seekMusic, stopPlayback]);
+
+  const handleGoTo = useCallback(
+    (index: number) => {
+      goTo(index);
+      if (isMusicLoaded()) {
+        seekMusic(getMusicStartSec() + clock.now() / 1000);
+      }
+    },
+    [clock, getMusicStartSec, goTo, isMusicLoaded, seekMusic]
+  );
+
+  const handleNext = useCallback(() => {
+    handleGoTo(currentIndex + 1);
+  }, [currentIndex, handleGoTo]);
+
+  const handlePrev = useCallback(() => {
+    handleGoTo(currentIndex - 1);
+  }, [currentIndex, handleGoTo]);
+
+  const handleToggle = useCallback(async () => {
+    if (isPlaying) {
+      handlePause();
+      return;
+    }
+    await handlePlay();
+  }, [handlePause, handlePlay, isPlaying]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      play: handlePlay,
+      pause: handlePause,
+      stop: handleStop,
+      toggle: handleToggle,
+      goTo: handleGoTo,
+    }),
+    [handleGoTo, handlePause, handlePlay, handleStop, handleToggle]
+  );
+
+  useEffect(() => {
+    if (autoPlay) {
+      void handlePlay();
+    }
+  }, [autoPlay, handlePlay]);
 
   useEffect(() => {
     onCurrentIndexChange?.(currentIndex);
@@ -190,24 +473,55 @@ export default function PlaybackView({
 
   useEffect(() => {
     if (seekIndex === null) return;
-    goTo(seekIndex);
-  }, [goTo, seekIndex, seekSignal]);
+    handleGoTo(seekIndex);
+  }, [handleGoTo, seekIndex, seekSignal]);
 
   useEffect(() => {
     if (!playbackAction) return;
 
     if (playbackAction === "play") {
-      play();
+      void handlePlay();
     } else if (playbackAction === "pause") {
-      pause();
+      handlePause();
     } else if (playbackAction === "stop") {
-      stop();
-    } else if (isPlaying) {
-      pause();
+      handleStop();
     } else {
-      play();
+      void handleToggle();
     }
-  }, [isPlaying, pause, play, playbackAction, playbackSignal, stop]);
+  }, [
+    handlePause,
+    handlePlay,
+    handleStop,
+    handleToggle,
+    playbackAction,
+    playbackSignal,
+  ]);
+
+  useEffect(() => {
+    if (!isPlaying) return;
+
+    let frameId: number;
+    const tick = () => {
+      if (isMusicLoaded()) {
+        const endSec = getMusicEndSec();
+        if (endSec > 0 && getMusicCurrentTimeSec() >= endSec) {
+          handlePause();
+          return;
+        }
+      }
+
+      frameId = requestAnimationFrame(tick);
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
+  }, [
+    getMusicCurrentTimeSec,
+    getMusicEndSec,
+    handlePause,
+    isMusicLoaded,
+    isPlaying,
+  ]);
 
   const renderCurrentFrame = useCallback(() => {
     const canvas = canvasRef.current;
@@ -320,14 +634,24 @@ export default function PlaybackView({
 
   return (
     <div className="h-full min-h-0 flex flex-col bg-background">
+      <div
+        ref={youtubeContainerRef}
+        className="h-0 w-0 overflow-hidden"
+        aria-hidden="true"
+      />
+
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between px-4 py-2 border-b border-card-border">
-        <button
-          onClick={onBack}
-          className="text-muted hover:text-foreground transition-colors text-lg px-2"
-        >
-          ←
-        </button>
+        {showBackButton ? (
+          <button
+            onClick={onBack}
+            className="text-muted hover:text-foreground transition-colors text-lg px-2"
+          >
+            ←
+          </button>
+        ) : (
+          <span className="w-8" aria-hidden="true" />
+        )}
         <span className="text-sm font-medium">
           {headerName}
           {currentFrame?.kind === "keep" && !isWhiteFrame && (
@@ -359,8 +683,8 @@ export default function PlaybackView({
             <button
               key={idx}
               onClick={() => {
-                pause();
-                goTo(idx);
+                handlePause();
+                handleGoTo(idx);
               }}
               className={`w-2.5 h-2.5 rounded-full transition-colors ${
                 idx === currentIndex
@@ -376,25 +700,25 @@ export default function PlaybackView({
         {/* Playback buttons */}
         <div className="flex items-center justify-center gap-4">
           <button
-            onClick={stop}
+            onClick={handleStop}
             className="text-muted hover:text-foreground transition-colors px-2 py-1"
           >
             ⏹
           </button>
           <button
-            onClick={prev}
+            onClick={handlePrev}
             className="text-muted hover:text-foreground transition-colors px-2 py-1 text-lg"
           >
             ⏮
           </button>
           <button
-            onClick={isPlaying ? pause : play}
+            onClick={() => void handleToggle()}
             className="w-12 h-12 flex items-center justify-center bg-accent text-black rounded-full text-xl hover:opacity-90 transition-opacity"
           >
             {isPlaying ? "⏸" : "▶"}
           </button>
           <button
-            onClick={next}
+            onClick={handleNext}
             className="text-muted hover:text-foreground transition-colors px-2 py-1 text-lg"
           >
             ⏭
@@ -410,3 +734,7 @@ export default function PlaybackView({
     </div>
   );
 }
+
+export default forwardRef<PlaybackViewHandle, PlaybackViewProps>(
+  PlaybackViewComponent
+);
