@@ -176,21 +176,21 @@ export default function HighlightPage() {
   const highlightedCell = useMemo(() => {
     if (!data) return null;
 
-    const columnIndex = parseColumnLetters(alphabetInput);
-    const row = Number(numberInput);
-    if (columnIndex === null || !Number.isInteger(row)) return null;
+    const rowIndex = parseColumnLetters(alphabetInput);
+    const cellNumber = Number(numberInput);
+    if (rowIndex === null || !Number.isInteger(cellNumber)) return null;
     if (
-      row < 1 ||
-      row > data.project.gridHeight ||
-      columnIndex < 0 ||
-      columnIndex >= data.project.gridWidth
+      rowIndex < 0 ||
+      rowIndex >= data.project.gridHeight ||
+      cellNumber < 1 ||
+      cellNumber > data.project.gridWidth
     ) {
       return null;
     }
 
     return {
-      x: columnIndex,
-      y: row - 1,
+      x: cellNumber - 1,
+      y: rowIndex,
     };
   }, [alphabetInput, data, numberInput]);
 
@@ -350,7 +350,7 @@ export default function HighlightPage() {
             <input
               type="number"
               min={1}
-              max={data.project.gridHeight}
+              max={data.project.gridWidth}
               value={numberInput}
               onChange={(event) => setNumberInput(event.target.value)}
               className="w-24 rounded-lg border border-card-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-400"
