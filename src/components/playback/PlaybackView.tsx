@@ -12,6 +12,11 @@ interface PlaybackViewProps {
   showControls?: boolean;
   autoPlay?: boolean;
   onCurrentIndexChange?: (index: number) => void;
+  onPlayingChange?: (isPlaying: boolean) => void;
+  seekIndex?: number | null;
+  seekSignal?: number;
+  playbackAction?: "play" | "pause" | "toggle" | "stop" | null;
+  playbackSignal?: number;
 }
 
 export default function PlaybackView({
@@ -22,6 +27,11 @@ export default function PlaybackView({
   showControls = true,
   autoPlay = false,
   onCurrentIndexChange,
+  onPlayingChange,
+  seekIndex = null,
+  seekSignal = 0,
+  playbackAction = null,
+  playbackSignal = 0,
 }: PlaybackViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -37,6 +47,7 @@ export default function PlaybackView({
     stop,
     next,
     prev,
+    goTo,
   } = usePlayback(frames.length);
 
   useEffect(() => {
@@ -48,6 +59,31 @@ export default function PlaybackView({
   useEffect(() => {
     onCurrentIndexChange?.(currentIndex);
   }, [currentIndex, onCurrentIndexChange]);
+
+  useEffect(() => {
+    onPlayingChange?.(isPlaying);
+  }, [isPlaying, onPlayingChange]);
+
+  useEffect(() => {
+    if (seekIndex === null) return;
+    goTo(seekIndex);
+  }, [goTo, seekIndex, seekSignal]);
+
+  useEffect(() => {
+    if (!playbackAction) return;
+
+    if (playbackAction === "play") {
+      play();
+    } else if (playbackAction === "pause") {
+      pause();
+    } else if (playbackAction === "stop") {
+      stop();
+    } else if (isPlaying) {
+      pause();
+    } else {
+      play();
+    }
+  }, [isPlaying, pause, play, playbackAction, playbackSignal, stop]);
 
   const renderCurrentFrame = useCallback(() => {
     const canvas = canvasRef.current;

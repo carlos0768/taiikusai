@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import PlaybackView from "@/components/playback/PlaybackView";
 import { fetchJson } from "@/lib/client/api";
 import { generateScriptHtml } from "@/lib/export/generateScript";
 import { decodeGrid } from "@/lib/grid/codec";
-import type { ColorIndex, GridData } from "@/lib/grid/types";
+import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
 
 interface HighlightResponse {
   project: {
@@ -44,6 +44,80 @@ function parseColumnLetters(value: string) {
   return columnNumber - 1;
 }
 
+interface PanelThumbnailProps {
+  grid: GridData;
+  name: string;
+  index: number;
+  isActive: boolean;
+  onSelect: (index: number) => void;
+}
+
+function PanelThumbnail({
+  grid,
+  name,
+  index,
+  isActive,
+  onSelect,
+}: PanelThumbnailProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const thumbW = 200;
+    const thumbH = Math.round((grid.height / grid.width) * thumbW);
+    canvas.width = thumbW;
+    canvas.height = thumbH;
+
+    const cellW = thumbW / grid.width;
+    const cellH = thumbH / grid.height;
+
+    for (let y = 0; y < grid.height; y += 1) {
+      for (let x = 0; x < grid.width; x += 1) {
+        const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
+        ctx.fillStyle = COLOR_MAP[colorIdx];
+        ctx.fillRect(x * cellW, y * cellH, Math.ceil(cellW), Math.ceil(cellH));
+      }
+    }
+  }, [grid]);
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(index)}
+      className={`w-full rounded-lg border p-2 text-left transition-colors ${
+        isActive
+          ? "border-emerald-400 bg-emerald-400/10"
+          : "border-card-border bg-background/70 hover:border-accent/60"
+      }`}
+    >
+      <canvas
+        ref={canvasRef}
+        className="w-full rounded bg-background"
+        style={{ imageRendering: "pixelated" }}
+      />
+      <div className="mt-2 flex min-w-0 items-center gap-2">
+        <span
+          className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] ${
+            isActive
+              ? "bg-emerald-400 text-black"
+              : "bg-card text-muted"
+          }`}
+        >
+          {index + 1}
+        </span>
+        <span className="min-w-0 truncate text-xs text-foreground">
+          {name || "Untitled"}
+        </span>
+      </div>
+    </button>
+  );
+}
+
 export default function HighlightPage() {
   const params = useParams();
   const router = useRouter();
@@ -56,6 +130,13 @@ export default function HighlightPage() {
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showScript, setShowScript] = useState(false);
+  const [isPlaybackPlaying, setIsPlaybackPlaying] = useState(false);
+  const [playbackControl, setPlaybackControl] = useState<{
+    action: "play" | "pause" | null;
+    signal: number;
+  }>({ action: null, signal: 0 });
+  const [panelDrawerOpen, setPanelDrawerOpen] = useState(false);
+  const [panelSeek, setPanelSeek] = useState({ index: 0, signal: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -168,8 +249,79 @@ export default function HighlightPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col bg-background">
+      {panelDrawerOpen && (
+        <button
+          type="button"
+          aria-label="パネル一覧を閉じる"
+          onClick={() => setPanelDrawerOpen(false)}
+          className="fixed inset-0 z-40 bg-black/50"
+        />
+      )}
+
+      <aside
+        aria-hidden={!panelDrawerOpen}
+        className={`fixed left-0 top-0 z-50 h-full w-72 max-w-[86vw] border-r border-card-border bg-card shadow-2xl transition-transform duration-200 ${
+          panelDrawerOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="border-b border-card-border px-4 py-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs uppercase tracking-[0.2em] text-muted">
+                Panels
+              </p>
+              <h2 className="mt-1 truncate text-sm font-semibold text-foreground">
+                {data.panelColumn.label} / {data.branch.name}
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPanelDrawerOpen(false)}
+              className="shrink-0 rounded-lg border border-card-border px-2 py-1 text-sm text-muted hover:text-foreground"
+              aria-label="閉じる"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+        <div className="h-[calc(100%-73px)] space-y-3 overflow-y-auto p-3">
+          {data.frames.map((frame, index) => {
+            const grid = frames[index];
+            if (!grid) return null;
+
+            return (
+              <PanelThumbnail
+                key={frame.id}
+                grid={grid}
+                name={frame.name}
+                index={index}
+                isActive={index === currentFrameIndex}
+                onSelect={(nextIndex) => {
+                  setPanelSeek((prev) => ({
+                    index: nextIndex,
+                    signal: prev.signal + 1,
+                  }));
+                  setCurrentFrameIndex(nextIndex);
+                  setPanelDrawerOpen(false);
+                }}
+              />
+            );
+          })}
+        </div>
+      </aside>
+
       <div className="shrink-0 border-b border-card-border bg-card px-4 py-3">
         <div className="flex flex-wrap items-end gap-3">
+          <button
+            onClick={() => setPanelDrawerOpen(true)}
+            className="flex h-10 w-10 shrink-0 flex-col items-center justify-center gap-1 rounded-lg border border-card-border bg-background hover:border-accent/50 transition-colors"
+            aria-label="パネル一覧"
+          >
+            <span className="h-0.5 w-4 bg-foreground" />
+            <span className="h-0.5 w-4 bg-foreground" />
+            <span className="h-0.5 w-4 bg-foreground" />
+          </button>
+
           <div className="mr-auto min-w-[220px]">
             <p className="text-xs uppercase tracking-[0.2em] text-muted">
               {data.branch.name} / {data.panelColumn.label}
@@ -209,6 +361,23 @@ export default function HighlightPage() {
             {cellDescription}
           </div>
 
+          <button
+            type="button"
+            onClick={() =>
+              setPlaybackControl((prev) => ({
+                action: isPlaybackPlaying ? "pause" : "play",
+                signal: prev.signal + 1,
+              }))
+            }
+            disabled={frames.length <= 1}
+            className="flex items-center gap-2 rounded-lg border border-card-border bg-background px-4 py-2 text-sm text-foreground hover:border-accent/50 disabled:cursor-not-allowed disabled:opacity-40 transition-colors"
+          >
+            <span className="text-base leading-none">
+              {isPlaybackPlaying ? "⏸" : "▶"}
+            </span>
+            <span>{isPlaybackPlaying ? "一時停止" : "再生"}</span>
+          </button>
+
           <div className="relative">
             <button
               onClick={() => setSettingsOpen((prev) => !prev)}
@@ -247,8 +416,13 @@ export default function HighlightPage() {
               frameNames={frameNames}
               highlightedCell={highlightedCell}
               showControls={false}
-              autoPlay
+              autoPlay={false}
               onCurrentIndexChange={setCurrentFrameIndex}
+              onPlayingChange={setIsPlaybackPlaying}
+              seekIndex={panelSeek.index}
+              seekSignal={panelSeek.signal}
+              playbackAction={playbackControl.action}
+              playbackSignal={playbackControl.signal}
               onBack={() => router.push(`/project/${projectId}`)}
             />
           </div>
