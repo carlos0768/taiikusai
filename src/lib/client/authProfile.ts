@@ -6,6 +6,7 @@ export const READONLY_AUTH_PROFILE: AuthProfile = {
   login_id: "",
   display_name: "",
   is_admin: false,
+  is_practice: false,
   status: "active",
   created_by: null,
   git_notifications_enabled: false,

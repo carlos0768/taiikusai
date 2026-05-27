@@ -4,6 +4,7 @@ export interface Profile {
   login_id: string;
   display_name: string;
   is_admin: boolean;
+  is_practice: boolean;
   status: "active" | "disabled";
   created_by: string | null;
   git_notifications_enabled: boolean;
@@ -62,6 +63,8 @@ export interface Project {
   default_interval_ms: number;
   music_data: MusicData | null;
   main_branch_requires_admin_approval: boolean;
+  highlight_branch_id: string | null;
+  highlight_start_zentai_gamen_id: string | null;
   created_at: string;
   updated_at: string;
 }

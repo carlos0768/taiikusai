@@ -50,8 +50,12 @@ export async function ensureSeedAdminAccount() {
         password: DEFAULT_ADMIN_PASSWORD,
         email_confirm: true,
         user_metadata: {
+          username: loginId,
           login_id: loginId,
           display_name: DEFAULT_ADMIN_DISPLAY_NAME,
+        },
+        app_metadata: {
+          is_practice: false,
         },
       });
 
@@ -68,6 +72,7 @@ export async function ensureSeedAdminAccount() {
     ...buildProfileIdentityFields(loginId),
     display_name: DEFAULT_ADMIN_DISPLAY_NAME,
     is_admin: true,
+    is_practice: false,
     status: "active",
     git_notifications_enabled: true,
   });
@@ -75,6 +80,8 @@ export async function ensureSeedAdminAccount() {
   if (upsertProfileError) {
     throw new Error(upsertProfileError.message);
   }
+
+  await syncPracticeAppMetadata(userId, false);
 
   const { error: permissionsError } = await admin
     .from("user_permissions")
@@ -85,6 +92,29 @@ export async function ensureSeedAdminAccount() {
 
   if (permissionsError) {
     throw new Error(permissionsError.message);
+  }
+}
+
+export async function syncPracticeAppMetadata(
+  userId: string,
+  isPractice: boolean
+) {
+  const admin = createAdminClient();
+  const { data, error } = await admin.auth.admin.getUserById(userId);
+
+  if (error || !data.user) {
+    throw new Error(error?.message ?? "Failed to load auth user metadata");
+  }
+
+  const { error: updateError } = await admin.auth.admin.updateUserById(userId, {
+    app_metadata: {
+      ...(data.user.app_metadata ?? {}),
+      is_practice: isPractice,
+    },
+  });
+
+  if (updateError) {
+    throw new Error(updateError.message);
   }
 }
 

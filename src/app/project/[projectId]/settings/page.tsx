@@ -7,6 +7,7 @@ import { fetchJson } from "@/lib/client/api";
 import { canEditBranch } from "@/lib/client/authProfile";
 import { prefetchRoutes } from "@/lib/client/prefetch";
 import { updateProjectBranchSettings } from "@/lib/api/projects";
+import { getPanelColumns, type PanelColumn } from "@/lib/panelColumns";
 import { buildBranchPath, fetchProjectBranchContext } from "@/lib/projectBranches";
 import {
   MAX_TIMING_MS,
@@ -18,6 +19,7 @@ import { createClient } from "@/lib/supabase/client";
 import type {
   AuthProfile,
   BranchScopedProject,
+  Connection,
   ProjectBranch,
   ProjectBranchMerge,
   ZentaiGamen,
@@ -112,6 +114,11 @@ export default function ProjectSettingsPage() {
   const [project, setProject] = useState<BranchScopedProject | null>(null);
   const [branches, setBranches] = useState<ProjectBranch[]>([]);
   const [currentBranch, setCurrentBranch] = useState<ProjectBranch | null>(null);
+  const [displayBranchId, setDisplayBranchId] = useState("");
+  const [displayStartId, setDisplayStartId] = useState("");
+  const [panelColumns, setPanelColumns] = useState<PanelColumn[]>([]);
+  const [loadingPanelColumns, setLoadingPanelColumns] = useState(false);
+  const [savingDisplaySettings, setSavingDisplaySettings] = useState(false);
   const [branchMerges, setBranchMerges] = useState<ProjectBranchMerge[]>([]);
   const [panelCount, setPanelCount] = useState(0);
   const [wavePanelCount, setWavePanelCount] = useState(0);
@@ -135,10 +142,70 @@ export default function ProjectSettingsPage() {
     displayName: "",
     password: "",
     isAdmin: false,
+    isPractice: false,
   });
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [branchGraphError, setBranchGraphError] = useState<string | null>(null);
+
+  const loadPanelColumns = useCallback(
+    async (branchId: string, preferredStartId?: string | null) => {
+      if (!branchId) {
+        setPanelColumns([]);
+        setDisplayStartId("");
+        return;
+      }
+
+      setLoadingPanelColumns(true);
+
+      try {
+        const [
+          { data: nextZentaiGamen, error: zentaiGamenError },
+          { data: nextConnections, error: connectionsError },
+        ] = await Promise.all([
+          supabase
+            .from("zentai_gamen")
+            .select("*")
+            .eq("project_id", projectId)
+            .eq("branch_id", branchId)
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("connections")
+            .select("*")
+            .eq("project_id", projectId)
+            .eq("branch_id", branchId)
+            .order("sort_order", { ascending: true }),
+        ]);
+
+        if (zentaiGamenError) throw zentaiGamenError;
+        if (connectionsError) throw connectionsError;
+
+        const nextColumns = getPanelColumns(
+          (nextZentaiGamen ?? []) as ZentaiGamen[],
+          (nextConnections ?? []) as Connection[]
+        );
+        const nextStartId =
+          preferredStartId &&
+          nextColumns.some((column) => column.startNodeId === preferredStartId)
+            ? preferredStartId
+            : nextColumns[0]?.startNodeId ?? "";
+
+        setPanelColumns(nextColumns);
+        setDisplayStartId(nextStartId);
+      } catch (error) {
+        setPanelColumns([]);
+        setDisplayStartId("");
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : "パネル列を読み込めませんでした"
+        );
+      } finally {
+        setLoadingPanelColumns(false);
+      }
+    },
+    [projectId, supabase]
+  );
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
@@ -178,6 +245,17 @@ export default function ProjectSettingsPage() {
       setProject(contextResult.projectView);
       setBranches(contextResult.branches);
       setCurrentBranch(contextResult.currentBranch);
+      const configuredBranchId = contextResult.projectView.highlight_branch_id;
+      const initialDisplayBranchId =
+        configuredBranchId &&
+        contextResult.branches.some((branch) => branch.id === configuredBranchId)
+          ? configuredBranchId
+          : contextResult.currentBranch.id;
+      setDisplayBranchId(initialDisplayBranchId);
+      await loadPanelColumns(
+        initialDisplayBranchId,
+        contextResult.projectView.highlight_start_zentai_gamen_id
+      );
       setGridWidth(contextResult.projectView.grid_width);
       setGridHeight(contextResult.projectView.grid_height);
       setSavedPanelMs(contextResult.projectView.default_panel_duration_ms);
@@ -207,7 +285,7 @@ export default function ProjectSettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [projectId, requestedBranchId, supabase]);
+  }, [loadPanelColumns, projectId, requestedBranchId, supabase]);
 
   useEffect(() => {
     void loadSettings();
@@ -278,7 +356,7 @@ export default function ProjectSettingsPage() {
     !hasGridChanges ||
     !isGridFormValid ||
     !canEditCurrentBranch;
-  const isBusy = resizeSaving || timingSaving;
+  const isBusy = resizeSaving || timingSaving || savingDisplaySettings;
 
   async function handleResizeSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -393,6 +471,7 @@ export default function ProjectSettingsPage() {
         displayName: "",
         password: "",
         isAdmin: false,
+        isPractice: false,
       });
       setLoadError(null);
     } catch (error) {
@@ -413,6 +492,7 @@ export default function ProjectSettingsPage() {
           body: JSON.stringify({
             displayName: user.display_name,
             isAdmin: user.is_admin,
+            isPractice: user.is_practice,
             status: user.status,
             gitNotificationsEnabled: user.git_notifications_enabled,
             permissions: user.permissions,
@@ -431,6 +511,56 @@ export default function ProjectSettingsPage() {
     }
   }, []);
 
+  const handleDisplayBranchChange = useCallback(
+    (nextBranchId: string) => {
+      setDisplayBranchId(nextBranchId);
+      void loadPanelColumns(nextBranchId);
+    },
+    [loadPanelColumns]
+  );
+
+  const handleUpdateDisplaySettings = useCallback(async () => {
+    if (!project || !profile?.is_admin) return;
+
+    setSavingDisplaySettings(true);
+    setLoadError(null);
+
+    try {
+      const response = await fetchJson<{
+        project: {
+          highlight_branch_id: string | null;
+          highlight_start_zentai_gamen_id: string | null;
+        };
+      }>(
+        `/api/projects/${projectId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            highlightBranchId: displayBranchId,
+            highlightStartZentaiGamenId: displayStartId,
+          }),
+        }
+      );
+
+      setProject((current) =>
+        current
+          ? {
+              ...current,
+              highlight_branch_id: response.project.highlight_branch_id,
+              highlight_start_zentai_gamen_id:
+                response.project.highlight_start_zentai_gamen_id,
+            }
+          : current
+      );
+    } catch (error) {
+      setLoadError(
+        error instanceof Error ? error.message : "表示設定を更新できませんでした"
+      );
+    } finally {
+      setSavingDisplaySettings(false);
+    }
+  }, [displayBranchId, displayStartId, profile?.is_admin, project, projectId]);
+
   const backHref = project
     ? buildBranchPath(`/project/${projectId}`, project.active_branch_id)
     : `/project/${projectId}`;
@@ -446,6 +576,13 @@ export default function ProjectSettingsPage() {
       </div>
     );
   }
+
+  const selectedDisplayBranch = branches.find(
+    (branch) => branch.id === displayBranchId
+  );
+  const selectedDisplayColumn = panelColumns.find(
+    (column) => column.startNodeId === displayStartId
+  );
 
   return (
     <main className="h-full flex flex-col">
@@ -529,6 +666,89 @@ export default function ProjectSettingsPage() {
                 admin 承認制
               </span>
             </div>
+          </section>
+
+          <section className="rounded-xl border border-card-border bg-card p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="font-medium">表示ページ</h2>
+                <p className="mt-1 text-sm text-muted">
+                  {selectedDisplayBranch && selectedDisplayColumn
+                    ? `${selectedDisplayBranch.name} / ${selectedDisplayColumn.label}`
+                    : "表示するブランチとパネル列を選択してください。"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => router.push(`/project/${projectId}/highlight`)}
+                className="rounded-lg border border-card-border px-4 py-2 text-sm text-foreground hover:border-accent/50 transition-colors"
+              >
+                表示ページを開く
+              </button>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
+              <label className="block">
+                <span className="mb-1 block text-xs text-muted">ブランチ</span>
+                <select
+                  value={displayBranchId}
+                  disabled={!profile?.is_admin || branches.length === 0}
+                  onChange={(event) => handleDisplayBranchChange(event.target.value)}
+                  className="w-full rounded-lg border border-card-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:border-accent disabled:opacity-40"
+                >
+                  {branches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-xs text-muted">パネル列</span>
+                <select
+                  value={displayStartId}
+                  disabled={
+                    !profile?.is_admin ||
+                    loadingPanelColumns ||
+                    panelColumns.length === 0
+                  }
+                  onChange={(event) => setDisplayStartId(event.target.value)}
+                  className="w-full rounded-lg border border-card-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:border-accent disabled:opacity-40"
+                >
+                  {panelColumns.length === 0 && (
+                    <option value="">
+                      {loadingPanelColumns ? "読み込み中..." : "パネル列なし"}
+                    </option>
+                  )}
+                  {panelColumns.map((column) => (
+                    <option key={column.startNodeId} value={column.startNodeId}>
+                      {column.label} - {column.startNodeName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <button
+                type="button"
+                onClick={() => void handleUpdateDisplaySettings()}
+                disabled={
+                  !profile?.is_admin ||
+                  savingDisplaySettings ||
+                  !displayBranchId ||
+                  !displayStartId
+                }
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-black hover:opacity-90 disabled:opacity-50"
+              >
+                {savingDisplaySettings ? "保存中..." : "保存"}
+              </button>
+            </div>
+
+            {!profile?.is_admin && (
+              <p className="mt-3 text-sm text-muted">
+                表示ページの対象変更には admin 権限が必要です。
+              </p>
+            )}
           </section>
 
           <form
@@ -730,7 +950,7 @@ export default function ProjectSettingsPage() {
 
             {canManageAccounts && (
               <>
-                <div className="grid gap-3 md:grid-cols-4">
+                <div className="grid gap-3 md:grid-cols-5">
                   <input
                     value={createForm.loginId}
                     onChange={(event) =>
@@ -769,6 +989,7 @@ export default function ProjectSettingsPage() {
                     <input
                       type="checkbox"
                       checked={createForm.isAdmin}
+                      disabled={createForm.isPractice}
                       onChange={(event) =>
                         setCreateForm((prev) => ({
                           ...prev,
@@ -777,6 +998,20 @@ export default function ProjectSettingsPage() {
                       }
                     />
                     admin
+                  </label>
+                  <label className="flex items-center gap-2 rounded-lg border border-card-border bg-background px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={createForm.isPractice}
+                      onChange={(event) =>
+                        setCreateForm((prev) => ({
+                          ...prev,
+                          isPractice: event.target.checked,
+                          isAdmin: event.target.checked ? false : prev.isAdmin,
+                        }))
+                      }
+                    />
+                    practice
                   </label>
                 </div>
 
@@ -816,6 +1051,7 @@ export default function ProjectSettingsPage() {
                           <input
                             type="checkbox"
                             checked={user.is_admin}
+                            disabled={user.is_practice}
                             onChange={(event) =>
                               setUsers((prev) =>
                                 prev.map((item) =>
@@ -827,6 +1063,39 @@ export default function ProjectSettingsPage() {
                             }
                           />
                           admin
+                        </label>
+                        <label className="flex items-center gap-2 text-sm text-muted">
+                          <input
+                            type="checkbox"
+                            checked={user.is_practice}
+                            onChange={(event) =>
+                              setUsers((prev) =>
+                                prev.map((item) =>
+                                  item.id === user.id
+                                    ? {
+                                        ...item,
+                                        is_admin: event.target.checked
+                                          ? false
+                                          : item.is_admin,
+                                        is_practice: event.target.checked,
+                                        permissions: event.target.checked
+                                          ? {
+                                              ...item.permissions,
+                                              can_view_projects: true,
+                                              can_create_branches: false,
+                                              can_edit_branch_content: false,
+                                              can_request_main_merge: false,
+                                              can_view_git_requests: false,
+                                              can_manage_accounts: false,
+                                            }
+                                          : item.permissions,
+                                      }
+                                    : item
+                                )
+                              )
+                            }
+                          />
+                          practice
                         </label>
                         <label className="flex items-center gap-2 text-sm text-muted">
                           <input
@@ -876,8 +1145,12 @@ export default function ProjectSettingsPage() {
                           >
                             <input
                               type="checkbox"
-                              checked={Boolean(user.permissions[permission.key])}
-                              disabled={user.is_admin}
+                              checked={
+                                user.is_practice && permission.key === "can_view_projects"
+                                  ? true
+                                  : Boolean(user.permissions[permission.key])
+                              }
+                              disabled={user.is_admin || user.is_practice}
                               onChange={(event) =>
                                 setUsers((prev) =>
                                   prev.map((item) =>

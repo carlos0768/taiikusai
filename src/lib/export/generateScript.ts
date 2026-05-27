@@ -12,6 +12,10 @@ interface ScriptContent {
   tableHtml: string;
 }
 
+interface GenerateScriptOptions {
+  highlightedSceneNumber?: number;
+}
+
 const COLOR_DISPLAY: Record<number, string> = {
   0: "〇", // white (fold)
   1: "黄",
@@ -449,6 +453,12 @@ const CSS = `
     overflow: hidden;
     word-wrap: break-word;
   }
+  .ritz .waffle .script-highlight {
+    background: #ccff00 !important;
+    color: #111111 !important;
+    box-shadow: inset 0 0 0 3px #39ff14;
+    font-weight: bold;
+  }
 </style>
 `;
 
@@ -549,7 +559,11 @@ function getMemoCellClass(memo: string, isLastSceneRow: boolean): string {
   return memo.length > 18 || /\r|\n/.test(memo) ? "s22" : "s21";
 }
 
-function renderSceneRows(scenes: SceneData[], rowsPerPage: number): string {
+function renderSceneRows(
+  scenes: SceneData[],
+  rowsPerPage: number,
+  options: GenerateScriptOptions = {}
+): string {
   let tableRows = "";
 
   for (let row = 0; row < rowsPerPage; row += 1) {
@@ -562,12 +576,25 @@ function renderSceneRows(scenes: SceneData[], rowsPerPage: number): string {
       const colorClass = isLastSceneRow ? "s24" : "s19";
 
       if (scene) {
+        const highlightClass =
+          scene.sceneNumber === options.highlightedSceneNumber
+            ? " script-highlight"
+            : "";
+        const sceneNumberAttr = `data-scene-number="${scene.sceneNumber}"`;
         const colorText = escapeHtml(getColorDisplay(scene));
         const memo = scene.memo || "";
         const memoClass = getMemoCellClass(memo, isLastSceneRow);
-        cells += td(numClass, escapeHtml(String(scene.sceneNumber)));
-        cells += td(colorClass, colorText);
-        cells += td(memoClass, escapeHtmlWithBreaks(memo));
+        cells += td(
+          `${numClass}${highlightClass}`,
+          escapeHtml(String(scene.sceneNumber)),
+          sceneNumberAttr
+        );
+        cells += td(`${colorClass}${highlightClass}`, colorText, sceneNumberAttr);
+        cells += td(
+          `${memoClass}${highlightClass}`,
+          escapeHtmlWithBreaks(memo),
+          sceneNumberAttr
+        );
       } else {
         cells += td(numClass);
         cells += td(colorClass);
@@ -596,7 +623,8 @@ function generateScriptContent(
   cellX: number,
   cellY: number,
   scenes: SceneData[],
-  projectName: string
+  projectName: string,
+  options: GenerateScriptOptions = {}
 ): ScriptContent {
   const rowsPerPage = Math.max(
     MIN_SCENE_ROWS,
@@ -604,7 +632,8 @@ function generateScriptContent(
   );
   const bodyRows = `${renderHeaderRows(cellX, cellY, projectName)}${renderSceneRows(
     scenes,
-    rowsPerPage
+    rowsPerPage,
+    options
   )}${renderFooterRow(rowsPerPage + 7)}`;
 
   return {
@@ -613,13 +642,64 @@ function generateScriptContent(
   };
 }
 
+function getScriptHighlightRuntime(): string {
+  return `<script>
+(function () {
+  function syncHighlight(sceneNumber) {
+    if (!/^\\d+$/.test(sceneNumber)) return;
+
+    var previous = document.querySelectorAll(".script-highlight");
+    for (var i = 0; i < previous.length; i += 1) {
+      previous[i].classList.remove("script-highlight");
+    }
+
+    var selector = '[data-scene-number="' + sceneNumber + '"]';
+    var highlighted = document.querySelectorAll(selector);
+    for (var j = 0; j < highlighted.length; j += 1) {
+      highlighted[j].classList.add("script-highlight");
+    }
+
+    if (highlighted[0]) {
+      highlighted[0].scrollIntoView({
+        block: "center",
+        inline: "nearest",
+        behavior: "auto"
+      });
+    }
+  }
+
+  window.addEventListener("message", function (event) {
+    var data = event.data || {};
+    if (data.type !== "panel-script-highlight") return;
+    syncHighlight(String(data.sceneNumber || ""));
+  });
+
+  var initial = document.querySelector(".script-highlight");
+  if (initial) {
+    initial.scrollIntoView({
+      block: "center",
+      inline: "nearest",
+      behavior: "auto"
+    });
+  }
+})();
+</script>`;
+}
+
 export function generateScriptInnerHtml(
   cellX: number,
   cellY: number,
   scenes: SceneData[],
-  projectName: string
+  projectName: string,
+  options: GenerateScriptOptions = {}
 ): string {
-  const content = generateScriptContent(cellX, cellY, scenes, projectName);
+  const content = generateScriptContent(
+    cellX,
+    cellY,
+    scenes,
+    projectName,
+    options
+  );
   return `${content.css}
 <div class="script-page">
 ${content.tableHtml}
@@ -630,10 +710,17 @@ export function generateScriptHtml(
   cellX: number,
   cellY: number,
   scenes: SceneData[],
-  projectName: string
+  projectName: string,
+  options: GenerateScriptOptions = {}
 ): string {
-  const content = generateScriptContent(cellX, cellY, scenes, projectName);
-  const position = `${getPanelScriptRowLabel(cellY)}列${cellX + 1}番`;
+  const content = generateScriptContent(
+    cellX,
+    cellY,
+    scenes,
+    projectName,
+    options
+  );
+  const position = `${cellX + 1}番${getPanelScriptRowLabel(cellY)}列`;
 
   return `<!DOCTYPE html>
 <html lang="ja">
@@ -646,6 +733,7 @@ ${content.css}
 <div class="script-page">
 ${content.tableHtml}
 </div>
+${getScriptHighlightRuntime()}
 </body>
 </html>`;
 }

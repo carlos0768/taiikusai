@@ -5,6 +5,15 @@ import { getSafeAuthRedirectPath } from "@/lib/authRedirect";
 const LOGIN_PATH = "/login";
 const PUBLIC_PAGE_PATHS = new Set([LOGIN_PATH]);
 
+function getPracticeHighlightPath(pathname: string) {
+  const segments = pathname.split("/").filter(Boolean);
+
+  if (segments[0] !== "project" || !segments[1]) return null;
+  if (segments[2] === "highlight") return null;
+
+  return `/project/${segments[1]}/highlight`;
+}
+
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isApiRoute = pathname.startsWith("/api/");
@@ -59,6 +68,20 @@ export async function proxy(request: NextRequest) {
     );
     const redirectUrl = new URL(redirectPath, request.url);
     return NextResponse.redirect(redirectUrl);
+  }
+
+  const appMetadata = data.claims.app_metadata as
+    | { is_practice?: boolean }
+    | undefined;
+
+  if (appMetadata?.is_practice === true) {
+    const highlightPath = getPracticeHighlightPath(pathname);
+    if (highlightPath) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = highlightPath;
+      redirectUrl.search = "";
+      return NextResponse.redirect(redirectUrl);
+    }
   }
 
   return response;

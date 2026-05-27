@@ -6,6 +6,7 @@ import {
   normalizeStatus,
   parsePermissionInput,
   requireAdmin,
+  syncPracticeAppMetadata,
 } from "@/lib/server/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loginIdToAuthEmail, normalizeLoginId } from "@/lib/auth";
@@ -24,7 +25,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const { profile: actor } = await requireAdmin();
-    const { loginId, displayName, password, isAdmin, status, permissions, gitNotificationsEnabled } =
+    const { loginId, displayName, password, isAdmin, isPractice, status, permissions, gitNotificationsEnabled } =
       await request.json();
 
     const normalizedLoginId = normalizeLoginId(loginId ?? "");
@@ -52,13 +53,19 @@ export async function POST(request: Request) {
     }
 
     const authEmail = loginIdToAuthEmail(normalizedLoginId);
+    const nextIsPractice = Boolean(isPractice);
+    const nextIsAdmin = nextIsPractice ? false : Boolean(isAdmin);
     const { data: created, error: createError } = await admin.auth.admin.createUser({
       email: authEmail,
       password: String(password),
       email_confirm: true,
       user_metadata: {
+        username: normalizedLoginId,
         login_id: normalizedLoginId,
         display_name: String(displayName).trim(),
+      },
+      app_metadata: {
+        is_practice: nextIsPractice,
       },
     });
 
@@ -66,12 +73,12 @@ export async function POST(request: Request) {
       throw new HttpError(400, createError?.message ?? "アカウントを作成できませんでした");
     }
 
-    const nextIsAdmin = Boolean(isAdmin);
     const { error: profileError } = await admin.from("profiles").upsert({
       id: created.user.id,
       ...buildProfileIdentityFields(normalizedLoginId),
       display_name: String(displayName).trim(),
       is_admin: nextIsAdmin,
+      is_practice: nextIsPractice,
       status: normalizeStatus(status),
       created_by: actor.id,
       git_notifications_enabled: gitNotificationsEnabled ?? true,
@@ -85,12 +92,17 @@ export async function POST(request: Request) {
       .from("user_permissions")
       .upsert({
         user_id: created.user.id,
-        ...parsePermissionInput(permissions, nextIsAdmin),
+        ...parsePermissionInput(
+          nextIsPractice ? { can_view_projects: true } : permissions,
+          nextIsAdmin
+        ),
       });
 
     if (permissionError) {
       throw permissionError;
     }
+
+    await syncPracticeAppMetadata(created.user.id, nextIsPractice);
 
     const users = await listProfilesWithPermissions();
     return NextResponse.json({ success: true, users });

@@ -20,6 +20,7 @@ import { MessageCircle } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { decodeGrid, encodeGrid } from "@/lib/grid/codec";
+import { getPanelColumns } from "@/lib/panelColumns";
 import { buildBranchPath } from "@/lib/projectBranches";
 import type {
   AuthProfile,
@@ -65,6 +66,7 @@ import KeepConnectionEditor from "./KeepConnectionEditor";
 import NodeDeleteMenu from "./NodeDeleteMenu";
 import Sidebar from "./Sidebar";
 import PlaybackPanel from "./PlaybackPanel";
+import PanelColumnNode from "./PanelColumnNode";
 import ProjectBranchSwitcher from "./ProjectBranchSwitcher";
 import TextToPanelChat from "@/components/text-to-panel/TextToPanelChat";
 
@@ -75,7 +77,11 @@ interface CollapsedGroup {
   name: string;
 }
 
-const nodeTypes = { zentaiGamen: ZentaiGamenNode, groupNode: GroupNode };
+const nodeTypes = {
+  zentaiGamen: ZentaiGamenNode,
+  groupNode: GroupNode,
+  panelColumn: PanelColumnNode,
+};
 const edgeTypes = { connection: ConnectionEdge };
 const DASHBOARD_VIEWPORT_STORAGE_PREFIX = "taiikusai:dashboardViewport";
 
@@ -732,6 +738,30 @@ function DashboardCanvasInner({
       collapsedGroups.forEach((g) => g.nodeIds.forEach((nid) => nodeIdToGroup.set(nid, g)));
 
       const sourceIds = new Set(nextConnections.map((connection) => connection.source_id));
+      const zentaiGamenMap = new Map(nextZentaiGamen.map((item) => [item.id, item]));
+      const panelColumns = getPanelColumns(nextZentaiGamen, nextConnections);
+      const panelColumnNodes: Node[] =
+        panelColumns.length >= 2
+          ? panelColumns.flatMap((column) => {
+              const startNode = zentaiGamenMap.get(column.startNodeId);
+              if (!startNode) return [];
+
+              return [
+                {
+                  id: `panel-column-${column.startNodeId}`,
+                  type: "panelColumn",
+                  position: {
+                    x: startNode.position_x - 108,
+                    y: startNode.position_y + 34,
+                  },
+                  data: { label: column.label },
+                  draggable: false,
+                  selectable: false,
+                  connectable: false,
+                },
+              ];
+            })
+          : [];
 
       // Regular (non-grouped) zentai-gamen nodes
       const regularNodes: Node[] = nextZentaiGamen
@@ -782,7 +812,7 @@ function DashboardCanvasInner({
         };
       });
 
-      return [...regularNodes, ...groupNodes];
+      return [...panelColumnNodes, ...regularNodes, ...groupNodes];
     },
     [
       collapsedGroups,
