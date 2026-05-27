@@ -7,7 +7,8 @@ import { toErrorResponse, HttpError } from "@/lib/server/errors";
 import {
   createMergeRequest,
   listMergeRequests,
-  resolveBranch,
+  resolveBranchById,
+  resolveMainBranch,
 } from "@/lib/server/pseudoGit";
 
 export async function GET(
@@ -18,7 +19,7 @@ export async function GET(
     const { profile } = await requireAuth();
     const { projectId } = await params;
     const requests = await listMergeRequests(projectId, profile.id, profile.is_admin);
-    return NextResponse.json({ requests });
+    return NextResponse.json({ profile, requests });
   } catch (error) {
     return toErrorResponse(error);
   }
@@ -33,14 +34,22 @@ export async function POST(
     requirePermission(profile, "can_request_main_merge");
 
     const { projectId } = await params;
-    const { branchName, summary } = await request.json();
-    const sourceBranch = await resolveBranch(projectId, branchName);
+    const { branchId, summary } = await request.json();
+    if (!branchId || typeof branchId !== "string") {
+      throw new HttpError(400, "申請元ブランチが指定されていません");
+    }
+
+    const sourceBranch = await resolveBranchById(projectId, branchId);
 
     if (sourceBranch.is_main) {
       throw new HttpError(400, "main からの申請は作成できません");
     }
 
-    const targetBranch = await resolveBranch(projectId, "main");
+    if (!profile.is_admin && sourceBranch.created_by !== profile.id) {
+      throw new HttpError(403, "他アカウントが作成したブランチは申請できません");
+    }
+
+    const targetBranch = await resolveMainBranch(projectId);
     const requestRow = await createMergeRequest({
       projectId,
       sourceBranchId: sourceBranch.id,

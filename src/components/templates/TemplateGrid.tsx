@@ -135,8 +135,6 @@ export default function TemplateGrid({
         className="w-full px-3 py-2 bg-card border border-card-border rounded-lg text-foreground focus:outline-none focus:border-accent"
       />
 
-      {loading && <p className="text-muted text-center py-8">読み込み中...</p>}
-
       {!loading && templates.length === 0 && (
         <p className="text-muted text-center py-8">
           {search ? "検索結果がありません" : "テンプレートがありません"}

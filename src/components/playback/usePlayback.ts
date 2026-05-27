@@ -1,73 +1,141 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  frameStartMs,
+  resolvePlaybackPosition,
+} from "@/lib/playback/resolvePosition";
+import type { PlaybackTimeline } from "@/lib/playback/frameBuilder";
+import type { MasterClock } from "./masterClock";
 
-export function usePlayback(frameCount: number) {
+/**
+ * 再生フック。マスタークロック (clock.now()) から UI 状態を派生させる。
+ *
+ * - 単一の rAF ループのみ。`setTimeout` / 並列タイマーは使わない。
+ * - 音楽プレイヤーの play/pause/seek は呼び出し元の責務 (このフックは clock 操作のみ)。
+ *   音楽あり時、clock 自体が音楽 currentTime を真実とするので構造的にズレない。
+ */
+export function usePlayback(params: {
+  timeline: PlaybackTimeline;
+  clock: MasterClock;
+}) {
+  const { timeline, clock } = params;
+  const totalFrames = timeline.frameItems.length;
+
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [intervalMs, setIntervalMs] = useState(2000);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isWhiteFrame, setIsWhiteFrame] = useState(false);
+  const [frameElapsedMs, setFrameElapsedMs] = useState(0);
+  const [prevFramesLen, setPrevFramesLen] = useState(totalFrames);
 
-  const clearTimer = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
+  // フレーム数が変わったら範囲外を補正・空なら停止
+  if (prevFramesLen !== totalFrames) {
+    setPrevFramesLen(totalFrames);
+    if (totalFrames === 0) {
+      if (currentIndex !== 0) setCurrentIndex(0);
+      if (isPlaying) {
+        setIsPlaying(false);
+        clock.reset();
+      }
+      if (isWhiteFrame) setIsWhiteFrame(false);
+      if (frameElapsedMs !== 0) setFrameElapsedMs(0);
+    } else if (currentIndex > totalFrames - 1) {
+      setCurrentIndex(totalFrames - 1);
     }
-  }, []);
+  }
 
   const play = useCallback(() => {
-    if (frameCount <= 1) return;
+    if (timeline.frameItems.length === 0) return;
+    // 終端から再生ボタンを押したら頭に戻す (停止状態相当)
+    if (clock.now() >= timeline.totalMs) {
+      clock.reset();
+      setCurrentIndex(0);
+      setIsWhiteFrame(false);
+      setFrameElapsedMs(0);
+    }
+    clock.start();
     setIsPlaying(true);
-  }, [frameCount]);
+  }, [clock, timeline]);
 
   const pause = useCallback(() => {
+    clock.pause();
     setIsPlaying(false);
-    clearTimer();
-  }, [clearTimer]);
+  }, [clock]);
 
   const stop = useCallback(() => {
+    clock.reset();
     setIsPlaying(false);
-    clearTimer();
+    setIsWhiteFrame(false);
+    setFrameElapsedMs(0);
     setCurrentIndex(0);
-  }, [clearTimer]);
-
-  const next = useCallback(() => {
-    setCurrentIndex((prev) => Math.min(prev + 1, frameCount - 1));
-  }, [frameCount]);
-
-  const prev = useCallback(() => {
-    setCurrentIndex((prev) => Math.max(prev - 1, 0));
-  }, []);
+  }, [clock]);
 
   const goTo = useCallback(
     (index: number) => {
-      setCurrentIndex(Math.max(0, Math.min(index, frameCount - 1)));
+      const total = timeline.frameItems.length;
+      if (total === 0) return;
+      const clamped = Math.max(0, Math.min(index, total - 1));
+      const target = frameStartMs(timeline, clamped);
+      clock.seek(target);
+      const pos = resolvePlaybackPosition(timeline, target);
+      setCurrentIndex(pos.currentIndex);
+      setIsWhiteFrame(pos.isWhiteFrame);
+      setFrameElapsedMs(pos.frameElapsedMs);
     },
-    [frameCount]
+    [timeline, clock]
   );
 
-  // Playback loop
+  const next = useCallback(() => {
+    goTo(currentIndex + 1);
+  }, [goTo, currentIndex]);
+
+  const prev = useCallback(() => {
+    goTo(currentIndex - 1);
+  }, [goTo, currentIndex]);
+
+  // 単一 rAF ループ: clock.now() → resolvePlaybackPosition で UI 状態を派生
+  const rafRef = useRef<number | null>(null);
   useEffect(() => {
     if (!isPlaying) return;
+    if (timeline.frameItems.length === 0) return;
 
-    timerRef.current = setInterval(() => {
-      setCurrentIndex((prev) => {
-        if (prev >= frameCount - 1) {
-          setIsPlaying(false);
-          return prev;
-        }
-        return prev + 1;
-      });
-    }, intervalMs);
+    const tick = () => {
+      const t = clock.now();
+      const pos = resolvePlaybackPosition(timeline, t);
 
-    return clearTimer;
-  }, [isPlaying, intervalMs, frameCount, clearTimer]);
+      setCurrentIndex((prev) =>
+        prev === pos.currentIndex ? prev : pos.currentIndex
+      );
+      setIsWhiteFrame((prev) =>
+        prev === pos.isWhiteFrame ? prev : pos.isWhiteFrame
+      );
+      setFrameElapsedMs((prev) =>
+        prev === pos.frameElapsedMs ? prev : pos.frameElapsedMs
+      );
+
+      if (pos.reachedEnd) {
+        clock.pause();
+        setIsPlaying(false);
+        rafRef.current = null;
+        return;
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [isPlaying, timeline, clock]);
 
   return {
     currentIndex,
     isPlaying,
-    intervalMs,
-    setIntervalMs,
+    isWhiteFrame,
+    frameElapsedMs,
     play,
     pause,
     stop,

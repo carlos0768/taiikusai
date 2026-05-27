@@ -3,18 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { fetchJson } from "@/lib/client/api";
+import { getClientErrorMessage } from "@/lib/client/errors";
+import { prefetchRoutes } from "@/lib/client/prefetch";
+import { buildBranchPath } from "@/lib/projectBranches";
 import type { AuthProfile, MergeRequestListItem } from "@/types";
 
 interface RequestsResponse {
-  requests: MergeRequestListItem[];
-}
-
-interface MeResponse {
   profile: AuthProfile;
-}
-
-function branchQuery(branchName: string) {
-  return branchName === "main" ? "" : `?branch=${branchName}`;
+  requests: MergeRequestListItem[];
 }
 
 export default function GitRequestsPage() {
@@ -22,7 +18,10 @@ export default function GitRequestsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const projectId = params.projectId as string;
-  const branchName = searchParams.get("branch") ?? "main";
+  const branchId = searchParams.get("branch");
+  const backHref = branchId
+    ? buildBranchPath(`/project/${projectId}`, branchId)
+    : `/project/${projectId}`;
 
   const [profile, setProfile] = useState<AuthProfile | null>(null);
   const [requests, setRequests] = useState<MergeRequestListItem[]>([]);
@@ -34,21 +33,20 @@ export default function GitRequestsPage() {
     setError(null);
 
     try {
-      const [me, requestsResponse] = await Promise.all([
-        fetchJson<MeResponse>("/api/auth/me"),
-        fetchJson<RequestsResponse>(`/api/projects/${projectId}/requests`),
-      ]);
+      const requestsResponse = await fetchJson<RequestsResponse>(
+        `/api/projects/${projectId}/requests`
+      );
 
-      setProfile(me.profile);
+      setProfile(requestsResponse.profile);
       setRequests(requestsResponse.requests);
 
-      if (me.profile.is_admin) {
+      if (requestsResponse.profile.is_admin) {
         await fetchJson(`/api/notifications/unread?projectId=${projectId}`, {
           method: "PATCH",
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "リクエストを読み込めませんでした");
+      setError(getClientErrorMessage(err, "リクエストを読み込めませんでした"));
     } finally {
       setLoading(false);
     }
@@ -57,6 +55,10 @@ export default function GitRequestsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    prefetchRoutes(router, [backHref]);
+  }, [backHref, router]);
 
   const handleReview = useCallback(
     async (requestId: string, approve: boolean) => {
@@ -67,7 +69,7 @@ export default function GitRequestsPage() {
         });
         await load();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "レビューに失敗しました");
+        setError(getClientErrorMessage(err, "レビューに失敗しました"));
       }
     },
     [load, projectId]
@@ -77,7 +79,7 @@ export default function GitRequestsPage() {
     <div className="h-full flex flex-col">
       <header className="flex items-center gap-2 px-4 py-3 border-b border-card-border">
         <button
-          onClick={() => router.push(`/project/${projectId}${branchQuery(branchName)}`)}
+          onClick={() => router.push(backHref)}
           className="text-muted hover:text-foreground transition-colors text-lg px-2"
         >
           ←
@@ -95,8 +97,6 @@ export default function GitRequestsPage() {
               {error}
             </div>
           )}
-
-          {loading && <p className="text-muted text-center py-10">読み込み中...</p>}
 
           {!loading && requests.length === 0 && (
             <div className="rounded-xl border border-card-border bg-card px-6 py-10 text-center">

@@ -1,18 +1,26 @@
-import { randomUUID } from "node:crypto";
 import type { PostgrestError } from "@supabase/supabase-js";
+import {
+  buildBranchStateSnapshot,
+  cloneConnectionsToBranch,
+  clonePanelsToBranch,
+  fetchProjectBranchState,
+  getProjectBranchSettings,
+  replaceBranchState,
+  type ProjectBranchState,
+} from "@/lib/projectBranchState";
+import {
+  fetchProjectBranchContext,
+  toBranchScopedProject,
+} from "@/lib/projectBranches";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type {
   AuthProfile,
-  BranchContextResponse,
+  MergeRequest,
   MergeRequestListItem,
   Project,
   ProjectBranch,
-  ZentaiGamen,
-  Connection,
 } from "@/types";
 import { HttpError } from "./errors";
-
-const BRANCH_NAME_PATTERN = /^[a-z0-9][a-z0-9-_]*$/;
 
 function throwIfError(error: PostgrestError | null) {
   if (error) {
@@ -20,28 +28,18 @@ function throwIfError(error: PostgrestError | null) {
   }
 }
 
-export function normalizeBranchName(value: string) {
-  return value.trim().toLowerCase();
-}
-
-export function assertBranchName(value: string) {
-  const normalized = normalizeBranchName(value);
-  if (!BRANCH_NAME_PATTERN.test(normalized)) {
-    throw new HttpError(
-      400,
-      "ブランチ名は英数字小文字・ハイフン・アンダースコアで入力してください"
-    );
-  }
-  if (normalized === "main") {
-    throw new HttpError(400, "main は予約済みのブランチ名です");
-  }
-}
-
-export function canEditBranch(project: Project, branch: ProjectBranch, auth: AuthProfile) {
+export function canEditBranch(
+  _project: Project,
+  branch: ProjectBranch,
+  auth: AuthProfile
+) {
   if (auth.is_admin) return true;
-  if (!auth.permissions.can_edit_branch_content) return false;
-  if (!branch.is_main) return true;
-  return !project.main_branch_requires_admin_approval;
+  if (branch.is_main) return false;
+  return (
+    (auth.permissions.can_edit_branch_content ||
+      auth.permissions.can_create_branches) &&
+    branch.created_by === auth.id
+  );
 }
 
 export function canViewGit(auth: AuthProfile) {
@@ -80,182 +78,22 @@ export async function listProjectBranches(projectId: string) {
   return (data ?? []) as ProjectBranch[];
 }
 
-export async function resolveBranch(projectId: string, branchName?: string) {
-  const admin = createAdminClient();
-  const targetName = normalizeBranchName(branchName ?? "main") || "main";
-  const { data, error } = await admin
-    .from("project_branches")
-    .select("*")
-    .eq("project_id", projectId)
-    .eq("name", targetName)
-    .maybeSingle<ProjectBranch>();
-
-  throwIfError(error);
-
-  if (!data) {
+export async function resolveBranchById(projectId: string, branchId: string) {
+  const branches = await listProjectBranches(projectId);
+  const branch = branches.find((item) => item.id === branchId);
+  if (!branch) {
     throw new HttpError(404, "ブランチが見つかりません");
   }
-
-  return data;
-}
-
-export async function getBranchContext(
-  projectId: string,
-  branchName: string | undefined,
-  auth: AuthProfile
-): Promise<BranchContextResponse> {
-  const [project, branches] = await Promise.all([
-    getProjectById(projectId),
-    listProjectBranches(projectId),
-  ]);
-
-  const currentBranch =
-    branches.find((branch) => branch.name === normalizeBranchName(branchName ?? "main")) ??
-    branches.find((branch) => branch.is_main) ??
-    branches[0];
-
-  if (!currentBranch) {
-    throw new HttpError(404, "ブランチが見つかりません");
-  }
-
-  const unreadGitNotifications = await countUnreadGitNotifications(
-    auth.id,
-    auth.is_admin ? projectId : undefined
-  );
-
-  return {
-    project,
-    branches,
-    currentBranch,
-    auth,
-    canEditCurrentBranch: canEditBranch(project, currentBranch, auth),
-    canCreateBranches: auth.is_admin || auth.permissions.can_create_branches,
-    canRequestMerge:
-      currentBranch.is_main
-        ? false
-        : auth.is_admin || auth.permissions.can_request_main_merge,
-    canViewGitRequests: canViewGit(auth),
-    unreadGitNotifications,
-  };
-}
-
-export async function cloneBranchFromSource(params: {
-  projectId: string;
-  branchName: string;
-  sourceBranchId: string;
-  createdBy: string;
-}) {
-  const admin = createAdminClient();
-  const normalizedName = normalizeBranchName(params.branchName);
-  assertBranchName(normalizedName);
-
-  const { data: branch, error: branchError } = await admin
-    .from("project_branches")
-    .insert({
-      project_id: params.projectId,
-      name: normalizedName,
-      is_main: false,
-      source_branch_id: params.sourceBranchId,
-      created_by: params.createdBy,
-    })
-    .select("*")
-    .single<ProjectBranch>();
-
-  if (branchError) {
-    throw new HttpError(400, branchError.message);
-  }
-
-  await copyBranchSnapshot(params.sourceBranchId, branch.id, params.projectId);
   return branch;
 }
 
-export async function copyBranchSnapshot(
-  sourceBranchId: string,
-  targetBranchId: string,
-  projectId: string
-) {
-  const admin = createAdminClient();
-  const [{ data: sourceNodes, error: nodeError }, { data: sourceConnections, error: connectionError }] =
-    await Promise.all([
-      admin
-        .from("zentai_gamen")
-        .select("*")
-        .eq("project_id", projectId)
-        .eq("branch_id", sourceBranchId)
-        .order("created_at", { ascending: true }),
-      admin
-        .from("connections")
-        .select("*")
-        .eq("project_id", projectId)
-        .eq("branch_id", sourceBranchId)
-        .order("sort_order", { ascending: true }),
-    ]);
-
-  throwIfError(nodeError);
-  throwIfError(connectionError);
-
-  const nodeIdMap = new Map<string, string>();
-  const nextNodes = ((sourceNodes ?? []) as ZentaiGamen[]).map((node) => {
-    const nextId = randomUUID();
-    nodeIdMap.set(node.id, nextId);
-    return {
-      id: nextId,
-      project_id: node.project_id,
-      branch_id: targetBranchId,
-      name: node.name,
-      grid_data: node.grid_data,
-      thumbnail: node.thumbnail,
-      position_x: node.position_x,
-      position_y: node.position_y,
-      memo: node.memo,
-    };
-  });
-
-  if (nextNodes.length > 0) {
-    const { error } = await admin.from("zentai_gamen").insert(nextNodes);
-    throwIfError(error);
+export async function resolveMainBranch(projectId: string) {
+  const branches = await listProjectBranches(projectId);
+  const branch = branches.find((item) => item.is_main || item.name === "main");
+  if (!branch) {
+    throw new HttpError(404, "main ブランチが見つかりません");
   }
-
-  const nextConnections = ((sourceConnections ?? []) as Connection[])
-    .filter(
-      (connection) =>
-        nodeIdMap.has(connection.source_id) && nodeIdMap.has(connection.target_id)
-    )
-    .map((connection) => ({
-      id: randomUUID(),
-      project_id: connection.project_id,
-      branch_id: targetBranchId,
-      source_id: nodeIdMap.get(connection.source_id)!,
-      target_id: nodeIdMap.get(connection.target_id)!,
-      sort_order: connection.sort_order,
-    }));
-
-  if (nextConnections.length > 0) {
-    const { error } = await admin.from("connections").insert(nextConnections);
-    throwIfError(error);
-  }
-}
-
-export async function replaceMainWithBranch(projectId: string, sourceBranchId: string) {
-  const admin = createAdminClient();
-  const mainBranch = await resolveBranch(projectId, "main");
-
-  const { error: deleteConnectionsError } = await admin
-    .from("connections")
-    .delete()
-    .eq("project_id", projectId)
-    .eq("branch_id", mainBranch.id);
-  throwIfError(deleteConnectionsError);
-
-  const { error: deleteNodesError } = await admin
-    .from("zentai_gamen")
-    .delete()
-    .eq("project_id", projectId)
-    .eq("branch_id", mainBranch.id);
-  throwIfError(deleteNodesError);
-
-  await copyBranchSnapshot(sourceBranchId, mainBranch.id, projectId);
-  return mainBranch;
+  return branch;
 }
 
 export async function createMergeRequest(params: {
@@ -294,7 +132,7 @@ export async function createMergeRequest(params: {
       status: "open",
     })
     .select("*")
-    .single();
+    .single<MergeRequest>();
 
   if (error || !request) {
     throw new HttpError(400, error?.message ?? "申請を作成できませんでした");
@@ -325,20 +163,7 @@ export async function listMergeRequests(
 
   throwIfError(error);
 
-  const requests = (data ?? []) as {
-    id: string;
-    project_id: string;
-    source_branch_id: string;
-    target_branch_id: string;
-    requested_by: string;
-    summary: string;
-    status: MergeRequestListItem["status"];
-    reviewed_by: string | null;
-    reviewed_at: string | null;
-    created_at: string;
-    updated_at: string;
-  }[];
-
+  const requests = (data ?? []) as MergeRequest[];
   const filtered = isAdmin
     ? requests
     : requests.filter((request) => request.requested_by === userId);
@@ -356,14 +181,15 @@ export async function listMergeRequests(
 
   const [{ data: branchRows, error: branchError }, { data: profileRows, error: profileError }] =
     await Promise.all([
-      admin
-        .from("project_branches")
-        .select("id, name")
-        .in("id", Array.from(branchIds)),
-      admin
-        .from("profiles")
-        .select("id, display_name, login_id")
-        .in("id", Array.from(userIds)),
+      branchIds.size === 0
+        ? Promise.resolve({ data: [], error: null })
+        : admin.from("project_branches").select("id, name").in("id", [...branchIds]),
+      userIds.size === 0
+        ? Promise.resolve({ data: [], error: null })
+        : admin
+            .from("profiles")
+            .select("id, display_name, login_id")
+            .in("id", [...userIds]),
     ]);
 
   throwIfError(branchError);
@@ -407,7 +233,7 @@ export async function reviewMergeRequest(params: {
     .from("merge_requests")
     .select("*")
     .eq("id", params.requestId)
-    .single();
+    .single<MergeRequest>();
 
   if (error || !request) {
     throw new HttpError(404, "申請が見つかりません");
@@ -417,23 +243,117 @@ export async function reviewMergeRequest(params: {
     throw new HttpError(400, "この申請はすでに処理済みです");
   }
 
-  if (params.approve) {
-    await replaceMainWithBranch(request.project_id, request.source_branch_id);
+  let createdMergeId: string | null = null;
+  let targetBranch: ProjectBranch | null = null;
+  let targetState: ProjectBranchState | null = null;
+
+  try {
+    if (params.approve) {
+      const context = await fetchProjectBranchContext(
+        admin,
+        request.project_id,
+        request.target_branch_id
+      );
+      const sourceBranch = context.branches.find(
+        (branch) => branch.id === request.source_branch_id
+      );
+      targetBranch = context.branches.find(
+        (branch) => branch.id === request.target_branch_id
+      ) ?? context.mainBranch;
+
+      if (!sourceBranch || !targetBranch) {
+        throw new HttpError(404, "対象ブランチが見つかりません");
+      }
+
+      const [loadedTargetState, sourceState] = await Promise.all([
+        fetchProjectBranchState(
+          admin,
+          request.project_id,
+          toBranchScopedProject(context.project, targetBranch),
+          targetBranch
+        ),
+        fetchProjectBranchState(
+          admin,
+          request.project_id,
+          toBranchScopedProject(context.project, sourceBranch),
+          sourceBranch
+        ),
+      ]);
+      targetState = loadedTargetState;
+
+      const { data: mergeRow, error: mergeInsertError } = await admin
+        .from("project_branch_merges")
+        .insert({
+          project_id: request.project_id,
+          source_branch_id: sourceBranch.id,
+          target_branch_id: targetBranch.id,
+          snapshot: buildBranchStateSnapshot(targetState),
+        })
+        .select("id")
+        .single<{ id: string }>();
+
+      if (mergeInsertError || !mergeRow) {
+        throw mergeInsertError ?? new Error("merge ログの保存に失敗しました");
+      }
+
+      createdMergeId = mergeRow.id;
+
+      const { panels, idMap } = clonePanelsToBranch({
+        projectId: request.project_id,
+        branchId: targetBranch.id,
+        panels: sourceState.panels,
+      });
+      const connections = cloneConnectionsToBranch({
+        projectId: request.project_id,
+        branchId: targetBranch.id,
+        connections: sourceState.connections,
+        panelIdMap: idMap,
+      });
+
+      await replaceBranchState(admin, {
+        projectId: request.project_id,
+        targetBranch,
+        settings: getProjectBranchSettings(sourceState.project),
+        panels,
+        connections,
+        syncMainCache: targetBranch.is_main,
+      });
+    }
+
+    const nextStatus = params.approve ? "approved" : "rejected";
+    const { error: updateError } = await admin
+      .from("merge_requests")
+      .update({
+        status: nextStatus,
+        reviewed_by: params.reviewerId,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", params.requestId);
+
+    throwIfError(updateError);
+    return nextStatus;
+  } catch (error) {
+    if (params.approve && targetBranch && targetState) {
+      try {
+        await replaceBranchState(admin, {
+          projectId: request.project_id,
+          targetBranch,
+          settings: getProjectBranchSettings(targetState.project),
+          panels: targetState.panels,
+          connections: targetState.connections,
+          syncMainCache: targetBranch.is_main,
+        });
+
+        if (createdMergeId) {
+          await admin.from("project_branch_merges").delete().eq("id", createdMergeId);
+        }
+      } catch {
+        throw new HttpError(500, "main の復元に失敗しました");
+      }
+    }
+
+    throw error;
   }
-
-  const nextStatus = params.approve ? "approved" : "rejected";
-  const { error: updateError } = await admin
-    .from("merge_requests")
-    .update({
-      status: nextStatus,
-      reviewed_by: params.reviewerId,
-      reviewed_at: new Date().toISOString(),
-    })
-    .eq("id", params.requestId);
-
-  throwIfError(updateError);
-
-  return nextStatus;
 }
 
 export async function countUnreadGitNotifications(

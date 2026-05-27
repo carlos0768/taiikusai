@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import type { GridData } from "@/lib/grid/types";
-import type { ColorIndex } from "@/lib/grid/types";
+import { UNDEFINED_COLOR, type ColorIndex } from "@/lib/grid/types";
 import { renderGrid, screenToGrid, type Viewport } from "./gridRenderer";
 import type { Tool } from "./useGridState";
 
@@ -21,6 +21,13 @@ interface GridCanvasProps {
   ) => void;
   onViewportChange: (viewport: Viewport) => void;
   isEditing: boolean;
+  onMoveSelection: (selectedCells: Set<string>, dx: number, dy: number) => void;
+  moveSelectedCells: Set<string>;
+  onMoveSelectedCellsChange: (cells: Set<string>) => void;
+  moveDragOffset: { dx: number; dy: number } | null;
+  onMoveDragOffsetChange: (offset: { dx: number; dy: number } | null) => void;
+  isMoveSelecting: boolean;
+  disableMoveDrag?: boolean;
 }
 
 export default function GridCanvas({
@@ -36,11 +43,21 @@ export default function GridCanvas({
   onSelectionChange,
   onViewportChange,
   isEditing,
+  onMoveSelection,
+  moveSelectedCells,
+  onMoveSelectedCellsChange,
+  moveDragOffset,
+  onMoveDragOffsetChange,
+  isMoveSelecting,
+  disableMoveDrag = false,
 }: GridCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isPaintingRef = useRef(false);
   const isSelectingRef = useRef(false);
+  const isDraggingMoveRef = useRef(false);
+  const moveStartRef = useRef<{ x: number; y: number } | null>(null);
+  const isRemovingRef = useRef(false); // true if first tap was a remove (toggle off)
   const selStartRef = useRef<{ x: number; y: number } | null>(null);
   const lastPaintedCellRef = useRef<{ x: number; y: number } | null>(null);
   const touchCountRef = useRef(0);
@@ -65,10 +82,12 @@ export default function GridCanvas({
         sizeRef.current.width,
         sizeRef.current.height,
         viewport,
-        selection
+        selection,
+        moveSelectedCells,
+        moveDragOffset
       );
     });
-  }, [gridRef, selection, viewport]);
+  }, [viewport, selection, moveSelectedCells, moveDragOffset, gridRef]);
 
   // Resize handler
   useEffect(() => {
@@ -92,10 +111,10 @@ export default function GridCanvas({
     return () => observer.disconnect();
   }, [scheduleRender]);
 
-  // Re-render on revision/viewport/selection changes
+  // Re-render on revision/viewport/selection/moveSelectedCells/offset changes
   useEffect(() => {
     scheduleRender();
-  }, [revision, viewport, selection, scheduleRender]);
+  }, [revision, viewport, selection, moveSelectedCells, moveDragOffset, scheduleRender]);
 
   const getGridCoords = useCallback(
     (clientX: number, clientY: number) => {
@@ -130,13 +149,13 @@ export default function GridCanvas({
         return;
       }
 
-      if (!isEditing) return;
+      if (!isEditing && activeTool !== "move") return;
 
       const cell = getGridCoords(e.clientX, e.clientY);
       if (!cell) return;
 
       if (activeTool === "paint" || activeTool === "eraser") {
-        const color = activeTool === "eraser" ? 0 as ColorIndex : activeColor;
+        const color = activeTool === "eraser" ? UNDEFINED_COLOR : activeColor;
         isPaintingRef.current = true;
         lastPaintedCellRef.current = cell;
         onStartBatchPaint();
@@ -147,17 +166,41 @@ export default function GridCanvas({
         isSelectingRef.current = true;
         selStartRef.current = cell;
         onSelectionChange({ x1: cell.x, y1: cell.y, x2: cell.x, y2: cell.y });
+      } else if (activeTool === "move") {
+        const key = `${cell.x},${cell.y}`;
+        if (isMoveSelecting) {
+          isSelectingRef.current = true;
+          const newSet = new Set(moveSelectedCells);
+          if (newSet.has(key)) {
+            newSet.delete(key);
+            isRemovingRef.current = true; // dragging will remove cells
+          } else {
+            newSet.add(key);
+            isRemovingRef.current = false; // dragging will add cells
+          }
+          onMoveSelectedCellsChange(newSet);
+        } else if (moveSelectedCells.has(key) && !disableMoveDrag) {
+          // Not selecting, click inside selection → start drag move
+          isDraggingMoveRef.current = true;
+          moveStartRef.current = cell;
+          onMoveDragOffsetChange({ dx: 0, dy: 0 });
+        }
       }
     },
     [
       activeTool,
       activeColor,
       getGridCoords,
-      isEditing,
       onStartBatchPaint,
       onBatchPaintCell,
       onFloodFill,
       onSelectionChange,
+      moveSelectedCells,
+      onMoveSelectedCellsChange,
+      onMoveDragOffsetChange,
+      isMoveSelecting,
+      isEditing,
+      disableMoveDrag,
     ]
   );
 
@@ -166,7 +209,7 @@ export default function GridCanvas({
       if (touchCountRef.current > 1) return;
 
       if (isPaintingRef.current && (activeTool === "paint" || activeTool === "eraser")) {
-        const color = activeTool === "eraser" ? 0 as ColorIndex : activeColor;
+        const color = activeTool === "eraser" ? UNDEFINED_COLOR : activeColor;
         const cell = getGridCoords(e.clientX, e.clientY);
         if (
           cell &&
@@ -189,14 +232,40 @@ export default function GridCanvas({
           });
         }
       }
+
+      // Free selection for move tool: add or remove cells as pointer moves
+      if (isSelectingRef.current && activeTool === "move") {
+        const cell = getGridCoords(e.clientX, e.clientY);
+        if (cell) {
+          const key = `${cell.x},${cell.y}`;
+          if (isRemovingRef.current) {
+            if (moveSelectedCells.has(key)) {
+              const newSet = new Set(moveSelectedCells);
+              newSet.delete(key);
+              onMoveSelectedCellsChange(newSet);
+            }
+          } else {
+            if (!moveSelectedCells.has(key)) {
+              const newSet = new Set(moveSelectedCells);
+              newSet.add(key);
+              onMoveSelectedCellsChange(newSet);
+            }
+          }
+        }
+      }
+
+      // Drag preview for move tool: update offset in real-time
+      if (isDraggingMoveRef.current && moveStartRef.current && activeTool === "move") {
+        const cell = getGridCoords(e.clientX, e.clientY);
+        if (cell) {
+          onMoveDragOffsetChange({
+            dx: cell.x - moveStartRef.current.x,
+            dy: cell.y - moveStartRef.current.y,
+          });
+        }
+      }
     },
-    [
-      activeTool,
-      activeColor,
-      getGridCoords,
-      onBatchPaintCell,
-      onSelectionChange,
-    ]
+    [activeTool, activeColor, getGridCoords, onBatchPaintCell, onSelectionChange, moveSelectedCells, onMoveSelectedCellsChange, onMoveDragOffsetChange]
   );
 
   const handlePointerUp = useCallback(
@@ -204,12 +273,34 @@ export default function GridCanvas({
       if (e.pointerType === "touch") {
         touchCountRef.current = Math.max(0, touchCountRef.current - 1);
       }
+
+      // Finish move drag
+      if (isDraggingMoveRef.current && moveStartRef.current && moveSelectedCells.size > 0) {
+        const cell = getGridCoords(e.clientX, e.clientY);
+        if (cell) {
+          const dx = cell.x - moveStartRef.current.x;
+          const dy = cell.y - moveStartRef.current.y;
+          if (dx !== 0 || dy !== 0) {
+            onMoveSelection(moveSelectedCells, dx, dy);
+            // Update selected cells to new positions
+            const newSet = new Set<string>();
+            for (const key of moveSelectedCells) {
+              const [sx, sy] = key.split(",").map(Number);
+              newSet.add(`${sx + dx},${sy + dy}`);
+            }
+            onMoveSelectedCellsChange(newSet);
+          }
+        }
+        isDraggingMoveRef.current = false;
+        moveStartRef.current = null;
+        onMoveDragOffsetChange(null);
+      }
       isPaintingRef.current = false;
       isSelectingRef.current = false;
       lastPaintedCellRef.current = null;
       selStartRef.current = null;
     },
-    []
+    [getGridCoords, moveSelectedCells, onMoveSelection, onMoveSelectedCellsChange, onMoveDragOffsetChange]
   );
 
   // Multi-touch gestures for pinch zoom and pan

@@ -7,6 +7,8 @@ import { fetchJson } from "@/lib/client/api";
 import { generateScriptHtml } from "@/lib/export/generateScript";
 import { decodeGrid } from "@/lib/grid/codec";
 import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
+import { buildPlaybackTimeline } from "@/lib/playback/frameBuilder";
+import type { Connection, ZentaiGamen } from "@/types";
 
 interface HighlightResponse {
   project: {
@@ -14,6 +16,8 @@ interface HighlightResponse {
     name: string;
     gridWidth: number;
     gridHeight: number;
+    defaultPanelDurationMs: number;
+    defaultIntervalMs: number;
   };
   branch: {
     id: string;
@@ -24,12 +28,8 @@ interface HighlightResponse {
     startNodeId: string;
     startNodeName: string;
   };
-  frames: Array<{
-    id: string;
-    name: string;
-    gridData: string;
-    memo: string;
-  }>;
+  frames: ZentaiGamen[];
+  connections: Connection[];
 }
 
 function parseColumnLetters(value: string) {
@@ -176,13 +176,13 @@ export default function HighlightPage() {
         setFrames(
           response.frames.map((frame) => {
             const dimensions = inferGridDimensions(
-              frame.gridData,
+              frame.grid_data,
               response.project.gridWidth,
               response.project.gridHeight
             );
 
             return decodeGrid(
-              frame.gridData,
+              frame.grid_data,
               dimensions.width,
               dimensions.height
             );
@@ -224,11 +224,26 @@ export default function HighlightPage() {
     };
   }, [alphabetInput, frames, numberInput]);
 
+  const timeline = useMemo(() => {
+    if (!data) return null;
+
+    return buildPlaybackTimeline({
+      route: data.frames.map((frame) => frame.id),
+      zentaiGamen: data.frames,
+      connections: data.connections,
+      gridWidth: data.project.gridWidth,
+      gridHeight: data.project.gridHeight,
+      defaultPanelDurationMs: data.project.defaultPanelDurationMs,
+      defaultIntervalMs: data.project.defaultIntervalMs,
+    });
+  }, [data]);
+
   const scriptHtml = useMemo(() => {
     if (!data || !highlightedCell || frames.length === 0) return "";
 
     const scenes = frames.map((grid, index) => ({
       sceneNumber: index + 1,
+      action: "color" as const,
       colorIndex:
         highlightedCell.x < grid.width && highlightedCell.y < grid.height
           ? (grid.cells[
@@ -257,7 +272,7 @@ export default function HighlightPage() {
     );
   }
 
-  if (error || !data || frames.length === 0) {
+  if (error || !data || frames.length === 0 || !timeline) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
@@ -275,7 +290,6 @@ export default function HighlightPage() {
     );
   }
 
-  const frameNames = data.frames.map((frame) => frame.name);
   const cellDescription = highlightedCell
     ? `${alphabetInput.trim().toUpperCase()} ${numberInput}`
     : "範囲外";
@@ -445,8 +459,7 @@ export default function HighlightPage() {
         <div className={`h-full min-h-0 ${showScript ? "flex" : ""}`}>
           <div className={showScript ? "h-full min-w-0 flex-1 basis-1/2" : "h-full"}>
             <PlaybackView
-              frames={frames}
-              frameNames={frameNames}
+              timeline={timeline}
               highlightedCell={highlightedCell}
               showControls={false}
               autoPlay={false}

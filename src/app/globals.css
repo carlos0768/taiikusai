@@ -74,6 +74,15 @@ html, body {
   stroke: #FFD700 !important;
 }
 
+@keyframes keep-edge-flow {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -17;
+  }
+}
+
 /* Hide the default marker arrow that React Flow renders */
 .react-flow__arrowhead {
   display: none !important;

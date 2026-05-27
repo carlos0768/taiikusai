@@ -1,7 +1,11 @@
 import * as XLSX from "xlsx";
-import type { ColorIndex } from "@/lib/grid/types";
+import { UNDEFINED_COLOR, type ColorIndex } from "@/lib/grid/types";
 
-const COLOR_RGB: Record<ColorIndex, [number, number, number]> = {
+// 実パネル色 (0〜4) のみ。UNDEFINED_COLOR (5) は RGB マッチングの
+// 対象にしない — セル背景色から「未定義」を推定することはできないため。
+type PaintColorIndex = Exclude<ColorIndex, typeof UNDEFINED_COLOR>;
+
+const COLOR_RGB: Record<PaintColorIndex, [number, number, number]> = {
   0: [255, 255, 255], // white
   1: [255, 215, 0], // yellow
   2: [255, 0, 0], // red
@@ -18,14 +22,15 @@ function hexToRgb(hex: string): [number, number, number] {
   ];
 }
 
-function nearestColor(r: number, g: number, b: number): ColorIndex {
-  let best: ColorIndex = 0;
+function nearestColor(r: number, g: number, b: number): PaintColorIndex {
+  const entries = Object.entries(COLOR_RGB) as [string, [number, number, number]][];
+  let best: PaintColorIndex = 0;
   let bestDist = Infinity;
-  for (const [idx, [cr, cg, cb]] of Object.entries(COLOR_RGB)) {
+  for (const [idx, [cr, cg, cb]] of entries) {
     const dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
     if (dist < bestDist) {
       bestDist = dist;
-      best = Number(idx) as ColorIndex;
+      best = Number(idx) as PaintColorIndex;
     }
   }
   return best;
@@ -46,7 +51,10 @@ export function parseExcel(
   const workbook = XLSX.read(buffer, { type: "array", cellStyles: true });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   const warnings: string[] = [];
+  // 空欄セルは「未定義（灰色）」として扱う。明示的に "白"/"white"/"0" または
+  // 白い背景色が書かれたセルのみ色 0（白）になる。
   const cells = new Uint8Array(targetWidth * targetHeight);
+  cells.fill(UNDEFINED_COLOR);
 
   if (!sheet) {
     warnings.push("シートが見つかりません");
@@ -105,7 +113,10 @@ export function parseCsv(
   targetHeight: number
 ): ParseResult {
   const warnings: string[] = [];
+  // 空欄セルは「未定義（灰色）」として扱う。明示的に "白"/"white"/"0" が
+  // 書かれたセルのみ色 0（白）になる。
   const cells = new Uint8Array(targetWidth * targetHeight);
+  cells.fill(UNDEFINED_COLOR);
   const lines = text.trim().split("\n");
 
   for (let y = 0; y < Math.min(lines.length, targetHeight); y++) {

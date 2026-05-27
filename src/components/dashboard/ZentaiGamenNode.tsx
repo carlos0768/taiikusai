@@ -11,8 +11,14 @@ export interface ZentaiGamenNodeData {
   gridWidth: number;
   gridHeight: number;
   hasOutgoingEdge: boolean;
+  isWave: boolean;
+  isKeepRangeSelected?: boolean;
+  isKeepRangeStart?: boolean;
+  isMultiSelectMode?: boolean;
+  isSelected?: boolean;
   onDoubleClick: (id: string) => void;
   onLongPress: (id: string, name: string, x: number, y: number) => void;
+  onSelect?: (id: string) => void;
   [key: string]: unknown;
 }
 
@@ -101,21 +107,29 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
 
   const handlePointerUp = useCallback(() => {
     cancelLongPress();
-    // Single tap: only if pointerDown was tracked (not on handle area)
-    // and didn't move and didn't trigger long press
     if (
       longPressStartRef.current &&
       !didMoveRef.current &&
       !longPressTriggeredRef.current
     ) {
-      nodeData.onDoubleClick(id);
+      if (nodeData.isMultiSelectMode && nodeData.onSelect) {
+        nodeData.onSelect(id);
+      } else {
+        nodeData.onDoubleClick(id);
+      }
     }
     longPressStartRef.current = null;
   }, [cancelLongPress, nodeData, id]);
 
+  const borderClass = nodeData.isSelected
+    ? "border-2 border-accent shadow-lg shadow-accent/40"
+    : nodeData.isKeepRangeSelected
+    ? "border-2 border-accent shadow-accent/30"
+    : "border border-card-border";
+
   return (
     <div
-      className="bg-card border border-card-border rounded-lg shadow-lg overflow-visible select-none relative"
+      className={`bg-card rounded-lg shadow-lg overflow-visible select-none relative transition-colors ${borderClass}`}
       style={{ width: 176, cursor: "grab" }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -123,16 +137,34 @@ function ZentaiGamenNodeComponent({ id, data }: NodeProps) {
       onPointerCancel={() => { cancelLongPress(); longPressStartRef.current = null; }}
     >
       {/* Thumbnail */}
-      <div className="p-2 bg-background/50 rounded-t-lg">
+      <div className="p-2 bg-background/50 rounded-t-lg relative">
         <canvas
           ref={canvasRef}
           className="w-full rounded"
           style={{ imageRendering: "pixelated" }}
         />
+        {nodeData.isWave && (
+          <span className="absolute top-1 left-1 px-1.5 py-0.5 text-[9px] font-bold bg-accent text-black rounded">
+            〜 WAVE
+          </span>
+        )}
+        {nodeData.isSelected && (
+          <div className="absolute top-1 right-1 w-5 h-5 bg-accent rounded-full flex items-center justify-center">
+            <span className="text-black text-[11px] font-bold leading-none">✓</span>
+          </div>
+        )}
+        {nodeData.isMultiSelectMode && !nodeData.isSelected && (
+          <div className="absolute top-1 right-1 w-5 h-5 bg-card/80 border border-card-border rounded-full" />
+        )}
       </div>
 
       {/* Name */}
       <div className="px-2 py-1.5 text-xs text-foreground truncate">
+        {nodeData.isKeepRangeStart && (
+          <span className="mr-1 rounded bg-accent px-1 py-0.5 text-[10px] font-semibold text-black">
+            start
+          </span>
+        )}
         {nodeData.name}
       </div>
 

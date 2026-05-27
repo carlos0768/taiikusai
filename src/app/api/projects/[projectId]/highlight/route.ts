@@ -84,22 +84,17 @@ export async function GET(
       const item = zentaiGamenMap.get(nodeId);
       if (!item) return [];
 
-      return [
-        {
-          id: item.id,
-          name: item.name,
-          gridData: item.grid_data,
-          memo: item.memo,
-        },
-      ];
+      return [item];
     });
 
     return NextResponse.json({
       project: {
         id: project.id,
         name: project.name,
-        gridWidth: project.grid_width,
-        gridHeight: project.grid_height,
+        gridWidth: branch.grid_width,
+        gridHeight: branch.grid_height,
+        defaultPanelDurationMs: branch.default_panel_duration_ms,
+        defaultIntervalMs: branch.default_interval_ms,
       },
       branch: {
         id: branch.id,
@@ -111,6 +106,7 @@ export async function GET(
         startNodeName: selectedColumn.startNodeName,
       },
       frames,
+      connections: allConnections,
     });
   } catch (error) {
     return toErrorResponse(error);

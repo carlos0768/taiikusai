@@ -1,6 +1,6 @@
 export interface Profile {
   id: string;
-  username?: string;
+  username?: string | null;
   login_id: string;
   display_name: string;
   is_admin: boolean;
@@ -9,7 +9,7 @@ export interface Profile {
   created_by: string | null;
   git_notifications_enabled: boolean;
   created_at: string;
-  updated_at?: string;
+  updated_at: string;
 }
 
 export interface UserPermissions {
@@ -28,6 +28,30 @@ export interface AuthProfile extends Profile {
   permissions: UserPermissions;
 }
 
+export interface MusicData {
+  source_type: "youtube" | "file";
+  video_id?: string;
+  file_url?: string;
+  file_path?: string;
+  file_name?: string;
+  start_sec: number;
+  end_sec: number;
+  offset_sec: number;
+  duration: number;
+  bpm?: number | null;
+  bpm_offset_sec?: number | null;
+  timeline_px_per_second?: number | null;
+}
+
+export interface ProjectBranchSettings {
+  grid_width: number;
+  grid_height: number;
+  colors: string[];
+  default_panel_duration_ms: number;
+  default_interval_ms: number;
+  music_data: MusicData | null;
+}
+
 export interface Project {
   id: string;
   owner_id: string;
@@ -35,6 +59,9 @@ export interface Project {
   grid_width: number;
   grid_height: number;
   colors: string[];
+  default_panel_duration_ms: number;
+  default_interval_ms: number;
+  music_data: MusicData | null;
   main_branch_requires_admin_approval: boolean;
   highlight_branch_id: string | null;
   highlight_start_zentai_gamen_id: string | null;
@@ -42,16 +69,56 @@ export interface Project {
   updated_at: string;
 }
 
+export interface ProjectBranch extends ProjectBranchSettings {
+  id: string;
+  project_id: string;
+  name: string;
+  is_main: boolean;
+  source_branch_id: string | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BranchScopedProject extends Project {
+  active_branch_id: string;
+  active_branch_name: string;
+  active_branch_is_main: boolean;
+}
+
+export type PanelType = "general" | "motion" | "keep";
+export type MotionType = "wave";
+
+export interface WaveMotionData {
+  after_grid_data: string;
+  before_duration_ms: number;
+  after_duration_ms: number;
+  speed_columns_per_sec: number;
+}
+
+export const DEFAULT_WAVE_MOTION_DATA = (
+  afterGridDataBase64: string
+): WaveMotionData => ({
+  after_grid_data: afterGridDataBase64,
+  before_duration_ms: 1000,
+  after_duration_ms: 1000,
+  speed_columns_per_sec: 8,
+});
+
 export interface ZentaiGamen {
   id: string;
   project_id: string;
   branch_id: string;
   name: string;
-  grid_data: string; // base64 encoded
+  grid_data: string;
   thumbnail: string | null;
   position_x: number;
   position_y: number;
   memo: string;
+  panel_type: PanelType;
+  motion_type: MotionType | null;
+  motion_data: WaveMotionData | null;
+  panel_duration_override_ms: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -63,7 +130,40 @@ export interface Connection {
   source_id: string;
   target_id: string;
   sort_order: number;
+  interval_override_ms: number | null;
+  keep_mask_grid_data: string | null;
   created_at: string;
+}
+
+export interface CollapsedPanelGroup {
+  id: string;
+  project_id: string;
+  branch_id: string;
+  name: string;
+  node_ids: string[];
+  position_x: number;
+  position_y: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PanelShowPlacement {
+  panel_id: string;
+  row: number;
+  col: number;
+}
+
+export interface PanelShow {
+  id: string;
+  project_id: string;
+  branch_id: string;
+  name: string;
+  panel_ids: string[];
+  rows: number;
+  cols: number;
+  placements: PanelShowPlacement[];
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Template {
@@ -78,16 +178,84 @@ export interface Template {
   created_at: string;
 }
 
-export interface ProjectBranch {
+export interface ProjectGridResizeHistorySnapshotProject {
   id: string;
-  project_id: string;
   name: string;
-  is_main: boolean;
-  source_branch_id: string | null;
-  created_by: string | null;
-  created_at: string;
+  grid_width: number;
+  grid_height: number;
+  default_panel_duration_ms: number;
+  default_interval_ms: number;
+  colors?: string[];
+  music_data?: MusicData | null;
+}
+
+export interface ProjectGridResizeHistorySnapshotPanel {
+  id: string;
+  name: string;
+  grid_data: string;
+  position_x: number;
+  position_y: number;
+  memo: string;
+  panel_type: PanelType;
+  motion_type: MotionType | null;
+  motion_data: WaveMotionData | null;
+  panel_duration_override_ms: number | null;
   updated_at: string;
 }
+
+export interface ProjectGridResizeHistorySnapshotConnection {
+  id: string;
+  source_id: string;
+  target_id: string;
+  sort_order: number;
+  interval_override_ms: number | null;
+  keep_mask_grid_data: string | null;
+}
+
+export interface ProjectGridResizeHistorySnapshot {
+  project: ProjectGridResizeHistorySnapshotProject;
+  panels: ProjectGridResizeHistorySnapshotPanel[];
+  connections?: ProjectGridResizeHistorySnapshotConnection[];
+}
+
+export interface RestorableProjectGridResizeHistorySnapshot
+  extends ProjectGridResizeHistorySnapshot {
+  project: ProjectGridResizeHistorySnapshotProject & {
+    colors: string[];
+    music_data: MusicData | null;
+  };
+  connections: ProjectGridResizeHistorySnapshotConnection[];
+}
+
+export interface ProjectGridResizeHistory {
+  id: string;
+  project_id: string;
+  branch_id: string;
+  from_grid_width: number;
+  from_grid_height: number;
+  to_grid_width: number;
+  to_grid_height: number;
+  auto_adjust_illustration: boolean;
+  snapshot: ProjectGridResizeHistorySnapshot;
+  created_at: string;
+}
+
+export type ProjectBranchMergeSnapshot = ProjectGridResizeHistorySnapshot;
+
+export interface ProjectBranchMerge {
+  id: string;
+  project_id: string;
+  source_branch_id: string;
+  target_branch_id: string;
+  snapshot: ProjectBranchMergeSnapshot;
+  created_at: string;
+}
+
+export type MergeRequestStatus =
+  | "open"
+  | "approved"
+  | "rejected"
+  | "cancelled";
 
 export interface MergeRequest {
   id: string;
@@ -96,7 +264,7 @@ export interface MergeRequest {
   target_branch_id: string;
   requested_by: string;
   summary: string;
-  status: "open" | "approved" | "rejected" | "cancelled";
+  status: MergeRequestStatus;
   reviewed_by: string | null;
   reviewed_at: string | null;
   created_at: string;
@@ -119,18 +287,6 @@ export interface Notification {
 export interface GitNotificationSummary {
   unreadCount: number;
   hasUnread: boolean;
-}
-
-export interface BranchContextResponse {
-  project: Project;
-  branches: ProjectBranch[];
-  currentBranch: ProjectBranch;
-  auth: AuthProfile;
-  canEditCurrentBranch: boolean;
-  canCreateBranches: boolean;
-  canRequestMerge: boolean;
-  canViewGitRequests: boolean;
-  unreadGitNotifications: number;
 }
 
 export interface MergeRequestListItem extends MergeRequest {

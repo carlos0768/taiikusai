@@ -1,5 +1,10 @@
 import { createClient } from "@/lib/supabase/client";
-import type { Project } from "@/types";
+import type {
+  MusicData,
+  Project,
+  ProjectBranch,
+  ProjectBranchSettings,
+} from "@/types";
 
 export async function getProjects(): Promise<Project[]> {
   const supabase = createClient();
@@ -46,7 +51,16 @@ export async function deleteProject(id: string): Promise<void> {
 
 export async function updateProject(
   id: string,
-  updates: Partial<Pick<Project, "name" | "grid_width" | "grid_height">>
+  updates: Partial<
+    Pick<
+      Project,
+      | "name"
+      | "grid_width"
+      | "grid_height"
+      | "default_panel_duration_ms"
+      | "default_interval_ms"
+    >
+  >
 ): Promise<Project> {
   const supabase = createClient();
   const { data, error } = await supabase
@@ -58,4 +72,77 @@ export async function updateProject(
 
   if (error) throw error;
   return data;
+}
+
+export async function updateProjectMusic(
+  projectId: string,
+  branchId: string,
+  isMainBranch: boolean,
+  musicData: MusicData | null
+): Promise<ProjectBranch> {
+  return updateProjectBranchSettings(
+    projectId,
+    branchId,
+    { music_data: musicData },
+    isMainBranch
+  );
+}
+
+export async function updateProjectBranchSettings(
+  projectId: string,
+  branchId: string,
+  updates: Partial<ProjectBranchSettings>,
+  syncMainCache: boolean
+): Promise<ProjectBranch> {
+  const supabase = createClient();
+  const now = new Date().toISOString();
+  const { data: updatedBranch, error: branchError } = await supabase
+    .from("project_branches")
+    .update({
+      ...updates,
+      updated_at: now,
+    })
+    .eq("id", branchId)
+    .eq("project_id", projectId)
+    .select("*")
+    .single();
+
+  if (branchError || !updatedBranch) {
+    throw branchError ?? new Error("Failed to update project branch");
+  }
+
+  if (syncMainCache) {
+    const { error: projectError } = await supabase
+      .from("projects")
+      .update({
+        ...updates,
+        updated_at: now,
+      })
+      .eq("id", projectId);
+
+    if (projectError) throw projectError;
+  }
+
+  return updatedBranch;
+}
+
+export async function syncProjectMainBranch(
+  projectId: string,
+  branch: Pick<ProjectBranch, keyof ProjectBranchSettings>
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("projects")
+    .update({
+      grid_width: branch.grid_width,
+      grid_height: branch.grid_height,
+      colors: branch.colors,
+      default_panel_duration_ms: branch.default_panel_duration_ms,
+      default_interval_ms: branch.default_interval_ms,
+      music_data: branch.music_data,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", projectId);
+
+  if (error) throw error;
 }

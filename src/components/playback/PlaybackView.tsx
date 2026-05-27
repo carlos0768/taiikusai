@@ -1,12 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
-import { COLOR_MAP, type ColorIndex, type GridData } from "@/lib/grid/types";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  COLOR_MAP,
+  UNDEFINED_COLOR,
+  type ColorIndex,
+  type GridData,
+  type PlaybackFrame,
+  getPlaybackFrameBaseGrid,
+  waveChangedColsAt,
+} from "@/lib/grid/types";
+import type { PlaybackTimeline } from "@/lib/playback/frameBuilder";
+import { msToSecondsString } from "@/lib/playback/timing";
 import { usePlayback } from "./usePlayback";
+import { createMasterClock } from "./masterClock";
 
 interface PlaybackViewProps {
-  frames: GridData[];
-  frameNames: string[];
+  timeline: PlaybackTimeline;
   onBack: () => void;
   highlightedCell?: { x: number; y: number } | null;
   showControls?: boolean;
@@ -19,9 +29,113 @@ interface PlaybackViewProps {
   playbackSignal?: number;
 }
 
+function drawGrid(
+  ctx: CanvasRenderingContext2D,
+  grid: GridData,
+  canvasW: number,
+  canvasH: number
+) {
+  const cellW = canvasW / grid.width;
+  const cellH = canvasH / grid.height;
+  for (let y = 0; y < grid.height; y++) {
+    for (let x = 0; x < grid.width; x++) {
+      const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
+      ctx.fillStyle = COLOR_MAP[colorIdx];
+      ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
+    }
+  }
+  // Grid lines
+  ctx.strokeStyle = "rgba(128, 128, 128, 0.15)";
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x <= grid.width; x++) {
+    ctx.beginPath();
+    ctx.moveTo(x * cellW, 0);
+    ctx.lineTo(x * cellW, canvasH);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= grid.height; y++) {
+    ctx.beginPath();
+    ctx.moveTo(0, y * cellH);
+    ctx.lineTo(canvasW, y * cellH);
+    ctx.stroke();
+  }
+}
+
+function drawWave(
+  ctx: CanvasRenderingContext2D,
+  frame: Extract<PlaybackFrame, { kind: "wave" }>,
+  elapsedMs: number,
+  canvasW: number,
+  canvasH: number
+) {
+  const { before, after } = frame;
+  const cellW = canvasW / before.width;
+  const cellH = canvasH / before.height;
+  const changedCols = waveChangedColsAt(frame, elapsedMs);
+  for (let y = 0; y < before.height; y++) {
+    for (let x = 0; x < before.width; x++) {
+      const grid = x < changedCols ? after : before;
+      const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
+      ctx.fillStyle = COLOR_MAP[colorIdx];
+      ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
+    }
+  }
+  ctx.strokeStyle = "rgba(128, 128, 128, 0.15)";
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x <= before.width; x++) {
+    ctx.beginPath();
+    ctx.moveTo(x * cellW, 0);
+    ctx.lineTo(x * cellW, canvasH);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= before.height; y++) {
+    ctx.beginPath();
+    ctx.moveTo(0, y * cellH);
+    ctx.lineTo(canvasW, y * cellH);
+    ctx.stroke();
+  }
+}
+
+function frameDimensions(frame: PlaybackFrame): { width: number; height: number } {
+  const grid = getPlaybackFrameBaseGrid(frame);
+  return { width: grid.width, height: grid.height };
+}
+
+function drawCellHighlight(
+  ctx: CanvasRenderingContext2D,
+  dims: { width: number; height: number },
+  canvasW: number,
+  canvasH: number,
+  highlightedCell: { x: number; y: number } | null
+) {
+  if (!highlightedCell) return;
+  if (
+    highlightedCell.x < 0 ||
+    highlightedCell.x >= dims.width ||
+    highlightedCell.y < 0 ||
+    highlightedCell.y >= dims.height
+  ) {
+    return;
+  }
+
+  const cellW = canvasW / dims.width;
+  const cellH = canvasH / dims.height;
+  const lineWidth = Math.max(3, Math.min(cellW, cellH) * 0.16);
+  const inset = lineWidth / 2;
+  ctx.save();
+  ctx.strokeStyle = "#22c55e";
+  ctx.lineWidth = lineWidth;
+  ctx.strokeRect(
+    highlightedCell.x * cellW + inset,
+    highlightedCell.y * cellH + inset,
+    Math.max(0, cellW - lineWidth),
+    Math.max(0, cellH - lineWidth)
+  );
+  ctx.restore();
+}
+
 export default function PlaybackView({
-  frames,
-  frameNames,
+  timeline,
   onBack,
   highlightedCell = null,
   showControls = true,
@@ -36,19 +150,29 @@ export default function PlaybackView({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
+  const frames = useMemo(
+    () => timeline.frameItems.map((item) => item.frame),
+    [timeline.frameItems]
+  );
+
+  // 音楽を持たない再生ビュー: getAudioTimeMs は常に null → perf.now() ベースで進む
+  const clock = useMemo(
+    () => createMasterClock({ getAudioTimeMs: () => null }),
+    []
+  );
 
   const {
     currentIndex,
     isPlaying,
-    intervalMs,
-    setIntervalMs,
+    isWhiteFrame,
+    frameElapsedMs,
     play,
     pause,
     stop,
     next,
     prev,
     goTo,
-  } = usePlayback(frames.length);
+  } = usePlayback({ timeline, clock });
 
   useEffect(() => {
     if (autoPlay) {
@@ -90,7 +214,14 @@ export default function PlaybackView({
     const container = containerRef.current;
     if (!canvas || !container || frames.length === 0) return;
 
-    const grid = frames[Math.min(currentIndex, frames.length - 1)];
+    const frame = frames[currentIndex];
+    if (!frame) return;
+    const activeTransitionGrid = isWhiteFrame
+      ? timeline.gapItems[currentIndex]?.transitionGrid ?? null
+      : null;
+    const dims = activeTransitionGrid
+      ? { width: activeTransitionGrid.width, height: activeTransitionGrid.height }
+      : frameDimensions(frame);
     const styles = window.getComputedStyle(container);
     const availableWidth =
       container.clientWidth -
@@ -105,12 +236,9 @@ export default function PlaybackView({
 
     const dpr = window.devicePixelRatio || 1;
 
-    const cellSize = Math.min(
-      availableWidth / grid.width,
-      availableHeight / grid.height
-    );
-    const canvasW = grid.width * cellSize;
-    const canvasH = grid.height * cellSize;
+    const cellSize = Math.min(availableWidth / dims.width, availableHeight / dims.height);
+    const canvasW = dims.width * cellSize;
+    const canvasH = dims.height * cellSize;
 
     canvas.width = canvasW * dpr;
     canvas.height = canvasH * dpr;
@@ -119,55 +247,37 @@ export default function PlaybackView({
 
     const ctx = canvas.getContext("2d")!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, canvasW, canvasH);
 
-    const cellW = canvasW / grid.width;
-    const cellH = canvasH / grid.height;
-
-    for (let y = 0; y < grid.height; y++) {
-      for (let x = 0; x < grid.width; x++) {
-        const colorIdx = grid.cells[y * grid.width + x] as ColorIndex;
-        ctx.fillStyle = COLOR_MAP[colorIdx];
-        ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
-      }
+    if (isWhiteFrame && activeTransitionGrid) {
+      drawGrid(ctx, activeTransitionGrid, canvasW, canvasH);
+      drawCellHighlight(ctx, dims, canvasW, canvasH, highlightedCell);
+      return;
     }
 
-    // Grid lines
-    ctx.strokeStyle = "rgba(128, 128, 128, 0.15)";
-    ctx.lineWidth = 0.5;
-    for (let x = 0; x <= grid.width; x++) {
-      ctx.beginPath();
-      ctx.moveTo(x * cellW, 0);
-      ctx.lineTo(x * cellW, canvasH);
-      ctx.stroke();
-    }
-    for (let y = 0; y <= grid.height; y++) {
-      ctx.beginPath();
-      ctx.moveTo(0, y * cellH);
-      ctx.lineTo(canvasW, y * cellH);
-      ctx.stroke();
+    if (isWhiteFrame) {
+      ctx.fillStyle = COLOR_MAP[UNDEFINED_COLOR];
+      ctx.fillRect(0, 0, canvasW, canvasH);
+      drawCellHighlight(ctx, dims, canvasW, canvasH, highlightedCell);
+      return;
     }
 
-    if (
-      highlightedCell &&
-      highlightedCell.x >= 0 &&
-      highlightedCell.x < grid.width &&
-      highlightedCell.y >= 0 &&
-      highlightedCell.y < grid.height
-    ) {
-      const lineWidth = Math.max(3, Math.min(cellW, cellH) * 0.16);
-      const inset = lineWidth / 2;
-      ctx.save();
-      ctx.strokeStyle = "#22c55e";
-      ctx.lineWidth = lineWidth;
-      ctx.strokeRect(
-        highlightedCell.x * cellW + inset,
-        highlightedCell.y * cellH + inset,
-        Math.max(0, cellW - lineWidth),
-        Math.max(0, cellH - lineWidth)
-      );
-      ctx.restore();
+    if (frame.kind === "general") {
+      drawGrid(ctx, frame.grid, canvasW, canvasH);
+    } else if (frame.kind === "keep") {
+      drawGrid(ctx, frame.displayGrid, canvasW, canvasH);
+    } else {
+      drawWave(ctx, frame, frameElapsedMs, canvasW, canvasH);
     }
-  }, [currentIndex, frames, highlightedCell]);
+    drawCellHighlight(ctx, dims, canvasW, canvasH, highlightedCell);
+  }, [
+    currentIndex,
+    frames,
+    frameElapsedMs,
+    highlightedCell,
+    isWhiteFrame,
+    timeline.gapItems,
+  ]);
 
   const scheduleRender = useCallback(() => {
     if (rafRef.current !== null) return;
@@ -201,6 +311,13 @@ export default function PlaybackView({
     };
   }, [scheduleRender]);
 
+  const currentFrame = frames[currentIndex];
+  const headerName = isWhiteFrame
+    ? timeline.gapItems[currentIndex]?.transitionKind === "keep"
+      ? "（keep中）"
+      : "（間隔中）"
+    : currentFrame?.name ?? `Frame ${currentIndex + 1}`;
+
   return (
     <div className="h-full min-h-0 flex flex-col bg-background">
       {/* Header */}
@@ -212,7 +329,13 @@ export default function PlaybackView({
           ←
         </button>
         <span className="text-sm font-medium">
-          {frameNames[currentIndex] ?? `Frame ${currentIndex + 1}`}
+          {headerName}
+          {currentFrame?.kind === "keep" && !isWhiteFrame && (
+            <span className="ml-1 text-[10px] text-accent">KEEP</span>
+          )}
+          {currentFrame?.kind === "wave" && !isWhiteFrame && (
+            <span className="ml-1 text-[10px] text-accent">〜WAVE</span>
+          )}
         </span>
         <span className="text-xs text-muted">
           {currentIndex + 1} / {frames.length}
@@ -227,73 +350,62 @@ export default function PlaybackView({
         <canvas ref={canvasRef} style={{ imageRendering: "pixelated" }} />
       </div>
 
+      {/* Controls */}
       {showControls && (
-        <div className="shrink-0 px-4 py-3 border-t border-card-border space-y-3">
-          {/* Progress dots */}
-          <div className="flex items-center justify-center gap-1.5 flex-wrap">
-            {frames.map((_, idx) => (
-              <button
-                key={idx}
-                onClick={() => {
-                  pause();
-                  // Direct set through goTo equivalent
-                }}
-                className={`w-2.5 h-2.5 rounded-full transition-colors ${
-                  idx === currentIndex
-                    ? "bg-accent"
-                    : idx < currentIndex
-                      ? "bg-accent/40"
-                      : "bg-card-border"
-                }`}
-              />
-            ))}
-          </div>
-
-          {/* Playback buttons */}
-          <div className="flex items-center justify-center gap-4">
+      <div className="shrink-0 px-4 py-3 border-t border-card-border space-y-3">
+        {/* Progress dots */}
+        <div className="flex items-center justify-center gap-1.5 flex-wrap">
+          {frames.map((_, idx) => (
             <button
-              onClick={stop}
-              className="text-muted hover:text-foreground transition-colors px-2 py-1"
-            >
-              ⏹
-            </button>
-            <button
-              onClick={prev}
-              className="text-muted hover:text-foreground transition-colors px-2 py-1 text-lg"
-            >
-              ⏮
-            </button>
-            <button
-              onClick={isPlaying ? pause : play}
-              className="w-12 h-12 flex items-center justify-center bg-accent text-black rounded-full text-xl hover:opacity-90 transition-opacity"
-            >
-              {isPlaying ? "⏸" : "▶"}
-            </button>
-            <button
-              onClick={next}
-              className="text-muted hover:text-foreground transition-colors px-2 py-1 text-lg"
-            >
-              ⏭
-            </button>
-          </div>
-
-          {/* Speed control */}
-          <div className="flex items-center justify-center gap-3">
-            <span className="text-xs text-muted">速度</span>
-            <input
-              type="range"
-              min={500}
-              max={5000}
-              step={100}
-              value={intervalMs}
-              onChange={(e) => setIntervalMs(Number(e.target.value))}
-              className="w-40 accent-accent"
+              key={idx}
+              onClick={() => {
+                pause();
+                goTo(idx);
+              }}
+              className={`w-2.5 h-2.5 rounded-full transition-colors ${
+                idx === currentIndex
+                  ? "bg-accent"
+                  : idx < currentIndex
+                    ? "bg-accent/40"
+                    : "bg-card-border"
+              }`}
             />
-            <span className="text-xs text-muted w-12">
-              {(intervalMs / 1000).toFixed(1)}秒
-            </span>
-          </div>
+          ))}
         </div>
+
+        {/* Playback buttons */}
+        <div className="flex items-center justify-center gap-4">
+          <button
+            onClick={stop}
+            className="text-muted hover:text-foreground transition-colors px-2 py-1"
+          >
+            ⏹
+          </button>
+          <button
+            onClick={prev}
+            className="text-muted hover:text-foreground transition-colors px-2 py-1 text-lg"
+          >
+            ⏮
+          </button>
+          <button
+            onClick={isPlaying ? pause : play}
+            className="w-12 h-12 flex items-center justify-center bg-accent text-black rounded-full text-xl hover:opacity-90 transition-opacity"
+          >
+            {isPlaying ? "⏸" : "▶"}
+          </button>
+          <button
+            onClick={next}
+            className="text-muted hover:text-foreground transition-colors px-2 py-1 text-lg"
+          >
+            ⏭
+          </button>
+        </div>
+
+        <div className="text-center text-[11px] text-muted">
+          通常パネル基本 {msToSecondsString(timeline.defaultPanelDurationMs)}秒 / 折り基本{" "}
+          {msToSecondsString(timeline.defaultIntervalMs)}秒
+        </div>
+      </div>
       )}
     </div>
   );
