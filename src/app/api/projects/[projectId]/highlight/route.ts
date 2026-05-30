@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/server/auth";
 import { toErrorResponse, HttpError } from "@/lib/server/errors";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPanelColumns } from "@/lib/panelColumns";
@@ -10,8 +9,6 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   try {
-    await requireAuth();
-
     const { projectId } = await params;
     const admin = createAdminClient();
 

@@ -5,6 +5,17 @@ import { getSafeAuthRedirectPath } from "@/lib/authRedirect";
 const LOGIN_PATH = "/login";
 const PUBLIC_PAGE_PATHS = new Set([LOGIN_PATH]);
 
+function isProjectHighlightPath(pathname: string) {
+  const segments = pathname.split("/").filter(Boolean);
+
+  return (
+    segments.length === 3 &&
+    segments[0] === "project" &&
+    Boolean(segments[1]) &&
+    segments[2] === "highlight"
+  );
+}
+
 function getPracticeHighlightPath(pathname: string) {
   const segments = pathname.split("/").filter(Boolean);
 
@@ -45,7 +56,9 @@ export async function proxy(request: NextRequest) {
 
   const { data } = await supabase.auth.getClaims();
 
-  const isPublicPage = PUBLIC_PAGE_PATHS.has(pathname);
+  const isLoginPage = pathname === LOGIN_PATH;
+  const isPublicPage =
+    PUBLIC_PAGE_PATHS.has(pathname) || isProjectHighlightPath(pathname);
 
   if (!data?.claims?.sub) {
     if (isPublicPage) {
@@ -62,7 +75,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  if (isPublicPage) {
+  if (isLoginPage) {
     const redirectPath = getSafeAuthRedirectPath(
       request.nextUrl.searchParams.get("next")
     );
