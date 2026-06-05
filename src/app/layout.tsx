@@ -14,7 +14,15 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "パネルツール",
-  description: "体育祭パネル競技のデザイン・アニメーション管理ツール",
+  description: "パネル",
+  openGraph: {
+    title: "パネルツール",
+    description: "パネル",
+  },
+  twitter: {
+    title: "パネルツール",
+    description: "パネル",
+  },
 };
 
 export const viewport: Viewport = {
