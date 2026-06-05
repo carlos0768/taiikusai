@@ -10,15 +10,37 @@ import {
   resolveBranchById,
   resolveMainBranch,
 } from "@/lib/server/pseudoGit";
+import { PUBLIC_CLIENT_ONLY_AUTH_PROFILE } from "@/lib/publicAccess";
+
+async function getRequestsViewer() {
+  try {
+    const { profile } = await requireAuth();
+
+    return {
+      profile,
+      canViewAll:
+        profile.is_admin || profile.permissions.can_view_git_requests,
+    };
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 401) {
+      return {
+        profile: PUBLIC_CLIENT_ONLY_AUTH_PROFILE,
+        canViewAll: true,
+      };
+    }
+
+    throw error;
+  }
+}
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   try {
-    const { profile } = await requireAuth();
+    const { profile, canViewAll } = await getRequestsViewer();
     const { projectId } = await params;
-    const requests = await listMergeRequests(projectId, profile.id, profile.is_admin);
+    const requests = await listMergeRequests(projectId, profile.id, canViewAll);
     return NextResponse.json({ profile, requests });
   } catch (error) {
     return toErrorResponse(error);

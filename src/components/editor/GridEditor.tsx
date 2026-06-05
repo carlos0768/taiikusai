@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { prefetchRoutes } from "@/lib/client/prefetch";
 import { buildBranchPath } from "@/lib/projectBranches";
+import { isClientOnlyAuthProfile } from "@/lib/publicAccess";
 import {
   type ColorIndex,
   type GridData,
@@ -410,6 +411,12 @@ export default function GridEditor({
     const summary = prompt("main への反映内容を簡単に入力してください", "");
 
     try {
+      if (isClientOnlyAuthProfile(auth)) {
+        alert("公開編集では main 申請はバックエンドに送信されません");
+        router.push(buildBranchPath(`/project/${projectId}/git/requests`, currentBranch.id));
+        return;
+      }
+
       const response = await fetch(`/api/projects/${projectId}/requests`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -436,7 +443,7 @@ export default function GridEditor({
         error instanceof Error ? error.message : "申請を作成できませんでした"
       );
     }
-  }, [currentBranch.id, projectId, router]);
+  }, [auth, currentBranch.id, projectId, router]);
 
   const updateWaveSetting = useCallback(
     (patch: Partial<Omit<WaveMotionData, "after_grid_data">>) => {

@@ -151,7 +151,7 @@ export async function createMergeRequest(params: {
 export async function listMergeRequests(
   projectId: string,
   userId: string,
-  isAdmin: boolean
+  canViewAll: boolean
 ): Promise<MergeRequestListItem[]> {
   const admin = createAdminClient();
 
@@ -164,7 +164,7 @@ export async function listMergeRequests(
   throwIfError(error);
 
   const requests = (data ?? []) as MergeRequest[];
-  const filtered = isAdmin
+  const filtered = canViewAll
     ? requests
     : requests.filter((request) => request.requested_by === userId);
 

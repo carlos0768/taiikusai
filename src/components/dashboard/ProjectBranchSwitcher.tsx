@@ -14,6 +14,7 @@ interface ProjectBranchSwitcherProps {
   canRequestMerge: boolean;
   canMergeToMainDirectly: boolean;
   canDeleteBranches: boolean;
+  clientOnlyMode?: boolean;
 }
 
 function BranchIcon() {
@@ -52,6 +53,7 @@ export default function ProjectBranchSwitcher({
   canRequestMerge,
   canMergeToMainDirectly,
   canDeleteBranches,
+  clientOnlyMode = false,
 }: ProjectBranchSwitcherProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -163,6 +165,13 @@ export default function ProjectBranchSwitcher({
 
     setBusy(true);
     try {
+      if (clientOnlyMode) {
+        setOpen(false);
+        alert("公開編集では main 申請はバックエンドに送信されません");
+        router.push(buildBranchPath(`/project/${projectId}/git/requests`, currentBranch.id));
+        return;
+      }
+
       const response = await fetch(`/api/projects/${projectId}/requests`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

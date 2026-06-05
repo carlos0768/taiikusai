@@ -16,6 +16,28 @@ function isProjectHighlightPath(pathname: string) {
   );
 }
 
+function isProjectGitRequestsPath(pathname: string) {
+  const segments = pathname.split("/").filter(Boolean);
+
+  if (segments[0] !== "project" || !segments[1]) return false;
+  if (segments.length === 3) return segments[2] === "git";
+
+  return (
+    segments.length === 4 &&
+    segments[2] === "git" &&
+    segments[3] === "requests"
+  );
+}
+
+function isProjectClientOnlyPath(pathname: string) {
+  const segments = pathname.split("/").filter(Boolean);
+
+  if (segments[0] !== "project" || !segments[1]) return false;
+  if (segments.length === 2) return true;
+
+  return segments[2] === "editor";
+}
+
 function getPracticeHighlightPath(pathname: string) {
   const segments = pathname.split("/").filter(Boolean);
 
@@ -58,7 +80,10 @@ export async function proxy(request: NextRequest) {
 
   const isLoginPage = pathname === LOGIN_PATH;
   const isPublicPage =
-    PUBLIC_PAGE_PATHS.has(pathname) || isProjectHighlightPath(pathname);
+    PUBLIC_PAGE_PATHS.has(pathname) ||
+    isProjectHighlightPath(pathname) ||
+    isProjectGitRequestsPath(pathname) ||
+    isProjectClientOnlyPath(pathname);
 
   if (!data?.claims?.sub) {
     if (isPublicPage) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/client";
 import { fetchJson } from "@/lib/client/api";
@@ -11,6 +11,10 @@ import {
   canRequestMerge,
   READONLY_AUTH_PROFILE,
 } from "@/lib/client/authProfile";
+import {
+  isClientOnlyAuthProfile,
+  PUBLIC_CLIENT_ONLY_AUTH_PROFILE,
+} from "@/lib/publicAccess";
 import { decodeGrid } from "@/lib/grid/codec";
 import {
   countUndefinedCells,
@@ -26,7 +30,6 @@ import {
 } from "@/lib/export/generateScript";
 import { decodeKeepMask, filterKeepMaskBySameColor, isKeepCell } from "@/lib/keep";
 import { zentaiGamenToPlaybackFrame } from "@/lib/playback/frameBuilder";
-import { fetchProjectBranchContext } from "@/lib/projectBranches";
 import type {
   AuthProfile,
   BranchScopedProject,
@@ -38,6 +41,14 @@ import type {
 
 interface MeResponse {
   profile: AuthProfile;
+}
+
+interface PublicProjectResponse {
+  projectView: BranchScopedProject;
+  branches: ProjectBranch[];
+  currentBranch: ProjectBranch;
+  zentaiGamen: ZentaiGamen[];
+  connections: Connection[];
 }
 
 interface ExportProgress {
@@ -149,7 +160,6 @@ function downloadBlob(blob: Blob, filename: string) {
 export default function EditorPage() {
   const params = useParams();
   const searchParams = useSearchParams();
-  const router = useRouter();
   const projectId = params.projectId as string;
   const zentaiGamenId = params.zentaiGamenId as string;
   const requestedBranchId = searchParams.get("branch");
@@ -170,23 +180,16 @@ export default function EditorPage() {
       setError(null);
 
       try {
-        const [context, zentaiGamenResult] = await Promise.all([
-          fetchProjectBranchContext(supabase, projectId, requestedBranchId),
-          supabase
-            .from("zentai_gamen")
-            .select("*")
-            .eq("id", zentaiGamenId)
-            .eq("project_id", projectId)
-            .single(),
-        ]);
-        const { data: zg, error: zentaiGamenError } = zentaiGamenResult;
+        const query = requestedBranchId
+          ? `?branch=${encodeURIComponent(requestedBranchId)}`
+          : "";
+        const context = await fetchJson<PublicProjectResponse>(
+          `/api/projects/${projectId}/public${query}`
+        );
+        const zg = context.zentaiGamen.find((item) => item.id === zentaiGamenId);
 
-        if (
-          zentaiGamenError ||
-          !zg ||
-          zg.branch_id !== context.currentBranch.id
-        ) {
-          throw zentaiGamenError ?? new Error("対象の画面が見つかりません");
+        if (!zg || zg.branch_id !== context.currentBranch.id) {
+          throw new Error("対象の画面が見つかりません");
         }
 
         setProject(context.projectView);
@@ -222,7 +225,7 @@ export default function EditorPage() {
     }
 
     void load();
-  }, [projectId, requestedBranchId, supabase, zentaiGamenId]);
+  }, [projectId, requestedBranchId, zentaiGamenId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -240,7 +243,8 @@ export default function EditorPage() {
         setUnreadGitNotifications(notifications.unreadCount);
       } catch {
         if (!cancelled) {
-          router.replace("/login");
+          setAuth(PUBLIC_CLIENT_ONLY_AUTH_PROFILE);
+          setUnreadGitNotifications(0);
         }
       }
     }
@@ -249,7 +253,7 @@ export default function EditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [projectId, router]);
+  }, [projectId]);
 
   const handleSave = useCallback(
     async (payload: GridEditorSavePayload) => {
@@ -265,6 +269,37 @@ export default function EditorPage() {
         update.motion_data = payload.motionData;
       }
 
+      if (isClientOnlyAuthProfile(auth)) {
+        setZentaiGamen((prev) =>
+          prev
+            ? {
+                ...prev,
+                grid_data: payload.gridData,
+                name: payload.name,
+                memo: payload.memo,
+                motion_data:
+                  payload.motionData === undefined
+                    ? prev.motion_data
+                    : payload.motionData,
+                updated_at: String(update.updated_at),
+              }
+            : prev
+        );
+        setGrid(
+          decodeGrid(payload.gridData, project?.grid_width ?? 1, project?.grid_height ?? 1)
+        );
+        if (payload.motionData?.after_grid_data && project) {
+          setAfterGrid(
+            decodeGrid(
+              payload.motionData.after_grid_data,
+              project.grid_width,
+              project.grid_height
+            )
+          );
+        }
+        return;
+      }
+
       const { error: updateError } = await supabase
         .from("zentai_gamen")
         .update(update)
@@ -276,7 +311,7 @@ export default function EditorPage() {
         throw updateError;
       }
     },
-    [currentBranch, projectId, supabase, zentaiGamenId]
+    [auth, currentBranch, project, projectId, supabase, zentaiGamenId]
   );
 
   const handleExport = useCallback(async (
@@ -284,37 +319,25 @@ export default function EditorPage() {
   ) => {
     if (!project || !currentBranch) return;
 
-    const [{ data: allZg, error: zentaiGamenError }, { data: allConns, error: connectionsError }] =
-      await Promise.all([
-        supabase
-          .from("zentai_gamen")
-          .select("*")
-          .eq("project_id", projectId)
-          .eq("branch_id", currentBranch.id),
-        supabase
-          .from("connections")
-          .select("*")
-          .eq("project_id", projectId)
-          .eq("branch_id", currentBranch.id),
-      ]);
+    const context = await fetchJson<PublicProjectResponse>(
+      `/api/projects/${projectId}/public?branch=${encodeURIComponent(currentBranch.id)}`
+    );
+    const allZg = context.zentaiGamen;
+    const allConns = context.connections;
 
-    if (zentaiGamenError || connectionsError || !allZg || !allConns) {
-      throw new Error("データの取得に失敗しました");
-    }
-
-    const routes = findPlaybackRoutes(allConns as Connection[], zentaiGamenId);
+    const routes = findPlaybackRoutes(allConns, zentaiGamenId);
     const route = routes[0];
     if (!route || route.length === 0) {
       throw new Error("連結された全体画面がありません");
     }
 
     const zentaiGamenMap = new Map(
-      (allZg as ZentaiGamen[]).map((item) => [item.id, item])
+      allZg.map((item) => [item.id, item])
     );
     const width = project.grid_width;
     const height = project.grid_height;
     const connectionMap = new Map(
-      (allConns as Connection[]).map((connection) => [
+      allConns.map((connection) => [
         `${connection.source_id}:${connection.target_id}`,
         connection,
       ])
@@ -436,7 +459,7 @@ export default function EditorPage() {
 
     const blob = await zip.generateAsync({ type: "blob" });
     downloadBlob(blob, `${project.name}_パネル台本.zip`);
-  }, [currentBranch, project, projectId, supabase, zentaiGamenId]);
+  }, [currentBranch, project, projectId, zentaiGamenId]);
 
   if (error || !project || !currentBranch || !grid || !zentaiGamen) {
     return (
