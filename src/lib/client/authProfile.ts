@@ -1,4 +1,5 @@
 import type { AuthProfile, ProjectBranch } from "@/types";
+import { isClientOnlyAuthProfile } from "@/lib/publicAccess";
 
 export const READONLY_AUTH_PROFILE: AuthProfile = {
   id: "__pending_auth__",
@@ -28,6 +29,7 @@ export function canEditBranch(
   branch: ProjectBranch | null
 ): boolean {
   if (!profile || !branch) return false;
+  if (isClientOnlyAuthProfile(profile)) return true;
   if (profile.is_admin) return true;
   if (branch.is_main) return false;
   return (
@@ -46,6 +48,7 @@ export function canRequestMerge(
   branch: ProjectBranch | null
 ): boolean {
   if (!profile || !branch || branch.is_main) return false;
+  if (isClientOnlyAuthProfile(profile)) return true;
   return Boolean(
     profile.is_admin ||
       (profile.permissions.can_request_main_merge &&

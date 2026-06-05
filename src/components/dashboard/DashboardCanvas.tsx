@@ -48,6 +48,7 @@ import {
   getPlaybackFrameFinalGrid,
   type GridData,
 } from "@/lib/grid/types";
+import { isClientOnlyAuthProfile } from "@/lib/publicAccess";
 import {
   buildDefaultKeepMask,
   createKeepMaskGrid,
@@ -84,6 +85,10 @@ const nodeTypes = {
 };
 const edgeTypes = { connection: ConnectionEdge };
 const DASHBOARD_VIEWPORT_STORAGE_PREFIX = "taiikusai:dashboardViewport";
+
+function createLocalId(prefix: string) {
+  return `${prefix}-${crypto.randomUUID()}`;
+}
 
 interface DashboardCanvasProps {
   project: BranchScopedProject;
@@ -286,7 +291,9 @@ function DashboardCanvasInner({
   );
   const suppressViewportPersistenceRef = useRef(true);
 
+  const clientOnlyMode = isClientOnlyAuthProfile(auth);
   const canEditCurrentBranch = useMemo(() => {
+    if (clientOnlyMode) return true;
     if (auth.is_admin) return true;
     if (currentBranch.is_main) return false;
     return (
@@ -299,6 +306,7 @@ function DashboardCanvasInner({
     auth.is_admin,
     auth.permissions.can_create_branches,
     auth.permissions.can_edit_branch_content,
+    clientOnlyMode,
     currentBranch.created_by,
     currentBranch.is_main,
   ]);
@@ -306,7 +314,8 @@ function DashboardCanvasInner({
   const isOwnCurrentBranch = currentBranch.created_by === auth.id;
   const canRequestMerge =
     !currentBranch.is_main &&
-    (auth.is_admin ||
+    (clientOnlyMode ||
+      auth.is_admin ||
       (auth.permissions.can_request_main_merge && isOwnCurrentBranch));
   const canDeleteCurrentBranch =
     auth.is_admin ||
@@ -348,6 +357,8 @@ function DashboardCanvasInner({
   const handleMusicChange = useCallback(
     async (data: MusicData | null) => {
       setCurrentMusic(data);
+      if (clientOnlyMode) return;
+
       await updateProjectMusic(
         project.id,
         project.active_branch_id,
@@ -355,7 +366,12 @@ function DashboardCanvasInner({
         data
       );
     },
-    [project.id, project.active_branch_id, project.active_branch_is_main]
+    [
+      clientOnlyMode,
+      project.id,
+      project.active_branch_id,
+      project.active_branch_is_main,
+    ]
   );
 
   const [contextMenu, setContextMenu] = useState<{
@@ -455,6 +471,18 @@ function DashboardCanvasInner({
   const persistConnectionKeepMask = useCallback(
     async (connectionId: string, mask: GridData) => {
       const encodedMask = encodeKeepMask(mask);
+
+      if (clientOnlyMode) {
+        setConnectionList((prev) =>
+          prev.map((connection) =>
+            connection.id === connectionId
+              ? { ...connection, keep_mask_grid_data: encodedMask }
+              : connection
+          )
+        );
+        return;
+      }
+
       const { error } = await supabase
         .from("connections")
         .update({ keep_mask_grid_data: encodedMask })
@@ -471,7 +499,7 @@ function DashboardCanvasInner({
         )
       );
     },
-    [project.active_branch_id, supabase]
+    [clientOnlyMode, project.active_branch_id, supabase]
   );
 
   const handleNodeDoubleClick = useCallback(
@@ -536,6 +564,11 @@ function DashboardCanvasInner({
         return;
       }
 
+      if (clientOnlyMode && nodeId.startsWith("local-panel-")) {
+        setActionError("公開編集で追加したパネルはこの画面上だけの一時データです");
+        return;
+      }
+
       writeStoredDashboardViewport(
         viewportStorageKey,
         reactFlowInstance.getViewport()
@@ -549,6 +582,7 @@ function DashboardCanvasInner({
     },
     [
       canEditCurrentBranch,
+      clientOnlyMode,
       connectionList,
       getZentaiGamenDisplayGrid,
       keepRangeStart,
@@ -591,6 +625,10 @@ function DashboardCanvasInner({
       setCollapsedGroups((prev) => prev.filter((g) => g.id !== groupId));
 
       if (!canEditCurrentBranch) return;
+      if (clientOnlyMode) {
+        setActionError(null);
+        return;
+      }
 
       const { error } = await supabase
         .from("collapsed_panel_groups")
@@ -606,7 +644,13 @@ function DashboardCanvasInner({
 
       setActionError(null);
     },
-    [canEditCurrentBranch, collapsedGroups, project.active_branch_id, supabase]
+    [
+      canEditCurrentBranch,
+      clientOnlyMode,
+      collapsedGroups,
+      project.active_branch_id,
+      supabase,
+    ]
   );
 
   const handleEnterMultiSelect = useCallback(() => {
@@ -644,6 +688,22 @@ function DashboardCanvasInner({
         : firstZg.name
       : `${ids.length}枚のパネル`;
 
+    if (clientOnlyMode) {
+      setCollapsedGroups((prev) => [
+        ...prev,
+        {
+          id: createLocalId("local-group"),
+          nodeIds: ids,
+          position,
+          name,
+        },
+      ]);
+      setMultiSelectMode(false);
+      setSelectedNodeIds(new Set());
+      setActionError(null);
+      return;
+    }
+
     const { data, error } = await supabase
       .from("collapsed_panel_groups")
       .insert({
@@ -671,6 +731,7 @@ function DashboardCanvasInner({
     setActionError(null);
   }, [
     canEditCurrentBranch,
+    clientOnlyMode,
     project.active_branch_id,
     project.id,
     selectedNodeIds,
@@ -692,6 +753,13 @@ function DashboardCanvasInner({
 
     const cols = Math.ceil(Math.sqrt(ids.length));
     const rows = Math.ceil(ids.length / cols);
+
+    if (clientOnlyMode) {
+      setMultiSelectMode(false);
+      setSelectedNodeIds(new Set());
+      setActionError("公開編集ではパネルショー作成は保存されません");
+      return;
+    }
 
     const { data, error } = await supabase
       .from("panel_shows")
@@ -723,6 +791,7 @@ function DashboardCanvasInner({
     );
   }, [
     canEditCurrentBranch,
+    clientOnlyMode,
     project.active_branch_id,
     project.id,
     router,
@@ -944,6 +1013,42 @@ function DashboardCanvasInner({
       if (!connection.source || !connection.target) return;
       if (connection.source === connection.target) return;
 
+      if (clientOnlyMode) {
+        const nextConnection: DBConnection = {
+          id: createLocalId("local-connection"),
+          project_id: project.id,
+          branch_id: project.active_branch_id,
+          source_id: connection.source,
+          target_id: connection.target,
+          sort_order: 0,
+          interval_override_ms: null,
+          keep_mask_grid_data: null,
+          created_at: new Date().toISOString(),
+        };
+
+        setActionError(null);
+        setConnectionList((prev) => [...prev, nextConnection]);
+        setEdges((existingEdges) =>
+          addEdge(
+            {
+              ...connection,
+              id: nextConnection.id,
+              type: "connection",
+              markerEnd: undefined,
+            },
+            existingEdges
+          )
+        );
+        setNodes((existingNodes) =>
+          existingNodes.map((node) =>
+            node.id === connection.source
+              ? { ...node, data: { ...node.data, hasOutgoingEdge: true } }
+              : node
+          )
+        );
+        return;
+      }
+
       const { data, error } = await supabase
         .from("connections")
         .insert({
@@ -985,6 +1090,7 @@ function DashboardCanvasInner({
     },
     [
       canEditCurrentBranch,
+      clientOnlyMode,
       project.active_branch_id,
       project.id,
       setEdges,
@@ -997,22 +1103,24 @@ function DashboardCanvasInner({
     async (edgeId: string) => {
       if (!canEditCurrentBranch) return;
 
-      const { error } = await supabase
-        .from("connections")
-        .delete()
-        .eq("id", edgeId)
-        .eq("branch_id", project.active_branch_id);
-      if (error) {
-        setActionError(error.message);
-        return;
-      }
-
       const nextConnections = connectionList.filter(
         (connection) => connection.id !== edgeId
       );
       const sourceIds = new Set(
         nextConnections.map((connection) => connection.source_id)
       );
+
+      if (!clientOnlyMode) {
+        const { error } = await supabase
+          .from("connections")
+          .delete()
+          .eq("id", edgeId)
+          .eq("branch_id", project.active_branch_id);
+        if (error) {
+          setActionError(error.message);
+          return;
+        }
+      }
 
       setActionError(null);
       setEdgeMenu(null);
@@ -1030,6 +1138,7 @@ function DashboardCanvasInner({
     },
     [
       canEditCurrentBranch,
+      clientOnlyMode,
       connectionList,
       project.active_branch_id,
       setEdges,
@@ -1068,6 +1177,10 @@ function DashboardCanvasInner({
           prev.map((g) => (g.id === node.id ? { ...g, position: node.position } : g))
         );
         if (!canEditCurrentBranch) return;
+        if (clientOnlyMode) {
+          setActionError(null);
+          return;
+        }
 
         const { error } = await supabase
           .from("collapsed_panel_groups")
@@ -1090,6 +1203,18 @@ function DashboardCanvasInner({
 
       if (!canEditCurrentBranch) return;
 
+      if (clientOnlyMode) {
+        setActionError(null);
+        setZentaiGamenList((prev) =>
+          prev.map((item) =>
+            item.id === node.id
+              ? { ...item, position_x: node.position.x, position_y: node.position.y }
+              : item
+          )
+        );
+        return;
+      }
+
       const { error } = await supabase
         .from("zentai_gamen")
         .update({ position_x: node.position.x, position_y: node.position.y })
@@ -1110,7 +1235,7 @@ function DashboardCanvasInner({
         )
       );
     },
-    [canEditCurrentBranch, project.active_branch_id, supabase]
+    [canEditCurrentBranch, clientOnlyMode, project.active_branch_id, supabase]
   );
 
   const onPanePointerDown = useCallback(
@@ -1221,6 +1346,34 @@ function DashboardCanvasInner({
       const motionType = options?.motionType ?? null;
       const motionData = options?.motionData ?? null;
 
+      if (clientOnlyMode) {
+        const now = new Date().toISOString();
+        const panel: ZentaiGamen = {
+          id: createLocalId("local-panel"),
+          project_id: project.id,
+          branch_id: project.active_branch_id,
+          name,
+          grid_data: gridData,
+          thumbnail: null,
+          position_x: positionX,
+          position_y: positionY,
+          memo: "",
+          panel_type: panelType,
+          motion_type: motionType,
+          motion_data: motionData,
+          panel_duration_override_ms: null,
+          created_at: now,
+          updated_at: now,
+        };
+
+        setContextMenu(null);
+        pendingCreatePositionRef.current = null;
+        setActionError(null);
+        setZentaiGamenList((current) => [...current, panel]);
+        setNodes((current) => [...current, buildNodes([panel], connectionList)[0]]);
+        return true;
+      }
+
       const { data, error } = await supabase
         .from("zentai_gamen")
         .insert({
@@ -1258,12 +1411,16 @@ function DashboardCanvasInner({
       return true;
     },
     [
+      buildNodes,
       canEditCurrentBranch,
+      clientOnlyMode,
+      connectionList,
       contextMenu,
       project.active_branch_id,
       project.id,
       reactFlowInstance,
       router,
+      setNodes,
       supabase,
       viewportStorageKey,
     ]
@@ -1283,6 +1440,15 @@ function DashboardCanvasInner({
     const beforeEncoded = encodeGrid(emptyGrid);
     const afterEncoded = encodeGrid(emptyGrid);
     const motionData = DEFAULT_WAVE_MOTION_DATA(afterEncoded);
+
+    if (clientOnlyMode) {
+      await createAndNavigate(beforeEncoded, "ウェーブ", {
+        panelType: "motion",
+        motionType: "wave",
+        motionData,
+      });
+      return;
+    }
 
     const { data, error } = await supabase
       .from("zentai_gamen")
@@ -1315,7 +1481,9 @@ function DashboardCanvasInner({
     );
   }, [
     canEditCurrentBranch,
+    clientOnlyMode,
     contextMenu,
+    createAndNavigate,
     project.active_branch_id,
     project.grid_height,
     project.grid_width,
@@ -1504,6 +1672,31 @@ function DashboardCanvasInner({
   const handleDeleteNode = useCallback(async () => {
     if (!nodeMenu || !canEditCurrentBranch) return;
 
+    if (clientOnlyMode) {
+      setActionError(null);
+      setZentaiGamenList((prev) => prev.filter((item) => item.id !== nodeMenu.nodeId));
+      setConnectionList((prev) =>
+        prev.filter(
+          (connection) =>
+            connection.source_id !== nodeMenu.nodeId &&
+            connection.target_id !== nodeMenu.nodeId
+        )
+      );
+      setNodes((existingNodes) =>
+        existingNodes.filter((node) => node.id !== nodeMenu.nodeId)
+      );
+      setEdges((existingEdges) =>
+        existingEdges.filter(
+          (edge) => edge.source !== nodeMenu.nodeId && edge.target !== nodeMenu.nodeId
+        )
+      );
+      setCollapsedGroups((prev) =>
+        prev.filter((group) => !group.nodeIds.includes(nodeMenu.nodeId))
+      );
+      setNodeMenu(null);
+      return;
+    }
+
     const { error } = await supabase
       .from("zentai_gamen")
       .delete()
@@ -1547,6 +1740,7 @@ function DashboardCanvasInner({
     setNodeMenu(null);
   }, [
     canEditCurrentBranch,
+    clientOnlyMode,
     nodeMenu,
     project.active_branch_id,
     project.id,
@@ -1558,6 +1752,23 @@ function DashboardCanvasInner({
   const handleRenameNode = useCallback(
     async (newName: string) => {
       if (!nodeMenu || !canEditCurrentBranch) return;
+
+      if (clientOnlyMode) {
+        setActionError(null);
+        setZentaiGamenList((prev) =>
+          prev.map((item) =>
+            item.id === nodeMenu.nodeId ? { ...item, name: newName } : item
+          )
+        );
+        setNodes((existingNodes) =>
+          existingNodes.map((node) =>
+            node.id === nodeMenu.nodeId
+              ? { ...node, data: { ...node.data, name: newName } }
+              : node
+          )
+        );
+        return;
+      }
 
       const { error } = await supabase
         .from("zentai_gamen")
@@ -1583,7 +1794,14 @@ function DashboardCanvasInner({
         )
       );
     },
-    [canEditCurrentBranch, nodeMenu, project.active_branch_id, setNodes, supabase]
+    [
+      canEditCurrentBranch,
+      clientOnlyMode,
+      nodeMenu,
+      project.active_branch_id,
+      setNodes,
+      supabase,
+    ]
   );
 
   const handleDuplicateNode = useCallback(async () => {
@@ -1591,6 +1809,25 @@ function DashboardCanvasInner({
 
     const original = zentaiGamenList.find((item) => item.id === nodeMenu.nodeId);
     if (!original) return;
+
+    if (clientOnlyMode) {
+      const now = new Date().toISOString();
+      const panel: ZentaiGamen = {
+        ...original,
+        id: createLocalId("local-panel"),
+        name: `${original.name} (コピー)`,
+        position_x: original.position_x + 50,
+        position_y: original.position_y + 50,
+        created_at: now,
+        updated_at: now,
+      };
+
+      setNodeMenu(null);
+      setActionError(null);
+      setZentaiGamenList((current) => [...current, panel]);
+      setNodes((current) => [...current, buildNodes([panel], connectionList)[0]]);
+      return;
+    }
 
     const { data, error } = await supabase
       .from("zentai_gamen")
@@ -1622,6 +1859,7 @@ function DashboardCanvasInner({
   }, [
     buildNodes,
     canEditCurrentBranch,
+    clientOnlyMode,
     connectionList,
     nodeMenu,
     project.active_branch_id,
@@ -1875,6 +2113,32 @@ function DashboardCanvasInner({
         y: window.innerHeight / 2,
       });
 
+      if (clientOnlyMode) {
+        const now = new Date().toISOString();
+        const panel: ZentaiGamen = {
+          id: createLocalId("local-panel"),
+          project_id: project.id,
+          branch_id: project.active_branch_id,
+          name,
+          grid_data: gridData,
+          thumbnail: null,
+          position_x: position.x,
+          position_y: position.y,
+          memo: "",
+          panel_type: "general",
+          motion_type: null,
+          motion_data: null,
+          panel_duration_override_ms: null,
+          created_at: now,
+          updated_at: now,
+        };
+
+        setActionError(null);
+        setZentaiGamenList((current) => [...current, panel]);
+        setNodes((current) => [...current, buildNodes([panel], connectionList)[0]]);
+        return panel;
+      }
+
       const { data, error } = await supabase
         .from("zentai_gamen")
         .insert({
@@ -1905,6 +2169,7 @@ function DashboardCanvasInner({
     [
       buildNodes,
       canEditCurrentBranch,
+      clientOnlyMode,
       connectionList,
       project.active_branch_id,
       project.id,
@@ -1961,6 +2226,7 @@ function DashboardCanvasInner({
           canRequestMerge={canRequestMerge}
           canMergeToMainDirectly={auth.is_admin && !currentBranch.is_main}
           canDeleteBranches={canDeleteCurrentBranch}
+          clientOnlyMode={clientOnlyMode}
         />
 
         {!canEditCurrentBranch && (
