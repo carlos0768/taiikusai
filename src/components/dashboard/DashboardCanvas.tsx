@@ -16,7 +16,7 @@ import {
   type Viewport as FlowViewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { MessageCircle } from "lucide-react";
+import { MessageCircle, Paintbrush } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { decodeGrid, encodeGrid } from "@/lib/grid/codec";
@@ -1637,8 +1637,12 @@ function DashboardCanvasInner({
   );
 
   const handleAiSpriteGenerate = useCallback(
-    async (prompt: string) => {
-      const response = await fetch("/api/ai-sprite", {
+    async (prompt: string, options: { highPrecision: boolean }) => {
+      const endpoint = options.highPrecision
+        ? "/api/ai-sprite/refine"
+        : "/api/ai-sprite";
+
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2219,6 +2223,18 @@ function DashboardCanvasInner({
         >
           <MessageCircle size={19} />
         </button>
+
+        {canEditCurrentBranch && (
+          <button
+            type="button"
+            onClick={handleAiDraw}
+            className="absolute right-16 top-4 z-30 flex h-10 w-10 items-center justify-center rounded-lg border border-card-border bg-card text-foreground shadow-sm transition-colors hover:border-accent/50"
+            aria-label="AI描画"
+            title="AI描画"
+          >
+            <Paintbrush size={19} />
+          </button>
+        )}
 
         <ProjectBranchSwitcher
           projectId={project.id}
