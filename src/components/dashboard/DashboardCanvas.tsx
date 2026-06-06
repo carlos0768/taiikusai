@@ -90,6 +90,12 @@ function createLocalId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+interface AiSpriteApiResponse {
+  gridData?: unknown;
+  name?: unknown;
+  error?: unknown;
+}
+
 interface DashboardCanvasProps {
   project: BranchScopedProject;
   branches: ProjectBranch[];
@@ -146,6 +152,49 @@ function writeStoredDashboardViewport(
   } catch {
     // Viewport persistence is only a convenience; ignore unavailable storage.
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+async function readAiSpriteApiResponse(
+  response: Response
+): Promise<AiSpriteApiResponse> {
+  const text = await response.text();
+  if (!text.trim()) return {};
+
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return { error: text };
+  }
+}
+
+function getAiSpriteErrorMessage(
+  response: Response,
+  result: AiSpriteApiResponse
+): string {
+  if (typeof result.error === "string" && result.error.trim()) {
+    return result.error.trim();
+  }
+
+  return `AI描画に失敗しました (${response.status})`;
+}
+
+function getAiSpriteSuccessPayload(result: AiSpriteApiResponse): {
+  gridData: string;
+  name?: string;
+} {
+  if (typeof result.gridData !== "string" || !result.gridData) {
+    throw new Error("AI描画のレスポンス形式が不正です");
+  }
+
+  return {
+    gridData: result.gridData,
+    name: typeof result.name === "string" ? result.name : undefined,
+  };
 }
 
 function findConnectionPath(
@@ -1651,19 +1700,16 @@ function DashboardCanvasInner({
           gridHeight: project.grid_height,
         }),
       });
+      const result = await readAiSpriteApiResponse(response);
 
       if (!response.ok) {
-        const result = (await response.json()) as { error?: string };
-        throw new Error(result.error ?? "AI描画に失敗しました");
+        throw new Error(getAiSpriteErrorMessage(response, result));
       }
 
-      const result = (await response.json()) as {
-        gridData: string;
-        name?: string;
-      };
+      const { gridData, name } = getAiSpriteSuccessPayload(result);
       const created = await createAndNavigate(
-        result.gridData,
-        result.name || "AIピクセル"
+        gridData,
+        name || "AIピクセル"
       );
 
       if (!created) {
