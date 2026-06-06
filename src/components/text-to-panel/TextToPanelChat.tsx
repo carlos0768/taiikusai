@@ -47,6 +47,8 @@ interface TextToPanelChatProps {
   project: BranchScopedProject;
   currentBranch: ProjectBranch;
   canEditCurrentBranch: boolean;
+  canGenerate: boolean;
+  canManageHistory: boolean;
   onClose: () => void;
   onCreatePanel: (input: CreatePanelInput) => Promise<ZentaiGamen>;
 }
@@ -172,6 +174,8 @@ export default function TextToPanelChat({
   project,
   currentBranch,
   canEditCurrentBranch,
+  canGenerate,
+  canManageHistory,
   onClose,
   onCreatePanel,
 }: TextToPanelChatProps) {
@@ -222,7 +226,7 @@ export default function TextToPanelChat({
   }, [messages]);
 
   const handleSubmit = useCallback(async () => {
-    if (!canEditCurrentBranch || generating) return;
+    if (!canGenerate || generating) return;
 
     const prompt = input.trim();
     if (!prompt) return;
@@ -255,9 +259,11 @@ export default function TextToPanelChat({
     } finally {
       setGenerating(false);
     }
-  }, [apiUrl, canEditCurrentBranch, generating, input, messages]);
+  }, [apiUrl, canGenerate, generating, input, messages]);
 
   const handleClear = useCallback(async () => {
+    if (!canManageHistory) return;
+
     setClearing(true);
     setError(null);
 
@@ -274,7 +280,7 @@ export default function TextToPanelChat({
     } finally {
       setClearing(false);
     }
-  }, [apiUrl]);
+  }, [apiUrl, canManageHistory]);
 
   const handleCreatePanel = useCallback(
     async (panelResult: PanelMessageResult, key: string) => {
@@ -323,7 +329,7 @@ export default function TextToPanelChat({
           <button
             type="button"
             onClick={handleClear}
-            disabled={clearing || generating || !hasHistory}
+            disabled={!canManageHistory || clearing || generating || !hasHistory}
             className="rounded-lg border border-card-border px-3 py-2 text-xs text-muted transition-colors hover:border-accent/50 hover:text-foreground disabled:opacity-40"
           >
             {clearing ? "クリア中..." : "履歴クリア"}
@@ -406,7 +412,7 @@ export default function TextToPanelChat({
           value={input}
           onChange={setInput}
           onSubmit={handleSubmit}
-          disabled={!canEditCurrentBranch || loadingHistory}
+          disabled={!canGenerate || loadingHistory}
           loading={generating}
           placeholders={EXAMPLE_PROMPTS}
         />

@@ -1,32 +1,38 @@
 import { createClient } from "@/lib/supabase/client";
-import type { PanelShow } from "@/types";
+import { fetchJson } from "@/lib/client/api";
+import type { PanelShow, ZentaiGamen } from "@/types";
+
+interface PanelShowsResponse {
+  panelShows: PanelShow[];
+}
+
+export interface PanelShowPublicDetail {
+  panelShow: PanelShow;
+  panels: ZentaiGamen[];
+}
 
 export async function getPanelShowsByProject(
   projectId: string,
   branchId: string
 ): Promise<PanelShow[]> {
-  const supabase = createClient();
-  const { data, error } = await supabase
-    .from("panel_shows")
-    .select("*")
-    .eq("project_id", projectId)
-    .eq("branch_id", branchId)
-    .order("created_at", { ascending: true });
-
-  if (error) throw error;
-  return (data ?? []) as PanelShow[];
+  const { panelShows } = await fetchJson<PanelShowsResponse>(
+    `/api/projects/${projectId}/panel-shows/public?branch=${encodeURIComponent(
+      branchId
+    )}`
+  );
+  return panelShows;
 }
 
-export async function getPanelShow(id: string): Promise<PanelShow> {
-  const supabase = createClient();
-  const { data, error } = await supabase
-    .from("panel_shows")
-    .select("*")
-    .eq("id", id)
-    .single();
-
-  if (error) throw error;
-  return data as PanelShow;
+export async function getPanelShowPublicDetail(
+  projectId: string,
+  branchId: string,
+  showId: string
+): Promise<PanelShowPublicDetail> {
+  return fetchJson<PanelShowPublicDetail>(
+    `/api/projects/${projectId}/panel-shows/public?branch=${encodeURIComponent(
+      branchId
+    )}&showId=${encodeURIComponent(showId)}`
+  );
 }
 
 export async function updatePanelShow(

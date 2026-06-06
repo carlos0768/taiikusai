@@ -327,6 +327,8 @@ function DashboardCanvasInner({
     auth.permissions.can_view_git_requests ||
     auth.permissions.can_request_main_merge ||
     auth.permissions.can_create_branches;
+  const canManageAiHistory = !clientOnlyMode && Boolean(auth.login_id);
+  const canGenerateAiPanel = canEditCurrentBranch && canManageAiHistory;
   const showGitBadge = canViewGit && unreadGitNotifications > 0;
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -2451,6 +2453,8 @@ function DashboardCanvasInner({
               project={project}
               currentBranch={currentBranch}
               canEditCurrentBranch={canEditCurrentBranch}
+              canGenerate={canGenerateAiPanel}
+              canManageHistory={canManageAiHistory}
               onClose={() => setAiChatOpenWithQuery(false)}
               onCreatePanel={handleCreateAiPanel}
             />

@@ -3,6 +3,7 @@ import { fetchProjectBranchContext } from "@/lib/projectBranches";
 import { requireAuth } from "@/lib/server/auth";
 import { HttpError, toErrorResponse } from "@/lib/server/errors";
 import { canEditBranch } from "@/lib/server/pseudoGit";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { normalizePanelDsl, type PanelDsl } from "@/lib/textToPanel/types";
 
@@ -353,23 +354,64 @@ async function getRouteContext(
   };
 }
 
+async function getOptionalAuthProfile() {
+  try {
+    const { profile } = await requireAuth();
+    return profile;
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 401) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function getPublicReadRouteContext(
+  request: NextRequest,
+  params: TextToPanelRouteContext["params"]
+) {
+  const { projectId } = await params;
+  const requestedBranchId = request.nextUrl.searchParams.get("branch");
+  const [profile, admin] = await Promise.all([
+    getOptionalAuthProfile(),
+    Promise.resolve(createAdminClient()),
+  ]);
+  const branchContext = await fetchProjectBranchContext(
+    admin,
+    projectId,
+    requestedBranchId
+  );
+
+  return {
+    ...branchContext,
+    projectId,
+    profile,
+    supabase: admin,
+  };
+}
+
 export async function GET(
   request: NextRequest,
   { params }: TextToPanelRouteContext
 ) {
   try {
-    const { projectId, profile, currentBranch, supabase } = await getRouteContext(
-      request,
-      params
-    );
+    const { projectId, profile, currentBranch, supabase } =
+      await getPublicReadRouteContext(request, params);
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("text_to_panel_sessions")
       .select("messages,last_dsl,last_model,last_usage,last_warnings,updated_at")
       .eq("project_id", projectId)
-      .eq("branch_id", currentBranch.id)
-      .eq("user_id", profile.id)
-      .maybeSingle<TextToPanelSessionRow>();
+      .eq("branch_id", currentBranch.id);
+
+    if (profile) {
+      query = query.eq("user_id", profile.id);
+    } else {
+      query = query.order("updated_at", { ascending: false }).limit(1);
+    }
+
+    const { data, error } = await query.maybeSingle<TextToPanelSessionRow>();
 
     if (error) {
       throw error;

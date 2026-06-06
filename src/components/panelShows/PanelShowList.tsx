@@ -46,8 +46,12 @@ export default function PanelShowList() {
   }, [branchId, projectId]);
 
   async function handleDelete(id: string) {
-    await deletePanelShow(id, branchId);
-    setShows((prev) => prev.filter((s) => s.id !== id));
+    try {
+      await deletePanelShow(id, branchId);
+      setShows((prev) => prev.filter((s) => s.id !== id));
+    } catch {
+      // Public viewers can read panel shows but cannot delete persisted data.
+    }
   }
 
   function openShow(id: string) {

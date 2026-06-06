@@ -2,15 +2,20 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDrag } from "@use-gesture/react";
-import { createClient } from "@/lib/supabase/client";
 import { fetchJson } from "@/lib/client/api";
-import { READONLY_AUTH_PROFILE } from "@/lib/client/authProfile";
-import { fetchProjectBranchContext } from "@/lib/projectBranches";
+import {
+  PUBLIC_CLIENT_ONLY_AUTH_PROFILE,
+  isClientOnlyAuthProfile,
+} from "@/lib/publicAccess";
 import { decodeGrid } from "@/lib/grid/codec";
 import { COLOR_MAP, type ColorIndex } from "@/lib/grid/types";
-import { getPanelShow, updatePanelShow } from "@/lib/api/panelShows";
+import {
+  getPanelShowPublicDetail,
+  updatePanelShow,
+} from "@/lib/api/panelShows";
 import type {
   AuthProfile,
+  BranchScopedProject,
   PanelShow,
   PanelShowPlacement,
   ProjectBranch,
@@ -26,6 +31,11 @@ interface PanelShowEditorProps {
 
 interface MeResponse {
   profile: AuthProfile;
+}
+
+interface PublicProjectResponse {
+  projectView: BranchScopedProject;
+  currentBranch: ProjectBranch;
 }
 
 const MIN_DIM = 1;
@@ -75,6 +85,7 @@ function computeCanEdit(
   branch: ProjectBranch | null
 ): boolean {
   if (!branch) return false;
+  if (isClientOnlyAuthProfile(auth)) return true;
   if (auth.is_admin) return true;
   if (branch.is_main) return false;
   return (
@@ -89,8 +100,6 @@ export default function PanelShowEditor({
   projectId,
   branchId,
 }: PanelShowEditorProps) {
-  const supabase = useMemo(() => createClient(), []);
-
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +113,7 @@ export default function PanelShowEditor({
   const [showName, setShowName] = useState("");
   const [hasMissingPanels, setHasMissingPanels] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
+  const [clientOnlyMode, setClientOnlyMode] = useState(false);
 
   const [rows, setRows] = useState(1);
   const [cols, setCols] = useState(1);
@@ -128,34 +138,32 @@ export default function PanelShowEditor({
       setError(null);
       try {
         const [show, context, meResult] = await Promise.all([
-          getPanelShow(showId),
-          fetchProjectBranchContext(supabase, projectId, branchId || null),
+          getPanelShowPublicDetail(projectId, branchId, showId),
+          fetchJson<PublicProjectResponse>(
+            `/api/projects/${projectId}/public?branch=${encodeURIComponent(
+              branchId
+            )}`
+          ),
           fetchJson<MeResponse>("/api/auth/me").catch(() => ({
-            profile: READONLY_AUTH_PROFILE,
+            profile: PUBLIC_CLIENT_ONLY_AUTH_PROFILE,
           })),
         ]);
-
-        const { data: panelRows, error: panelError } = await supabase
-          .from("zentai_gamen")
-          .select("*")
-          .in("id", show.panel_ids)
-          .eq("branch_id", show.branch_id);
-        if (panelError) throw panelError;
 
         if (cancelled) return;
 
         const map = new Map<string, ZentaiGamen>();
-        ((panelRows ?? []) as ZentaiGamen[]).forEach((p) => map.set(p.id, p));
+        show.panels.forEach((panel) => map.set(panel.id, panel));
 
-        applyShow(show);
-        setShowName(show.name);
+        applyShow(show.panelShow);
+        setShowName(show.panelShow.name);
         setPanelMap(map);
-        setPanelIds(show.panel_ids);
+        setPanelIds(show.panelShow.panel_ids);
         setHasMissingPanels(
-          show.panel_ids.some((id) => !map.has(id))
+          show.panelShow.panel_ids.some((id) => !map.has(id))
         );
         setGridWidth(context.projectView.grid_width);
         setGridHeight(context.projectView.grid_height);
+        setClientOnlyMode(isClientOnlyAuthProfile(meResult.profile));
         setCanEdit(
           computeCanEdit(meResult.profile, context.currentBranch)
         );
@@ -183,7 +191,7 @@ export default function PanelShowEditor({
     return () => {
       cancelled = true;
     };
-  }, [branchId, projectId, showId, supabase]);
+  }, [branchId, projectId, showId]);
 
   // Debounced autosave
   useEffect(() => {
@@ -192,11 +200,12 @@ export default function PanelShowEditor({
       skipNextSaveRef.current = false;
       return;
     }
+    if (clientOnlyMode) return;
 
-    setSaveStatus("saving");
     const handle = setTimeout(() => {
       void (async () => {
         try {
+          setSaveStatus("saving");
           await updatePanelShow(showId, branchId, { rows, cols, placements });
           setSaveStatus("saved");
           setSaveError(null);
@@ -208,7 +217,16 @@ export default function PanelShowEditor({
     }, 700);
 
     return () => clearTimeout(handle);
-  }, [rows, cols, placements, loading, canEdit, showId, branchId]);
+  }, [
+    rows,
+    cols,
+    placements,
+    loading,
+    canEdit,
+    clientOnlyMode,
+    showId,
+    branchId,
+  ]);
 
   const validPlacements = useMemo(
     () =>
