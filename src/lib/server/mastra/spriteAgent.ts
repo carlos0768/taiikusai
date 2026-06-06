@@ -8,6 +8,11 @@ const colorIndexSchema = z.union([
   z.literal(2),
   z.literal(3),
   z.literal(4),
+  z.literal("0"),
+  z.literal("1"),
+  z.literal("2"),
+  z.literal("3"),
+  z.literal("4"),
 ]);
 
 export const spriteSchema = z.object({
@@ -45,6 +50,37 @@ function getSpriteAgent() {
   return spriteAgent;
 }
 
+function extractJson(text: string): unknown {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const jsonText =
+    fenced?.[1] ?? text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
+
+  if (!jsonText.trim()) {
+    throw new Error("AI response did not contain sprite JSON");
+  }
+
+  return JSON.parse(jsonText);
+}
+
+function parseSpriteCandidate(text: string): SpriteAgentObject {
+  const parsed = extractJson(text);
+  const objectResult = spriteSchema.safeParse(parsed);
+
+  if (objectResult.success) {
+    return objectResult.data;
+  }
+
+  const spriteOnlyResult = spriteSchema.shape.sprite.safeParse(parsed);
+
+  if (spriteOnlyResult.success) {
+    return {
+      sprite: spriteOnlyResult.data,
+    };
+  }
+
+  throw objectResult.error;
+}
+
 export async function generateSpriteCandidate({
   message,
   gridWidth,
@@ -56,9 +92,6 @@ export async function generateSpriteCandidate({
   }
 
   const result = await getSpriteAgent().generate(message, {
-    structuredOutput: {
-      schema: spriteSchema,
-    },
     modelSettings: {
       maxOutputTokens: 4096,
     },
@@ -69,7 +102,7 @@ export async function generateSpriteCandidate({
     throw result.error;
   }
 
-  return result.object;
+  return parseSpriteCandidate(result.text);
 }
 
 function makeMockSprite(

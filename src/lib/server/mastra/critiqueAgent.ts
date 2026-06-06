@@ -33,6 +33,22 @@ function getCritiqueAgent() {
   return critiqueAgent;
 }
 
+function extractJson(text: string): unknown {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const jsonText =
+    fenced?.[1] ?? text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
+
+  if (!jsonText.trim()) {
+    throw new Error("AI critique response did not contain JSON");
+  }
+
+  return JSON.parse(jsonText);
+}
+
+function parseCritique(text: string): CritiqueResult {
+  return critiqueSchema.parse(extractJson(text));
+}
+
 export async function critiqueSprite({
   userPrompt,
   pngBuffer,
@@ -72,9 +88,6 @@ export async function critiqueSprite({
   ];
 
   const result = await getCritiqueAgent().generate(messages, {
-    structuredOutput: {
-      schema: critiqueSchema,
-    },
     modelSettings: {
       maxOutputTokens: 1024,
     },
@@ -85,7 +98,7 @@ export async function critiqueSprite({
     throw result.error;
   }
 
-  return result.object;
+  return parseCritique(result.text);
 }
 
 function buildCritiquePrompt(userPrompt: string): string {
@@ -101,5 +114,12 @@ ${userPrompt}
 4. 黒輪郭: 有機的な対象や複雑な対象で輪郭が識別に機能しているか。
 
 score は 0 から 100 の整数です。75 以上なら本番候補として許容できます。
-issues は最大6個、suggestion は次の生成で直すべき具体的な改善指示にしてください。`;
+issues は最大6個、suggestion は次の生成で直すべき具体的な改善指示にしてください。
+
+出力は次のJSONのみ。説明文やMarkdownは不要です。
+{
+  "score": 75,
+  "issues": ["問題点"],
+  "suggestion": "改善指示"
+}`;
 }
