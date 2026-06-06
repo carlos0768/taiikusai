@@ -4,11 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ProjectBranchGraph from "@/components/settings/ProjectBranchGraph";
 import { fetchJson } from "@/lib/client/api";
-import { canEditBranch } from "@/lib/client/authProfile";
+import { canEditBranch, READONLY_AUTH_PROFILE } from "@/lib/client/authProfile";
 import { prefetchRoutes } from "@/lib/client/prefetch";
 import { updateProjectBranchSettings } from "@/lib/api/projects";
 import { getPanelColumns, type PanelColumn } from "@/lib/panelColumns";
-import { buildBranchPath, fetchProjectBranchContext } from "@/lib/projectBranches";
+import { buildBranchPath } from "@/lib/projectBranches";
 import {
   MAX_TIMING_MS,
   MIN_TIMING_MS,
@@ -37,6 +37,14 @@ interface ResizeResponse {
   project: BranchScopedProject;
   resizedPanelCount: number;
   resizedWavePanelCount: number;
+}
+
+interface PublicProjectResponse {
+  projectView: BranchScopedProject;
+  branches: ProjectBranch[];
+  currentBranch: ProjectBranch;
+  zentaiGamen: ZentaiGamen[];
+  connections: Connection[];
 }
 
 const permissionLabels: Array<{
@@ -159,30 +167,15 @@ export default function ProjectSettingsPage() {
       setLoadingPanelColumns(true);
 
       try {
-        const [
-          { data: nextZentaiGamen, error: zentaiGamenError },
-          { data: nextConnections, error: connectionsError },
-        ] = await Promise.all([
-          supabase
-            .from("zentai_gamen")
-            .select("*")
-            .eq("project_id", projectId)
-            .eq("branch_id", branchId)
-            .order("created_at", { ascending: true }),
-          supabase
-            .from("connections")
-            .select("*")
-            .eq("project_id", projectId)
-            .eq("branch_id", branchId)
-            .order("sort_order", { ascending: true }),
-        ]);
-
-        if (zentaiGamenError) throw zentaiGamenError;
-        if (connectionsError) throw connectionsError;
+        const context = await fetchJson<PublicProjectResponse>(
+          `/api/projects/${projectId}/public?branch=${encodeURIComponent(
+            branchId
+          )}`
+        );
 
         const nextColumns = getPanelColumns(
-          (nextZentaiGamen ?? []) as ZentaiGamen[],
-          (nextConnections ?? []) as Connection[]
+          context.zentaiGamen,
+          context.connections
         );
         const nextStartId =
           preferredStartId &&
@@ -204,7 +197,7 @@ export default function ProjectSettingsPage() {
         setLoadingPanelColumns(false);
       }
     },
-    [projectId, supabase]
+    [projectId]
   );
 
   const loadSettings = useCallback(async () => {
@@ -213,34 +206,22 @@ export default function ProjectSettingsPage() {
     setBranchGraphError(null);
 
     try {
-      const [
-        contextResult,
-        { data: panelData, error: panelError },
-        { data: mergeData, error: mergeError },
-      ] = await Promise.all([
-        fetchProjectBranchContext(supabase, projectId, requestedBranchId),
-        supabase
-          .from("zentai_gamen")
-          .select("id,branch_id,panel_type,motion_type")
-          .eq("project_id", projectId),
-        supabase
-          .from("project_branch_merges")
-          .select("*")
-          .eq("project_id", projectId)
-          .order("created_at", { ascending: true }),
-      ]);
+      const query = requestedBranchId
+        ? `?branch=${encodeURIComponent(requestedBranchId)}`
+        : "";
+      const [contextResult, { data: mergeData, error: mergeError }] =
+        await Promise.all([
+          fetchJson<PublicProjectResponse>(
+            `/api/projects/${projectId}/public${query}`
+          ),
+          supabase
+            .from("project_branch_merges")
+            .select("*")
+            .eq("project_id", projectId)
+            .order("created_at", { ascending: true }),
+        ]);
 
-      if (panelError) {
-        throw panelError;
-      }
-
-      const zentaiGamen = (panelData ?? []) as Pick<
-        ZentaiGamen,
-        "id" | "branch_id" | "panel_type" | "motion_type"
-      >[];
-      const currentBranchPanels = zentaiGamen.filter(
-        (panel) => panel.branch_id === contextResult.currentBranch.id
-      );
+      const currentBranchPanels = contextResult.zentaiGamen;
 
       setProject(contextResult.projectView);
       setBranches(contextResult.branches);
@@ -302,7 +283,7 @@ export default function ProjectSettingsPage() {
         }
       } catch {
         if (!cancelled) {
-          router.replace("/login");
+          setProfile(READONLY_AUTH_PROFILE);
         }
       }
     }

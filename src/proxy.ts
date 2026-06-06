@@ -35,7 +35,13 @@ function isProjectClientOnlyPath(pathname: string) {
   if (segments[0] !== "project" || !segments[1]) return false;
   if (segments.length === 2) return true;
 
-  return segments[2] === "editor";
+  return new Set([
+    "editor",
+    "panel-shows",
+    "templates",
+    "settings",
+    "text-to-panel",
+  ]).has(segments[2]);
 }
 
 function getPracticeHighlightPath(pathname: string) {

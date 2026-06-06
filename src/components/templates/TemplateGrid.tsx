@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { fetchJson } from "@/lib/client/api";
 import { decodeGrid } from "@/lib/grid/codec";
 import { COLOR_MAP, type ColorIndex } from "@/lib/grid/types";
 import type { Template } from "@/types";
@@ -9,6 +10,10 @@ import type { Template } from "@/types";
 interface TemplateGridProps {
   onSelect?: (template: Template) => void;
   showDelete?: boolean;
+}
+
+interface TemplatesResponse {
+  templates: Template[];
 }
 
 function TemplateCard({
@@ -98,29 +103,36 @@ export default function TemplateGrid({
 
     async function loadTemplates() {
       setLoading(true);
-      let query = supabase
-        .from("templates")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (search.trim()) {
-        query = query.ilike("name", `%${search.trim()}%`);
+      try {
+        const query = search.trim()
+          ? `?search=${encodeURIComponent(search.trim())}`
+          : "";
+        const { templates: data } = await fetchJson<TemplatesResponse>(
+          `/api/templates/public${query}`
+        );
+        if (!cancelled) {
+          setTemplates(data);
+        }
+      } catch {
+        if (!cancelled) {
+          setTemplates([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
-
-      const { data } = await query;
-      if (cancelled) return;
-      setTemplates((data ?? []) as Template[]);
-      setLoading(false);
     }
 
     void loadTemplates();
     return () => {
       cancelled = true;
     };
-  }, [search, supabase]);
+  }, [search]);
 
   async function handleDelete(id: string) {
-    await supabase.from("templates").delete().eq("id", id);
+    const { error } = await supabase.from("templates").delete().eq("id", id);
+    if (error) return;
     setTemplates((prev) => prev.filter((t) => t.id !== id));
   }
 
