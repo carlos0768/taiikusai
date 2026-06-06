@@ -13,6 +13,21 @@ export interface PanelSprite {
   rows: string[];
 }
 
+const DEFAULT_SPRITE_PALETTE: Record<string, ColorIndex> = {
+  ".": 0,
+  " ": 0,
+  W: 0,
+  w: 0,
+  Y: 1,
+  y: 1,
+  R: 2,
+  r: 2,
+  K: 3,
+  k: 3,
+  B: 4,
+  b: 4,
+};
+
 function isColorIndex(value: unknown): value is ColorIndex {
   return (
     typeof value === "number" &&
@@ -27,10 +42,7 @@ function normalizePalette(palette: unknown): Record<string, ColorIndex> {
     throw new Error("sprite.palette must be an object");
   }
 
-  const result: Record<string, ColorIndex> = {
-    ".": 0,
-    " ": 0,
-  };
+  const result: Record<string, ColorIndex> = { ...DEFAULT_SPRITE_PALETTE };
 
   for (const [key, rawValue] of Object.entries(palette)) {
     const symbol = Array.from(key)[0];
