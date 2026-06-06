@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { requirePermission, requireAuth } from "@/lib/server/auth";
 import { HttpError, toErrorResponse } from "@/lib/server/errors";
-import { generateAiSpriteGrid } from "@/lib/server/aiSprite";
 import { readGridDimension } from "@/lib/server/aiSpriteValidation";
+import { isMastraMockEnabled } from "@/lib/server/mastra";
+import { refineAiSpriteGrid } from "@/lib/server/mastra/refineWorkflow";
+
+export const maxDuration = 60;
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
@@ -19,22 +23,20 @@ export async function POST(request: Request) {
     const width = readGridDimension(gridWidth, "gridWidth");
     const height = readGridDimension(gridHeight, "gridHeight");
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
+    if (!isMastraMockEnabled() && !process.env.ANTHROPIC_API_KEY) {
       return NextResponse.json(
         { error: "ANTHROPIC_API_KEY not configured" },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({
-      ...(await generateAiSpriteGrid({
-        apiKey,
+    return NextResponse.json(
+      await refineAiSpriteGrid({
         prompt: userPrompt,
         gridWidth: width,
         gridHeight: height,
-      })),
-    });
+      })
+    );
   } catch (err) {
     return toErrorResponse(err);
   }
